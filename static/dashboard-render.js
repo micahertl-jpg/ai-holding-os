@@ -216,6 +216,47 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  function renderRobloxTrendsTable(trends) {
+    if (!trends || trends.length === 0) {
+      return '<p class="empty">No Roblox concepts researched yet.</p>';
+    }
+    const cards = trends
+      .map((t) => {
+        const confidence = escapeHtml(t.confidence_level || "unknown");
+        let urls = [];
+        try {
+          urls = t.reference_urls_used ? JSON.parse(t.reference_urls_used) : [];
+        } catch (e) {
+          urls = [];
+        }
+        return `
+        <div class="opportunity-card confidence-${confidence}">
+          <div class="opportunity-head">
+            <strong>${escapeHtml(t.concept)}</strong>
+            <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+              confidence: ${confidence}
+            </span>
+          </div>
+          <p class="opportunity-summary">${escapeHtml(t.summary || "")}</p>
+          <dl class="opportunity-fields">
+            <dt>Player demand signals</dt><dd>${escapeHtml(t.player_demand_signals || "")}</dd>
+            <dt>Competition level</dt><dd>${escapeHtml(t.competition_level || "")}</dd>
+            <dt>Build complexity</dt><dd>${escapeHtml(t.build_complexity || "")}</dd>
+            <dt>Target audience</dt><dd>${escapeHtml(t.target_audience || "")}</dd>
+            <dt>Monetization fit</dt><dd>${escapeHtml(t.monetization_fit || "")}</dd>
+            <dt>Estimated dev time</dt><dd>${escapeHtml(t.estimated_dev_time || "")}</dd>
+            <dt>Similar successful games</dt><dd>${escapeHtml(t.similar_successful_games || "")}</dd>
+            <dt>Risk factors</dt><dd>${escapeHtml(t.risk_factors || "")}</dd>
+          </dl>
+          ${urls.length > 0
+            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
+            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
+        </div>`;
+      })
+      .join("");
+    return `<div class="opportunities-list">${cards}</div>`;
+  }
+
   const api = {
     escapeHtml,
     fmtArc,
@@ -228,6 +269,7 @@
     renderArcSummary,
     renderJobsTable,
     renderOpportunitiesTable,
+    renderRobloxTrendsTable,
   };
 
   if (typeof module !== "undefined" && module.exports) {

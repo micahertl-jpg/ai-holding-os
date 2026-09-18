@@ -27,6 +27,7 @@ import threading
 from llm_client import get_default_client
 from tasks.summarize_urls import summarize_urls
 from tasks.research_opportunity import research_opportunity, OpportunityAssessmentError
+from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssessmentError
 from db import new_id
 
 
@@ -74,11 +75,46 @@ def _handle_research_opportunity(task_row, client, db):
     return result_text, 0.0, 0.0
 
 
+def _handle_research_roblox_trend(task_row, client, db):
+    task_input = json.loads(task_row["task_input"]) if task_row["task_input"] else {}
+    concept = task_input.get("concept")
+    if not concept:
+        raise ValueError("research_roblox_trend task_input missing required 'concept'")
+    reference_urls = task_input.get("reference_urls", [])
+
+    assessment = research_roblox_trend(concept, client, reference_urls=reference_urls)
+
+    trend_id = new_id("rbx")
+    db.execute(
+        "INSERT INTO roblox_trends (id, business_id, task_id, concept, "
+        "player_demand_signals, competition_level, build_complexity, target_audience, "
+        "monetization_fit, estimated_dev_time, similar_successful_games, risk_factors, "
+        "confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (trend_id, task_row["business_id"], task_row["id"], assessment["concept"],
+         assessment["player_demand_signals"], assessment["competition_level"],
+         assessment["build_complexity"], assessment["target_audience"],
+         assessment["monetization_fit"], assessment["estimated_dev_time"],
+         assessment["similar_successful_games"], assessment["risk_factors"],
+         assessment["confidence_level"], assessment["summary"],
+         json.dumps(assessment["reference_urls_used"])),
+    )
+    db.audit("executor", "roblox_trend_assessed", "roblox_trend", trend_id,
+              {"concept": concept, "confidence_level": assessment["confidence_level"]})
+
+    result_text = (
+        f"Roblox trend assessment saved (id={trend_id}, confidence={assessment['confidence_level']}): "
+        f"{assessment['summary']}"
+    )
+    return result_text, 0.0, 0.0
+
+
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).
 # 'manual' is deliberately absent — those tasks are never auto-executed.
 HANDLERS = {
     "summarize_urls": _handle_summarize_urls,
     "research_opportunity": _handle_research_opportunity,
+    "research_roblox_trend": _handle_research_roblox_trend,
 }
 
 

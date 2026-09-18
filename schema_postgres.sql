@@ -128,3 +128,22 @@ CREATE TABLE IF NOT EXISTS opportunities (
     reference_urls_used TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS roblox_trends (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    concept TEXT NOT NULL,
+    player_demand_signals TEXT,
+    competition_level TEXT,
+    build_complexity TEXT,
+    target_audience TEXT,
+    monetization_fit TEXT,
+    estimated_dev_time TEXT,
+    similar_successful_games TEXT,
+    risk_factors TEXT,
+    confidence_level TEXT,
+    summary TEXT,
+    reference_urls_used TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

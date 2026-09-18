@@ -27,7 +27,7 @@ from typing import Optional, List
 import os
 import threading
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI):
         name="scheduler-thread",
     )
     scheduler_thread.start()
+    state["scheduler_thread"] = scheduler_thread
 
     executor_stop_event = threading.Event()
     executor_thread = threading.Thread(
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
         name="executor-thread",
     )
     executor_thread.start()
+    state["executor_thread"] = executor_thread
 
     yield
 
@@ -183,13 +185,48 @@ class ResearchOpportunityRequest(BaseModel):
     budget_arc: float = 0.0
 
 
+class ResearchRobloxTrendRequest(BaseModel):
+    concept: str
+    reference_urls: List[str] = []
+    department: Optional[str] = None
+    permission_level_required: int = 2
+    priority: int = 3
+    budget_arc: float = 0.0
+
+
 # ---------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(response: Response):
+    """Real health check, not a static 'ok'. Verifies the database is
+    actually reachable (not just that the process is running) and that
+    both background threads (scheduler, executor) are still alive.
+
+    Returns 200 with status="ok" when everything checks out, or 503
+    with status="degraded" and a `checks` breakdown otherwise — so an
+    external uptime monitor (UptimeRobot, Railway's own alerts pointed
+    at this route, etc.) can actually catch "the app is up but broken"
+    instead of only "the app crashed"."""
+    checks = {}
+
+    try:
+        state["db"].query_one("SELECT 1 AS ok")
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+
+    sched = state.get("scheduler_thread")
+    checks["scheduler_thread"] = "ok" if (sched and sched.is_alive()) else "not running"
+
+    execu = state.get("executor_thread")
+    checks["executor_thread"] = "ok" if (execu and execu.is_alive()) else "not running"
+
+    healthy = all(v == "ok" for v in checks.values())
+    if not healthy:
+        response.status_code = 503
+    return {"status": "ok" if healthy else "degraded", "checks": checks}
 
 
 # ---------------------------------------------------------------------
@@ -234,6 +271,9 @@ def business_dashboard(business_id: str):
     opportunities = [row_to_dict(r) for r in
                       db.query("SELECT * FROM opportunities WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+    roblox_trends = [row_to_dict(r) for r in
+                      db.query("SELECT * FROM roblox_trends WHERE business_id=? "
+                               "ORDER BY created_at DESC", (business_id,))]
     return {
         "business": row_to_dict(biz),
         "agents": agents,
@@ -242,6 +282,7 @@ def business_dashboard(business_id: str):
         "arc_summary": arc_summary,
         "scheduled_jobs": scheduled_jobs,
         "opportunities": opportunities,
+        "roblox_trends": roblox_trends,
     }
 
 
@@ -424,6 +465,39 @@ def list_opportunities(business_id: str):
         raise HTTPException(status_code=404, detail="business not found")
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM opportunities WHERE business_id=? "
+                               "ORDER BY created_at DESC", (business_id,))]
+
+
+# ---------------------------------------------------------------------
+# Roblox Game Development — the second business vertical. Same pattern
+# as Opportunity Discovery above: creates a task_type='research_roblox_
+# trend' task, the executor thread picks it up and runs the real LLM
+# assessment, saving a row to `roblox_trends`. This endpoint does no
+# LLM work itself and returns immediately.
+# ---------------------------------------------------------------------
+
+@app.post("/businesses/{business_id}/roblox-trends/research")
+def request_roblox_trend_research(business_id: str, req: ResearchRobloxTrendRequest):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if len(req.reference_urls) > 3:
+        raise HTTPException(status_code=400, detail="reference_urls is capped at 3")
+    task_id = state["orchestrator"].create_task(
+        business_id, f"Research Roblox trend: {req.concept}", department=req.department,
+        priority=req.priority, budget_arc=req.budget_arc,
+        permission_level_required=req.permission_level_required,
+        task_type="research_roblox_trend",
+        task_input={"concept": req.concept, "reference_urls": req.reference_urls},
+    )
+    return {"task_id": task_id}
+
+
+@app.get("/businesses/{business_id}/roblox-trends")
+def list_roblox_trends(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    return [row_to_dict(r) for r in
+            state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
 
 

@@ -60,6 +60,8 @@
       R.renderJobsTable(data.scheduled_jobs);
     document.getElementById("opportunities-list").innerHTML =
       R.renderOpportunitiesTable(data.opportunities);
+    document.getElementById("roblox-trends-list").innerHTML =
+      R.renderRobloxTrendsTable(data.roblox_trends);
   }
 
   async function refresh() {
@@ -208,6 +210,30 @@
         await refresh();
       } catch (e) {
         showError("Failed to request opportunity research: " + e.message);
+      }
+    });
+
+    document.getElementById("research-roblox-trend-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      const urlsRaw = f.reference_urls.value.trim();
+      const reference_urls = urlsRaw
+        ? urlsRaw.split(",").map((u) => u.trim()).filter(Boolean)
+        : [];
+      if (reference_urls.length > 3) {
+        showError("Reference URLs are capped at 3 (comma-separated).");
+        return;
+      }
+      try {
+        await api(`/businesses/${currentBusinessId}/roblox-trends/research`, {
+          method: "POST",
+          body: JSON.stringify({ concept: f.concept.value, reference_urls }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to request Roblox trend research: " + e.message);
       }
     });
 
