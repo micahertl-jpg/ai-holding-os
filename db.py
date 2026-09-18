@@ -188,6 +188,23 @@ def get_database(database_url: str = None):
     """
     url = database_url or os.environ.get("DATABASE_URL")
     if url and (url.startswith("postgres://") or url.startswith("postgresql://")):
+        # Don't print the URL itself — it contains the DB password.
+        print("=" * 70, flush=True)
+        print("[db] DATABASE_URL detected -> using PostgresDatabase.", flush=True)
+        print("[db] Data WILL persist across redeploys.", flush=True)
+        print("=" * 70, flush=True)
         return PostgresDatabase(url)
     sqlite_path = os.path.join(os.path.dirname(__file__), "holding_os.db")
+    print("=" * 70, flush=True)
+    if url:
+        print(f"[db] WARNING: DATABASE_URL is set but does not start with "
+              f"'postgres://' or 'postgresql://' (starts with: "
+              f"{url[:12]!r}...). Falling back to SQLite.", flush=True)
+    else:
+        print("[db] WARNING: DATABASE_URL is not set.", flush=True)
+    print(f"[db] Using local SQLite file: {sqlite_path}", flush=True)
+    print("[db] On Railway/Render/Fly/most container hosts this file is "
+          "EPHEMERAL — all data will be LOST on the next redeploy or "
+          "restart.", flush=True)
+    print("=" * 70, flush=True)
     return Database(sqlite_path)
