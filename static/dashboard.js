@@ -1,0 +1,251 @@
+/*
+ * dashboard.js — DOM wiring only. Fetches JSON from the same-origin API
+ * (served by this same FastAPI process, so no CORS setup is needed) and
+ * hands the data to the pure, unit-tested functions in
+ * dashboard-render.js. This file itself is NOT unit-tested — it can
+ * only be exercised in a real browser against a running server — so it
+ * is kept deliberately thin: fetch, then call a render function,
+ * nothing clever here.
+ */
+(function () {
+  const R = window.DashboardRender;
+  let currentBusinessId = null;
+  let refreshInFlight = false;
+  const AUTO_REFRESH_INTERVAL_MS = 5000;
+
+  async function api(path, opts) {
+    const res = await fetch(path, Object.assign({
+      headers: { "Content-Type": "application/json" },
+    }, opts));
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    if (res.status === 204) return null;
+    return res.json();
+  }
+
+  function showError(msg) {
+    const el = document.getElementById("error-banner");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 6000);
+  }
+
+  async function loadBusinessList() {
+    const businesses = await api("/businesses");
+    document.getElementById("business-select").innerHTML =
+      R.renderBusinessOptions(businesses);
+    if (businesses.length > 0 && !currentBusinessId) {
+      currentBusinessId = businesses[0].id;
+      document.getElementById("business-select").value = currentBusinessId;
+      await loadDashboard();
+    }
+  }
+
+  async function loadDashboard() {
+    if (!currentBusinessId) return;
+    const data = await api(`/businesses/${currentBusinessId}/dashboard`);
+    document.getElementById("business-header").innerHTML =
+      R.renderBusinessHeader(data.business);
+    document.getElementById("agents-table").innerHTML =
+      R.renderAgentsTable(data.agents);
+    document.getElementById("tasks-table").innerHTML =
+      R.renderTasksTable(data.tasks);
+    document.getElementById("approvals-list").innerHTML =
+      R.renderApprovalsList(data.pending_approvals);
+    document.getElementById("arc-summary").innerHTML =
+      R.renderArcSummary(data.arc_summary);
+    document.getElementById("jobs-table").innerHTML =
+      R.renderJobsTable(data.scheduled_jobs);
+    document.getElementById("opportunities-list").innerHTML =
+      R.renderOpportunitiesTable(data.opportunities);
+  }
+
+  async function refresh() {
+    // Guard against overlapping calls: if a slow request from the auto-
+    // refresh interval is still in flight when the next tick (or a manual
+    // action) fires, skip it rather than piling up concurrent fetches.
+    if (refreshInFlight) return;
+    refreshInFlight = true;
+    try {
+      await loadDashboard();
+    } catch (e) {
+      showError("Failed to refresh: " + e.message);
+    } finally {
+      refreshInFlight = false;
+    }
+  }
+
+  // --- event wiring ---
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      await loadBusinessList();
+    } catch (e) {
+      showError("Failed to load businesses: " + e.message);
+    }
+
+    // Poll for changes made server-side without any click here — this is
+    // the whole point of the scheduler: tasks it creates should show up
+    // on their own, not only when some unrelated button happens to call
+    // refresh(). Found missing during real click-through testing (a
+    // scheduled job's tasks only appeared after clicking Disable, which
+    // incidentally triggered a refresh).
+    setInterval(refresh, AUTO_REFRESH_INTERVAL_MS);
+
+    document.getElementById("business-select").addEventListener("change", async (ev) => {
+      currentBusinessId = ev.target.value || null;
+      await refresh();
+    });
+
+    document.getElementById("refresh-btn").addEventListener("click", refresh);
+
+    document.getElementById("create-business-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = ev.target;
+      try {
+        const result = await api("/businesses", {
+          method: "POST",
+          body: JSON.stringify({
+            name: f.name.value,
+            type: f.type.value || null,
+            objective: f.objective.value || null,
+            budget_usd: parseFloat(f.budget_usd.value) || 0,
+          }),
+        });
+        f.reset();
+        currentBusinessId = result.id;
+        await loadBusinessList();
+        document.getElementById("business-select").value = currentBusinessId;
+        await refresh();
+      } catch (e) {
+        showError("Failed to create business: " + e.message);
+      }
+    });
+
+    document.getElementById("create-agent-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      try {
+        await api(`/businesses/${currentBusinessId}/agents`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: f.name.value,
+            role: f.role.value || null,
+            department: f.department.value || null,
+            permission_level: parseInt(f.permission_level.value, 10) || 1,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to create agent: " + e.message);
+      }
+    });
+
+    document.getElementById("create-task-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      try {
+        await api(`/businesses/${currentBusinessId}/tasks`, {
+          method: "POST",
+          body: JSON.stringify({
+            objective: f.objective.value,
+            department: f.department.value || null,
+            permission_level_required: parseInt(f.permission_level_required.value, 10) || 1,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to create task: " + e.message);
+      }
+    });
+
+    document.getElementById("create-job-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      try {
+        await api(`/businesses/${currentBusinessId}/scheduled-jobs`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: f.name.value,
+            objective: f.objective.value,
+            interval_seconds: parseInt(f.interval_seconds.value, 10),
+            department: f.department.value || null,
+            permission_level_required: parseInt(f.permission_level_required.value, 10) || 1,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to create scheduled job: " + e.message);
+      }
+    });
+
+    document.getElementById("research-opportunity-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      const urlsRaw = f.reference_urls.value.trim();
+      const reference_urls = urlsRaw
+        ? urlsRaw.split(",").map((u) => u.trim()).filter(Boolean)
+        : [];
+      if (reference_urls.length > 3) {
+        showError("Reference URLs are capped at 3 (comma-separated).");
+        return;
+      }
+      try {
+        await api(`/businesses/${currentBusinessId}/opportunities/research`, {
+          method: "POST",
+          body: JSON.stringify({ topic: f.topic.value, reference_urls }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to request opportunity research: " + e.message);
+      }
+    });
+
+    // Event delegation for buttons rendered dynamically inside tables/lists.
+    // Dispatches on the explicit data-action attribute, NOT on CSS classes —
+    // classes are for styling only. A real bug happened here once already:
+    // the job-toggle button reused .btn-pause/.btn-approve for styling, and
+    // a class-based handler misrouted clicks on it to the agent/approval
+    // endpoints with no valid id, producing a 404. data-action makes that
+    // class of bug structurally impossible, however styling is reused later.
+    document.body.addEventListener("click", async (ev) => {
+      const t = ev.target;
+      const action = t.dataset.action;
+      if (!action) return;
+      try {
+        if (action === "pause-agent") {
+          await api(`/agents/${t.dataset.agentId}/pause`, { method: "POST", body: "{}" });
+          await refresh();
+        } else if (action === "retire-agent") {
+          await api(`/agents/${t.dataset.agentId}/retire`, { method: "POST", body: "{}" });
+          await refresh();
+        } else if (action === "approve") {
+          await api(`/approvals/${t.dataset.approvalId}/approve`, { method: "POST", body: "{}" });
+          await refresh();
+        } else if (action === "reject") {
+          await api(`/approvals/${t.dataset.approvalId}/reject`, { method: "POST", body: "{}" });
+          await refresh();
+        } else if (action === "set-job-enabled") {
+          const enabled = t.dataset.setEnabled === "true";
+          await api(`/scheduled-jobs/${t.dataset.jobId}/set-enabled`, {
+            method: "POST",
+            body: JSON.stringify({ enabled }),
+          });
+          await refresh();
+        }
+      } catch (e) {
+        showError("Action failed: " + e.message);
+      }
+    });
+  });
+})();

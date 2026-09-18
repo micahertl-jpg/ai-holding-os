@@ -1,0 +1,5 @@
+# Only needed for api.py — demo.py/demo_real_llm.py still use zero
+# external dependencies (stdlib only).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+psycopg2-binary>=2.9   # only actually imported if DATABASE_URL points at Postgres

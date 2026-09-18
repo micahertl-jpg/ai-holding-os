@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Holding Company OS — Command Center</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-glyph" aria-hidden="true">
+      <svg viewBox="0 0 100 100" width="36" height="36">
+        <circle class="glyph-ring glyph-ring-outer" cx="50" cy="50" r="46" fill="none" />
+        <circle class="glyph-ring glyph-ring-mid" cx="50" cy="50" r="34" fill="none" />
+        <circle class="glyph-core" cx="50" cy="50" r="6" />
+        <line class="glyph-tick" x1="50" y1="2" x2="50" y2="14" />
+        <line class="glyph-tick" x1="50" y1="86" x2="50" y2="98" />
+        <line class="glyph-tick" x1="2" y1="50" x2="14" y2="50" />
+        <line class="glyph-tick" x1="86" y1="50" x2="98" y2="50" />
+      </svg>
+    </div>
+    <h1>AI Holding Company OS<span class="header-sub">Command Center</span></h1>
+    <span class="sim-tag">SIMULATION — no real money moves</span>
+  </header>
+
+  <div id="error-banner" class="error-banner hidden"></div>
+
+  <main class="layout">
+    <section class="panel panel-select">
+      <label for="business-select">Business</label>
+      <select id="business-select"></select>
+      <button id="refresh-btn" class="btn-small">Refresh</button>
+    </section>
+
+    <section id="business-header" class="panel"></section>
+
+    <section class="panel">
+      <h3>Agents</h3>
+      <div id="agents-table"></div>
+      <form id="create-agent-form" class="inline-form">
+        <input name="name" placeholder="Agent name" required>
+        <input name="role" placeholder="Role">
+        <input name="department" placeholder="Department">
+        <input name="permission_level" type="number" min="0" max="7" value="1" title="Permission level 0-7">
+        <button type="submit" class="btn-small">Add Agent</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h3>Tasks</h3>
+      <div id="tasks-table"></div>
+      <form id="create-task-form" class="inline-form">
+        <input name="objective" placeholder="Task objective" required>
+        <input name="department" placeholder="Department">
+        <input name="permission_level_required" type="number" min="0" max="7" value="1"
+               title="Permission level required — 6+ always requires owner approval">
+        <button type="submit" class="btn-small">Add Task</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h3>ARC (internal virtual economy — never real money)</h3>
+      <div id="arc-summary"></div>
+    </section>
+
+    <section class="panel panel-opportunities">
+      <h3>Opportunity Discovery — Researched Opportunities</h3>
+      <div id="opportunities-list"></div>
+      <form id="research-opportunity-form" class="inline-form">
+        <input name="topic" placeholder="Topic or niche to research" required>
+        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+        <button type="submit" class="btn-small">Research This Opportunity</button>
+      </form>
+      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+        see confidence_level on each card. Runs in the background; results appear
+        automatically once the executor thread finishes (typically within ~10-15s
+        with a real API key set).</p>
+    </section>
+
+    <section class="panel">
+      <h3>Scheduled Jobs (recurring tasks)</h3>
+      <div id="jobs-table"></div>
+      <form id="create-job-form" class="inline-form">
+        <input name="name" placeholder="Job name" required>
+        <input name="objective" placeholder="Task objective it creates" required>
+        <input name="interval_seconds" type="number" min="30" value="3600" title="Minimum 30 seconds">
+        <input name="department" placeholder="Department">
+        <input name="permission_level_required" type="number" min="0" max="7" value="1">
+        <button type="submit" class="btn-small">Add Scheduled Job</button>
+      </form>
+    </section>
+
+    <section class="panel panel-approvals">
+      <h3>Owner Approvals Awaiting Decision</h3>
+      <div id="approvals-list"></div>
+    </section>
+
+    <section class="panel">
+      <h3>Create a New Business</h3>
+      <form id="create-business-form" class="inline-form">
+        <input name="name" placeholder="Business name" required>
+        <input name="type" placeholder="Type (e.g. opportunity_discovery)">
+        <input name="objective" placeholder="Objective">
+        <input name="budget_usd" type="number" min="0" step="0.01" value="0" title="Authorized USD ceiling — never moved automatically">
+        <button type="submit" class="btn-small">Create Business</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/static/dashboard-render.js"></script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
