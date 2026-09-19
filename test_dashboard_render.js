@@ -42,6 +42,19 @@ test("renderBusinessOptions renders real business shape correctly", () => {
   assert.ok(html.includes("active"));
 });
 
+test("renderAgentOptions handles the empty case", () => {
+  const html = R.renderAgentOptions([]);
+  assert.ok(html.includes("No agents yet"));
+});
+
+test("renderAgentOptions renders real agent shape with its ARC balance", () => {
+  const agents = [{ id: "agt_abc123", name: "Researcher", arc_balance: 87.5 }];
+  const html = R.renderAgentOptions(agents);
+  assert.ok(html.includes('value="agt_abc123"'));
+  assert.ok(html.includes("Researcher"));
+  assert.ok(html.includes("87.5") || html.includes("87.50"));
+});
+
 test("renderBusinessHeader shows budget with the not-moved disclaimer", () => {
   const biz = {
     name: "Test Co", status: "active", objective: "first live API test",
@@ -212,6 +225,52 @@ test("renderOpportunitiesTable never throws on malformed reference_urls_used JSO
   const opportunities = [{ id: "opp_3", topic: "x", confidence_level: "high", summary: "y",
                             reference_urls_used: "not valid json" }];
   const html = R.renderOpportunitiesTable(opportunities); // should not throw
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
+test("renderRobloxTrendsTable handles the empty case", () => {
+  assert.ok(R.renderRobloxTrendsTable([]).includes("No Roblox concepts researched yet"));
+  assert.ok(R.renderRobloxTrendsTable(null).includes("No Roblox concepts researched yet"));
+});
+
+test("renderRobloxTrendsTable renders the real shape from the roblox_trends table", () => {
+  const trends = [{
+    id: "rbx_1", business_id: "biz_1", task_id: "task_1",
+    concept: "obby with a twist mechanic",
+    player_demand_signals: "Moderate, per reference material.",
+    competition_level: "Fragmented.",
+    build_complexity: "Moderate.",
+    target_audience: "Kids/teens.",
+    monetization_fit: "Game passes plausible.",
+    estimated_dev_time: "A few weeks.",
+    similar_successful_games: "A couple of comparable experiences.",
+    risk_factors: "Genre is moderately saturated.",
+    confidence_level: "medium",
+    summary: "Worth a small prototype effort.",
+    reference_urls_used: JSON.stringify(["https://example.com/a"]),
+  }];
+  const html = R.renderRobloxTrendsTable(trends);
+  assert.ok(html.includes("obby with a twist mechanic"));
+  assert.ok(html.includes("confidence: medium"));
+  assert.ok(html.includes("Worth a small prototype effort."));
+  assert.ok(html.includes("Moderate, per reference material."));
+  assert.ok(html.includes("https://example.com/a"));
+  assert.ok(html.includes("confidence-medium"));
+});
+
+test("renderRobloxTrendsTable shows the no-references note when none were used", () => {
+  const trends = [{
+    id: "rbx_2", concept: "x", confidence_level: "low", summary: "y",
+    reference_urls_used: JSON.stringify([]),
+  }];
+  const html = R.renderRobloxTrendsTable(trends);
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
+test("renderRobloxTrendsTable never throws on malformed reference_urls_used JSON", () => {
+  const trends = [{ id: "rbx_3", concept: "x", confidence_level: "high", summary: "y",
+                     reference_urls_used: "not valid json" }];
+  const html = R.renderRobloxTrendsTable(trends); // should not throw
   assert.ok(html.includes("based on general knowledge only"));
 });
 

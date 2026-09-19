@@ -147,6 +147,51 @@ CREATE TABLE IF NOT EXISTS opportunities (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Everything below this point is the customer-facing storefront (the
+-- first path this system has to real-world USD, not just ARC). orders
+-- and real_transactions are DELIBERATELY separate from arc_ledger —
+-- ARC never represents real money, so a real payment must never be
+-- recorded there. A real_transactions row is only ever written by
+-- api.py's Stripe webhook handler after stripe_client.verify_webhook_
+-- signature() succeeds — never speculatively, never before payment is
+-- actually confirmed. See stripe_client.py and fulfillment.py.
+
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    product_type TEXT NOT NULL,       -- 'research_opportunity' | 'research_roblox_trend'
+    topic TEXT NOT NULL,              -- the topic/concept the customer wants researched
+    customer_email TEXT NOT NULL,
+    price_usd_cents INTEGER NOT NULL,
+    currency TEXT DEFAULT 'usd',
+    stripe_session_id TEXT,
+    stripe_payment_intent_id TEXT,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),   -- set once payment is confirmed and the
+                                          -- research task is actually created
+    status TEXT DEFAULT 'pending_payment',
+        -- pending_payment | paid | fulfilled | failed | refunded
+    created_at TEXT DEFAULT (datetime('now')),
+    paid_at TEXT,
+    fulfilled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS real_transactions (
+    id TEXT PRIMARY KEY,
+    order_id TEXT REFERENCES orders(id),
+    direction TEXT NOT NULL,          -- 'in' (customer paid) | 'out' (refund/payout, future)
+    source TEXT NOT NULL,             -- e.g. "stripe_customer:<email>"
+    destination TEXT NOT NULL,        -- e.g. "owner_stripe_account"
+    amount_usd_cents INTEGER NOT NULL,
+    currency TEXT DEFAULT 'usd',
+    business_id TEXT REFERENCES businesses(id),
+    purpose TEXT,
+    stripe_event_id TEXT UNIQUE,      -- the verified webhook event id — UNIQUE so a
+                                       -- retried/duplicate webhook delivery can never
+                                       -- record the same real payment twice
+    compliance_status TEXT DEFAULT 'unreviewed',
+    occurred_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS roblox_trends (
     id TEXT PRIMARY KEY,
     business_id TEXT REFERENCES businesses(id),

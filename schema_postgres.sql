@@ -129,6 +129,43 @@ CREATE TABLE IF NOT EXISTS opportunities (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- See schema.sql for the full explanation of orders/real_transactions:
+-- deliberately separate from arc_ledger since ARC never represents
+-- real money, and real_transactions is only ever written after a
+-- verified Stripe webhook (stripe_client.verify_webhook_signature()).
+
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    product_type TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    customer_email TEXT NOT NULL,
+    price_usd_cents INTEGER NOT NULL,
+    currency TEXT DEFAULT 'usd',
+    stripe_session_id TEXT,
+    stripe_payment_intent_id TEXT,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    status TEXT DEFAULT 'pending_payment',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    paid_at TIMESTAMPTZ,
+    fulfilled_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS real_transactions (
+    id TEXT PRIMARY KEY,
+    order_id TEXT REFERENCES orders(id),
+    direction TEXT NOT NULL,
+    source TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    amount_usd_cents INTEGER NOT NULL,
+    currency TEXT DEFAULT 'usd',
+    business_id TEXT REFERENCES businesses(id),
+    purpose TEXT,
+    stripe_event_id TEXT UNIQUE,
+    compliance_status TEXT DEFAULT 'unreviewed',
+    occurred_at TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS roblox_trends (
     id TEXT PRIMARY KEY,
     business_id TEXT REFERENCES businesses(id),

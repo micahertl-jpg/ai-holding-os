@@ -27,8 +27,8 @@ from typing import Optional, List
 import os
 import threading
 
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Response, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -39,10 +39,50 @@ from approval import ApprovalQueue
 from orchestrator import Orchestrator
 from scheduler import JobRegistry, run_forever as scheduler_run_forever
 import executor as executor_module
+import fulfillment as fulfillment_module
+import stripe_client
+import dashboard_auth
+from db import new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
 SCHEDULER_POLL_INTERVAL_SECONDS = float(os.environ.get("SCHEDULER_POLL_INTERVAL_SECONDS", "15"))
 EXECUTOR_POLL_INTERVAL_SECONDS = float(os.environ.get("EXECUTOR_POLL_INTERVAL_SECONDS", "10"))
+FULFILLMENT_POLL_INTERVAL_SECONDS = float(os.environ.get("FULFILLMENT_POLL_INTERVAL_SECONDS", "10"))
+
+# ---------------------------------------------------------------------
+# The storefront — the first path this system has to real-world USD.
+# STORE_BUSINESS_ID names which existing business (create one in the
+# dashboard first) fulfills paid orders; the store refuses to accept
+# any payment until it's configured, rather than accepting money with
+# nowhere real to route the resulting work. Prices are configurable via
+# env vars so changing them never requires a code change/redeploy of
+# logic, only a variable.
+# ---------------------------------------------------------------------
+STORE_BUSINESS_ID = os.environ.get("STORE_BUSINESS_ID")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
+PRODUCT_CATALOG = {
+    "research_opportunity": {
+        "name": "Business Opportunity Research Report",
+        "description": (
+            "A structured, evidence-based assessment of a business idea or niche — "
+            "market size, competition, startup cost, revenue potential, and more, "
+            "each framed as an estimate with an explicit confidence level. Delivered "
+            "by email, usually within a minute of payment."
+        ),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_OPPORTUNITY_CENTS", "1900")),
+    },
+    "research_roblox_trend": {
+        "name": "Roblox Concept Trend Research Report",
+        "description": (
+            "A structured assessment of a Roblox game genre/mechanic/concept — "
+            "player demand signals, competition, build complexity, monetization fit, "
+            "and more, each framed as an estimate with an explicit confidence level. "
+            "Delivered by email, usually within a minute of payment."
+        ),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_ROBLOX_CENTS", "1900")),
+    },
+}
 
 # ---------------------------------------------------------------------
 # Wiring — one shared Database + one instance of each module for the
@@ -84,12 +124,24 @@ async def lifespan(app: FastAPI):
     executor_thread.start()
     state["executor_thread"] = executor_thread
 
+    fulfillment_stop_event = threading.Event()
+    fulfillment_thread = threading.Thread(
+        target=fulfillment_module.run_forever,
+        args=(db, FULFILLMENT_POLL_INTERVAL_SECONDS, fulfillment_stop_event),
+        daemon=True,
+        name="fulfillment-thread",
+    )
+    fulfillment_thread.start()
+    state["fulfillment_thread"] = fulfillment_thread
+
     yield
 
     stop_event.set()
     executor_stop_event.set()
+    fulfillment_stop_event.set()
     scheduler_thread.join(timeout=5)
     executor_thread.join(timeout=5)
+    fulfillment_thread.join(timeout=5)
     db.close()
 
 
@@ -101,11 +153,54 @@ app = FastAPI(title="AI Holding Company OS — Core API", version="0.1.0", lifes
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.middleware("http")
+async def require_dashboard_auth(request: Request, call_next):
+    """Protects every internal route (dashboard UI + JSON API) with HTTP
+    Basic Auth. /health and the public storefront (/store/*, plus its
+    specific static assets) are left open on purpose — see
+    dashboard_auth.py's module docstring for why.
+
+    Fails CLOSED: if DASHBOARD_USERNAME/DASHBOARD_PASSWORD aren't set in
+    the environment, every protected route returns 503 rather than
+    silently staying open. This matches how the rest of this codebase
+    treats a missing credential (ANTHROPIC_API_KEY, STRIPE_SECRET_KEY,
+    etc.) — refuse loudly, never degrade silently."""
+    path = request.url.path
+
+    if dashboard_auth.is_public_path(path):
+        return await call_next(request)
+
+    if not dashboard_auth.credentials_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Dashboard auth is not configured. Set DASHBOARD_USERNAME "
+                                "and DASHBOARD_PASSWORD to enable access."},
+        )
+
+    auth_header = request.headers.get("authorization")
+    if not dashboard_auth.check_credentials(auth_header):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required."},
+            headers={"WWW-Authenticate": 'Basic realm="AI Holding Company OS"'},
+        )
+
+    return await call_next(request)
+
+
 @app.get("/dashboard")
 def dashboard_ui():
     """The owner-facing single-page dashboard. Plain HTML/CSS/JS, no
     build step, no Node/npm required — see static/dashboard.html."""
     return FileResponse(str(STATIC_DIR / "dashboard.html"))
+
+
+@app.get("/store")
+def store_ui():
+    """The public, customer-facing storefront — deliberately a
+    separate page/look from the owner's internal /dashboard, since
+    real paying strangers land here, not just the owner."""
+    return FileResponse(str(STATIC_DIR / "store.html"))
 
 
 def row_to_dict(row):
@@ -201,6 +296,12 @@ class ResearchRobloxTrendRequest(BaseModel):
     budget_arc: float = 0.0
 
 
+class CheckoutRequest(BaseModel):
+    product_type: str
+    topic: str
+    customer_email: str
+
+
 # ---------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------
@@ -229,6 +330,9 @@ def health(response: Response):
 
     execu = state.get("executor_thread")
     checks["executor_thread"] = "ok" if (execu and execu.is_alive()) else "not running"
+
+    fulfill = state.get("fulfillment_thread")
+    checks["fulfillment_thread"] = "ok" if (fulfill and fulfill.is_alive()) else "not running"
 
     healthy = all(v == "ok" for v in checks.values())
     if not healthy:
@@ -509,6 +613,170 @@ def list_roblox_trends(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+# ---------------------------------------------------------------------
+# Storefront — the first path this system has to real-world USD. This
+# is the ONLY part of the API that touches real money, and it follows
+# one hard rule throughout: an order is never marked 'paid', and a
+# real_transactions row is never written, except in direct response to
+# a Stripe webhook that stripe_client.verify_webhook_signature() has
+# cryptographically verified. Nothing here ever just trusts a client
+# request that a payment happened.
+# ---------------------------------------------------------------------
+
+@app.get("/store/products")
+def list_store_products():
+    """Public catalog — powers static/store.html. Returns 200 even if
+    the store isn't configured yet (STORE_BUSINESS_ID unset); checkout
+    is what actually enforces that, so browsing/pricing still works
+    while you're setting things up."""
+    return {
+        "products": [
+            {"product_type": key, **value} for key, value in PRODUCT_CATALOG.items()
+        ],
+        "store_configured": bool(STORE_BUSINESS_ID),
+    }
+
+
+@app.post("/store/checkout")
+def create_checkout(req: CheckoutRequest):
+    if not STORE_BUSINESS_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Store is not configured yet — set STORE_BUSINESS_ID to an existing "
+                   "business id before accepting payments.",
+        )
+    if not state["businesses"].get(STORE_BUSINESS_ID):
+        raise HTTPException(
+            status_code=503,
+            detail=f"STORE_BUSINESS_ID={STORE_BUSINESS_ID!r} does not match any existing business.",
+        )
+    if req.product_type not in PRODUCT_CATALOG:
+        raise HTTPException(status_code=400, detail=f"Unknown product_type: {req.product_type!r}")
+    if not req.topic.strip():
+        raise HTTPException(status_code=400, detail="topic is required")
+    if "@" not in req.customer_email:
+        raise HTTPException(status_code=400, detail="customer_email looks invalid")
+    if not PUBLIC_BASE_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Store is not configured yet — set PUBLIC_BASE_URL "
+                   "(e.g. https://your-app.up.railway.app) so Stripe knows where to "
+                   "send the customer back after payment.",
+        )
+
+    product = PRODUCT_CATALOG[req.product_type]
+    order_id = new_id("ord")
+    db = state["db"]
+    db.execute(
+        "INSERT INTO orders (id, product_type, topic, customer_email, price_usd_cents, "
+        "currency, business_id, status) VALUES (?, ?, ?, ?, ?, 'usd', ?, 'pending_payment')",
+        (order_id, req.product_type, req.topic.strip(), req.customer_email,
+         product["price_usd_cents"], STORE_BUSINESS_ID),
+    )
+
+    try:
+        session = stripe_client.create_checkout_session(
+            product_name=product["name"],
+            unit_amount_cents=product["price_usd_cents"],
+            currency="usd",
+            customer_email=req.customer_email,
+            success_url=f"{PUBLIC_BASE_URL}/static/store-success.html?order_id={order_id}",
+            cancel_url=f"{PUBLIC_BASE_URL}/static/store.html",
+            metadata={"order_id": order_id},
+        )
+    except stripe_client.StripeError as e:
+        db.execute("UPDATE orders SET status='failed' WHERE id=?", (order_id,))
+        raise HTTPException(status_code=502, detail=f"Could not start checkout: {e}")
+
+    db.execute("UPDATE orders SET stripe_session_id=? WHERE id=?", (session["id"], order_id))
+    return {"order_id": order_id, "checkout_url": session["url"]}
+
+
+@app.get("/store/orders/{order_id}")
+def get_order_status(order_id: str):
+    """Public, minimal status check for store-success.html to poll —
+    deliberately returns only what a customer should see, not internal
+    fields like business_id or the linked task's full detail."""
+    order = state["db"].query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    return {
+        "id": order["id"],
+        "product_type": order["product_type"],
+        "topic": order["topic"],
+        "status": order["status"],
+    }
+
+
+@app.post("/store/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+        event = stripe_client.verify_webhook_signature(payload, sig_header)
+    except stripe_client.WebhookVerificationError as e:
+        # 400, not 500: this could be an attacker, a misconfigured
+        # secret, or a stale/replayed request — never treat it as our
+        # bug, and never act on the payload.
+        raise HTTPException(status_code=400, detail=f"webhook verification failed: {e}")
+
+    if event.get("type") != "checkout.session.completed":
+        return {"status": "ignored", "type": event.get("type")}
+
+    session_obj = event.get("data", {}).get("object", {})
+    order_id = (session_obj.get("metadata") or {}).get("order_id")
+    if not order_id:
+        raise HTTPException(status_code=400, detail="webhook missing metadata.order_id")
+
+    db = state["db"]
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    if not order:
+        raise HTTPException(status_code=404, detail=f"webhook references unknown order {order_id!r}")
+
+    stripe_event_id = event.get("id")
+    amount_total = session_obj.get("amount_total", order["price_usd_cents"])
+    currency = session_obj.get("currency", order["currency"])
+    payment_intent_id = session_obj.get("payment_intent")
+
+    # Idempotency: real_transactions.stripe_event_id is UNIQUE, so a
+    # duplicate webhook delivery (Stripe retries on anything but a 2xx)
+    # hitting this INSERT twice raises here — caught and treated as
+    # "already processed", never as a second real payment.
+    try:
+        db.execute(
+            "INSERT INTO real_transactions (id, order_id, direction, source, destination, "
+            "amount_usd_cents, currency, business_id, purpose, stripe_event_id) "
+            "VALUES (?, ?, 'in', ?, 'owner_stripe_account', ?, ?, ?, ?, ?)",
+            (new_id("txn"), order_id, f"stripe_customer:{order['customer_email']}",
+             amount_total, currency, order["business_id"],
+             f"store order: {order['product_type']} — {order['topic']}", stripe_event_id),
+        )
+    except Exception:
+        return {"status": "already_processed", "order_id": order_id}
+
+    if order["status"] == "pending_payment":
+        db.execute(
+            "UPDATE orders SET status='paid', paid_at=datetime('now'), "
+            "stripe_payment_intent_id=? WHERE id=?",
+            (payment_intent_id, order_id),
+        )
+        task_type = order["product_type"]
+        task_input = ({"topic": order["topic"], "reference_urls": []}
+                      if task_type == "research_opportunity"
+                      else {"concept": order["topic"], "reference_urls": []})
+        task_id = state["orchestrator"].create_task(
+            order["business_id"], f"[Paid order {order_id}] {order['topic']}",
+            department="research", priority=2, permission_level_required=2,
+            task_type=task_type, task_input=task_input,
+        )
+        db.execute("UPDATE orders SET task_id=? WHERE id=?", (task_id, order_id))
+        db.audit("stripe_webhook", "order_paid", "order", order_id,
+                  {"amount_usd_cents": amount_total, "task_id": task_id})
+
+    return {"status": "processed", "order_id": order_id}
 
 
 # ---------------------------------------------------------------------
