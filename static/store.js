@@ -39,6 +39,11 @@
         <form class="order-form" data-product-type="${escapeHtml(p.product_type)}">
           <input name="topic" placeholder="What should we research? (e.g. a topic, niche, or game concept)" required>
           <input name="customer_email" type="email" placeholder="Your email (report is sent here)" required>
+          <label class="terms-agree">
+            <input type="checkbox" name="agree_terms" required>
+            I agree to the <a href="/store/terms" target="_blank" rel="noopener">Terms of Service,
+            Refund Policy &amp; Privacy Notice</a>
+          </label>
           <button type="submit">Pay ${fmtPrice(p.price_usd_cents)} &amp; Order Report</button>
           <p class="form-error"></p>
         </form>

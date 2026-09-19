@@ -203,6 +203,17 @@ def store_ui():
     return FileResponse(str(STATIC_DIR / "store.html"))
 
 
+@app.get("/store/terms")
+def store_terms():
+    """Public terms of service / refund policy / privacy notice.
+    Required before real payments should be taken — a checkout page
+    with zero disclosure of what's being sold, how refunds work, or
+    what happens to a customer's data is a real legal-exposure gap,
+    not cosmetic. Linked from store.html's and store-success.html's
+    footers."""
+    return FileResponse(str(STATIC_DIR / "store-legal.html"))
+
+
 def row_to_dict(row):
     """sqlite3.Row and psycopg2 RealDictRow both support dict(row)."""
     return dict(row) if row is not None else None

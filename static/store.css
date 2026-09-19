@@ -121,6 +121,24 @@ body {
   cursor: not-allowed;
 }
 
+.terms-agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.terms-agree input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.terms-agree a {
+  color: var(--accent);
+}
+
 .form-error {
   color: var(--error);
   font-size: 0.85rem;

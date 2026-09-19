@@ -22,9 +22,10 @@ def _basic_header(username, password):
 
 def test_public_paths_are_recognized():
     for path in ("/health", "/store", "/store/products", "/store/checkout",
-                 "/store/webhook", "/store/orders/ord_123",
+                 "/store/webhook", "/store/orders/ord_123", "/store/terms",
                  "/static/store.html", "/static/store.css", "/static/store.js",
-                 "/static/store-success.html", "/static/store-success.js"):
+                 "/static/store-success.html", "/static/store-success.js",
+                 "/static/store-legal.html"):
         assert is_public_path(path), f"{path} should be public"
     print("PASS: the public storefront/health paths are all recognized as public")
 

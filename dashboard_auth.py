@@ -35,6 +35,7 @@ PUBLIC_PATH_PREFIXES = ("/health", "/store")
 PUBLIC_STATIC_PATHS = {
     "/static/store.html", "/static/store.css", "/static/store.js",
     "/static/store-success.html", "/static/store-success.js",
+    "/static/store-legal.html",
 }
 
 
