@@ -113,6 +113,22 @@
         thread finishes.</p>
     </section>
 
+    <section class="panel panel-opportunities">
+      <h3>App Development — Feasibility Assessments</h3>
+      <div id="app-feasibility-list"></div>
+      <form id="research-app-feasibility-form" class="inline-form">
+        <input name="concept" placeholder="App idea or concept to assess" required>
+        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+        <button type="submit" class="btn-small">Assess Feasibility</button>
+      </form>
+      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+        see confidence_level on each card. Timelines and costs are rough ranges, never
+        promises. Any concept touching a regulated domain (payments, health data, minors,
+        etc.) is flagged as a risk requiring dedicated legal/compliance review, not resolved
+        here. Runs in the background; results appear automatically once the executor thread
+        finishes.</p>
+    </section>
+
     <section class="panel panel-trading">
       <h3>Automated Stock Trading — PAPER TRADING ONLY, no real money moves</h3>
       <div id="trading-portfolio"></div>

@@ -292,3 +292,30 @@ CREATE TABLE IF NOT EXISTS trading_snapshots (
     open_positions INTEGER NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- App Development — feasibility/planning assessments produced by the
+-- research_app_feasibility task type. Every field is the model's
+-- ESTIMATE, never a guaranteed timeline/cost/outcome — see
+-- tasks/research_app_feasibility.py's system prompt, which enforces
+-- this framing and requires regulated-domain risks (payments, health
+-- data, etc.) to be flagged for specialist review rather than resolved
+-- here. confidence_level and complexity_tier are both mandatory,
+-- validated enums.
+CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    concept TEXT NOT NULL,
+    platform_recommendation TEXT,
+    suggested_tech_stack TEXT,
+    complexity_tier TEXT,             -- simple|moderate|complex|very_complex
+    estimated_timeline TEXT,
+    estimated_cost_range TEXT,
+    mvp_feature_scope TEXT,
+    key_technical_risks TEXT,
+    similar_existing_apps TEXT,
+    confidence_level TEXT,            -- low|medium|high — see research_app_feasibility.py
+    summary TEXT,
+    reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    created_at TEXT DEFAULT (datetime('now'))
+);

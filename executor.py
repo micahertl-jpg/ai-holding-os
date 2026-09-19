@@ -28,6 +28,9 @@ from llm_client import get_default_client, CostTrackingClient
 from tasks.summarize_urls import summarize_urls
 from tasks.research_opportunity import research_opportunity, OpportunityAssessmentError
 from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssessmentError
+from tasks.research_app_feasibility import (
+    research_app_feasibility, AppFeasibilityAssessmentError,
+)
 from tasks.trading_cycle import run_trading_cycle, TradingCycleError
 from tasks.trading_strategy_review import (
     compute_stats, propose_strategy_update, TradingStrategyReviewError,
@@ -192,6 +195,47 @@ def _handle_research_roblox_trend(task_row, client, db):
 
     result_text = (
         f"Roblox trend assessment saved (id={trend_id}, confidence={assessment['confidence_level']}): "
+        f"{assessment['summary']}"
+    )
+    reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
+
+
+def _handle_research_app_feasibility(task_row, client, db):
+    task_input = json.loads(task_row["task_input"]) if task_row["task_input"] else {}
+    concept = task_input.get("concept")
+    if not concept:
+        raise ValueError("research_app_feasibility task_input missing required 'concept'")
+    reference_urls = task_input.get("reference_urls", [])
+
+    tracked_client = CostTrackingClient(client)
+    assessment = research_app_feasibility(concept, tracked_client, reference_urls=reference_urls)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    assessment_id = new_id("app")
+    db.execute(
+        "INSERT INTO app_feasibility_assessments (id, business_id, task_id, concept, "
+        "platform_recommendation, suggested_tech_stack, complexity_tier, estimated_timeline, "
+        "estimated_cost_range, mvp_feature_scope, key_technical_risks, similar_existing_apps, "
+        "confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (assessment_id, task_row["business_id"], task_row["id"], assessment["concept"],
+         assessment["platform_recommendation"], assessment["suggested_tech_stack"],
+         assessment["complexity_tier"], assessment["estimated_timeline"],
+         assessment["estimated_cost_range"], assessment["mvp_feature_scope"],
+         assessment["key_technical_risks"], assessment["similar_existing_apps"],
+         assessment["confidence_level"], assessment["summary"],
+         json.dumps(assessment["reference_urls_used"])),
+    )
+    db.audit("executor", "app_feasibility_assessed", "app_feasibility_assessment", assessment_id,
+              {"concept": concept, "confidence_level": assessment["confidence_level"],
+               "complexity_tier": assessment["complexity_tier"]})
+
+    result_text = (
+        f"App feasibility assessment saved (id={assessment_id}, "
+        f"confidence={assessment['confidence_level']}, complexity={assessment['complexity_tier']}): "
         f"{assessment['summary']}"
     )
     reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
@@ -459,6 +503,7 @@ HANDLERS = {
     "summarize_urls": _handle_summarize_urls,
     "research_opportunity": _handle_research_opportunity,
     "research_roblox_trend": _handle_research_roblox_trend,
+    "research_app_feasibility": _handle_research_app_feasibility,
     "trading_cycle": _handle_trading_cycle,
     "trading_strategy_review": _handle_trading_strategy_review,
 }

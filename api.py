@@ -310,6 +310,15 @@ class ResearchRobloxTrendRequest(BaseModel):
     budget_arc: float = 0.0
 
 
+class ResearchAppFeasibilityRequest(BaseModel):
+    concept: str
+    reference_urls: List[str] = []
+    department: Optional[str] = None
+    permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
+    priority: int = 3
+    budget_arc: float = 0.0
+
+
 class CheckoutRequest(BaseModel):
     product_type: str
     topic: str
@@ -519,6 +528,9 @@ def business_dashboard(business_id: str):
     roblox_trends = [row_to_dict(r) for r in
                       db.query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+    app_feasibility_assessments = [row_to_dict(r) for r in
+                                    db.query("SELECT * FROM app_feasibility_assessments WHERE "
+                                             "business_id=? ORDER BY created_at DESC", (business_id,))]
     trading_portfolio = _trading_portfolio_view(business_id)
     trading_trades = []
     if trading_portfolio:
@@ -537,6 +549,7 @@ def business_dashboard(business_id: str):
         "scheduled_jobs": scheduled_jobs,
         "opportunities": opportunities,
         "roblox_trends": roblox_trends,
+        "app_feasibility_assessments": app_feasibility_assessments,
         "trading_portfolio": trading_portfolio,
         "trading_trades": trading_trades,
         "trading_strategy_versions": trading_strategy_versions,
@@ -758,6 +771,44 @@ def list_roblox_trends(business_id: str):
         raise HTTPException(status_code=404, detail="business not found")
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
+                               "ORDER BY created_at DESC", (business_id,))]
+
+
+# ---------------------------------------------------------------------
+# App Development — the third business vertical. Same pattern as
+# Opportunity Discovery/Roblox Game Development above: creates a
+# task_type='research_app_feasibility' task, the executor thread picks
+# it up and runs the real LLM assessment, saving a row to
+# `app_feasibility_assessments`. This endpoint does no LLM work itself
+# and returns immediately. Research/planning only -- see
+# tasks/research_app_feasibility.py: it never promises a delivery date
+# or dollar figure as fact, and explicitly flags (never resolves) any
+# regulated-domain risk (payments, health data, etc.) for dedicated
+# legal/compliance review.
+# ---------------------------------------------------------------------
+
+@app.post("/businesses/{business_id}/app-feasibility/research")
+def request_app_feasibility_research(business_id: str, req: ResearchAppFeasibilityRequest):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if len(req.reference_urls) > 3:
+        raise HTTPException(status_code=400, detail="reference_urls is capped at 3")
+    task_id = state["orchestrator"].create_task(
+        business_id, f"Assess app feasibility: {req.concept}", department=req.department,
+        priority=req.priority, budget_arc=req.budget_arc,
+        permission_level_required=req.permission_level_required,
+        task_type="research_app_feasibility",
+        task_input={"concept": req.concept, "reference_urls": req.reference_urls},
+    )
+    return {"task_id": task_id}
+
+
+@app.get("/businesses/{business_id}/app-feasibility")
+def list_app_feasibility_assessments(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    return [row_to_dict(r) for r in
+            state["db"].query("SELECT * FROM app_feasibility_assessments WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
 
 
