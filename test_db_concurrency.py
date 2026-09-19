@@ -13,10 +13,13 @@ import threading
 
 from db import Database
 from banker import Banker, InsufficientArcError
+from approval import ApprovalQueue
 from registry import BusinessRegistry, AgentRegistry
+from orchestrator import Orchestrator
 
 TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_concurrency.db")
 CHARGE_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_concurrency_charge.db")
+COMPLETE_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_concurrency_complete.db")
 THREAD_COUNT = 20
 REWARDS_PER_THREAD = 10
 
@@ -98,6 +101,80 @@ def test_concurrent_charge_never_overdraws():
     os.remove(CHARGE_TEST_DB_PATH)
 
 
+def test_concurrent_complete_task_has_exactly_one_winner():
+    """Regression test for the same class of race as
+    test_concurrent_charge_never_overdraws, found in the same review
+    pass: orchestrator.complete_task() read a task's status, checked it
+    in Python, then wrote 'completed' -- a window where two concurrent
+    callers (e.g. the owner manually completing via POST
+    /tasks/{id}/complete at the same moment the executor's background
+    thread auto-completes it) could both pass the check and both
+    charge/reward ARC for ONE task's completion. Fixed the same way:
+    the status check moved into the UPDATE's WHERE clause, so only one
+    caller can ever win the transition."""
+    if os.path.exists(COMPLETE_TEST_DB_PATH):
+        os.remove(COMPLETE_TEST_DB_PATH)
+    db = Database(COMPLETE_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    agents = AgentRegistry(db)
+    banker = Banker(db)
+    approvals = ApprovalQueue(db)
+    orch = Orchestrator(db, banker, approvals)
+
+    biz_id = businesses.create("Complete Race Test Co", "test", "prove complete_task is race-safe")
+    agent_id = agents.create(biz_id, "Worker", role="test", permission_level=1)
+    agents.set_status(agent_id, "idle")
+    starting_balance = 1000.0
+    banker.allocate(biz_id, agent_id, starting_balance, reason="starting balance")
+
+    task_id = orch.create_task(biz_id, "do a thing", permission_level_required=1)
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "assigned", task["status"]
+
+    reward_amount = 10.0
+    succeeded, failed, errors = [], [], []
+    lock = threading.Lock()
+
+    def hammer():
+        try:
+            orch.complete_task(task_id, result="done", cost_arc=0, reward_arc=reward_amount)
+            with lock:
+                succeeded.append(1)
+        except ValueError:
+            with lock:
+                failed.append(1)
+        except Exception as e:
+            with lock:
+                errors.append(e)
+
+    threads = [threading.Thread(target=hammer) for _ in range(THREAD_COUNT)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"unexpected errors: {errors[:3]}"
+    assert len(succeeded) == 1, (
+        f"expected exactly 1 winner completing this task, got {len(succeeded)} -- "
+        f"more than one means the task was double-completed and ARC was double-rewarded"
+    )
+    assert len(failed) == THREAD_COUNT - 1
+
+    final_balance = banker.balance(agent_id)
+    assert final_balance == starting_balance + reward_amount, (
+        f"expected exactly one reward of {reward_amount} applied "
+        f"({starting_balance} + {reward_amount} = {starting_balance + reward_amount}), "
+        f"got {final_balance} -- ARC was rewarded more than once"
+    )
+
+    final_task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert final_task["status"] == "completed"
+    print(f"PASS: {THREAD_COUNT} concurrent complete_task() calls for the same task -- "
+          f"exactly 1 winner, ARC rewarded exactly once, no race")
+    db.close()
+    os.remove(COMPLETE_TEST_DB_PATH)
+
+
 def main():
     if os.path.exists(TEST_DB_PATH):
         os.remove(TEST_DB_PATH)
@@ -151,4 +228,5 @@ def main():
 if __name__ == "__main__":
     main()
     test_concurrent_charge_never_overdraws()
+    test_concurrent_complete_task_has_exactly_one_winner()
     print("\nAll db concurrency checks passed.")

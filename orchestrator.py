@@ -134,7 +134,24 @@ class Orchestrator:
         task = self.db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
         if not task:
             raise ValueError("unknown task")
-        if task["status"] not in ("assigned", "in_progress"):
+
+        # Atomic guard, same reasoning and pattern as banker.charge()'s fix
+        # (see its docstring): a separate "read status, check in Python,
+        # then write" here has a real race window. Two callers racing to
+        # complete the SAME task — e.g. the owner manually completing via
+        # POST /tasks/{id}/complete at the exact moment the executor's
+        # background thread auto-completes it — could otherwise both pass
+        # the status check and both charge/reward ARC for one task's
+        # completion. Folding the status check into the UPDATE's WHERE
+        # clause makes only one caller ever win this transition; the loser
+        # gets the same ValueError as before (and never charges/rewards
+        # anything), it just can't race anymore.
+        updated = self.db.execute(
+            "UPDATE tasks SET status='completed', result=?, cost_arc=?, "
+            "completed_at=datetime('now') WHERE id=? AND status IN ('assigned','in_progress')",
+            (result, cost_arc, task_id),
+        )
+        if updated.rowcount == 0:
             raise ValueError(f"cannot complete task in status {task['status']}")
 
         if cost_arc > 0:
@@ -144,10 +161,6 @@ class Orchestrator:
             self.banker.reward(task["agent_id"], task["business_id"], reward_arc,
                                 reason=reason or "verified task completion", task_id=task_id)
 
-        self.db.execute(
-            "UPDATE tasks SET status='completed', result=?, cost_arc=?, "
-            "completed_at=datetime('now') WHERE id=?", (result, cost_arc, task_id),
-        )
         self.db.execute("UPDATE agents SET status='idle', updated_at=datetime('now') "
                          "WHERE id=?", (task["agent_id"],))
         self.db.audit("system", "complete_task", "task", task_id,
@@ -157,8 +170,26 @@ class Orchestrator:
         task = self.db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
         if not task:
             raise ValueError("unknown task")
-        self.db.execute("UPDATE tasks SET status='failed', result=? WHERE id=?",
-                         (reason, task_id))
+
+        # Same atomic-guard reasoning as complete_task() above, but a
+        # no-op (not a raised error) when the task already reached a
+        # terminal state: fail_task is called from executor.run_once()'s
+        # own exception handler, where raising here would let a NEW
+        # exception escape uncaught (nothing wraps that call in its own
+        # try/except) and abort the rest of that pass. A task that's
+        # already completed/failed/cancelled — e.g. it lost the same race
+        # complete_task() guards against — should simply stay whatever it
+        # already legitimately became, not get silently overwritten to
+        # 'failed' by the loser of that race. Before this guard existed,
+        # fail_task() would unconditionally overwrite ANY task's status,
+        # including one that had already completed successfully.
+        updated = self.db.execute(
+            "UPDATE tasks SET status='failed', result=? WHERE id=? "
+            "AND status NOT IN ('completed','failed','cancelled')",
+            (reason, task_id),
+        )
+        if updated.rowcount == 0:
+            return
         if task["agent_id"]:
             self.db.execute("UPDATE agents SET status='idle', updated_at=datetime('now') "
                              "WHERE id=?", (task["agent_id"],))
