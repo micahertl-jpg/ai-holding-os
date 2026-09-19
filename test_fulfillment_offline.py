@@ -368,6 +368,82 @@ def test_missing_assessment_row_fails_loudly_not_silently():
     os.remove(TEST_DB_PATH)
 
 
+def test_build_failure_exhausts_retries_and_marks_order_failed():
+    """Regression test for a real bug: an order whose expected result
+    row is permanently missing (a data bug elsewhere, not something
+    that fixes itself) used to stay 'paid' forever, re-logging the
+    identical error on every single fulfillment pass with no terminal
+    state and no owner alert, ever."""
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": "x"})
+    orch.complete_task(task_id, result="ok")
+    # deliberately do NOT insert an opportunities row -- every pass fails identically
+    order_id = _make_order(db, biz_id, task_id=task_id)
+
+    with patch.object(fulfillment, "BUILD_FAILURE_RETRY_LIMIT", 3), \
+         patch.object(fulfillment, "OWNER_EMAIL", "owner@example.com"), \
+         patch("fulfillment.send_email") as mock_send:
+        for _ in range(2):
+            outcomes = fulfillment.run_once(db)
+            assert outcomes[0][1].startswith("build_failed:"), outcomes
+            order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+            assert order["status"] == "paid"
+        assert mock_send.call_count == 0, "no owner alert until the retry limit is actually hit"
+
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes[0][0] == order_id
+    assert outcomes[0][1].startswith("failed: build_failed_permanently:"), outcomes
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "failed"
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "owner@example.com"
+    assert "3 attempts" in call_args[2]
+    print("PASS: an order whose report data never appears is eventually marked failed "
+          "and the owner alerted, not retried forever with no terminal state")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_build_failure_retry_count_is_scoped_to_its_own_order():
+    """The retry-limit query counts audit_log rows by target_id -- a
+    second order that starts failing must get its own fresh count, not
+    inherit however many build-failure rows an unrelated older order
+    has already piled up in the same audit log."""
+    db, orch, biz_id = _setup()
+
+    def _make_stuck_order():
+        task_id = orch.create_task(biz_id, "Research", department="research",
+                                    permission_level_required=2, task_type="research_opportunity",
+                                    task_input={"topic": "x"})
+        orch.complete_task(task_id, result="ok")
+        return _make_order(db, biz_id, task_id=task_id)
+
+    noisy_order_id = _make_stuck_order()
+
+    with patch.object(fulfillment, "BUILD_FAILURE_RETRY_LIMIT", 2), \
+         patch("fulfillment.send_email"):
+        for _ in range(3):
+            fulfillment.run_once(db)
+        noisy_order = db.query_one("SELECT * FROM orders WHERE id=?", (noisy_order_id,))
+        assert noisy_order["status"] == "failed"
+
+        target_order_id = _make_stuck_order()
+        outcomes = fulfillment.run_once(db)
+
+    target_outcome = next(o for o in outcomes if o[0] == target_order_id)
+    assert target_outcome[1].startswith("build_failed:"), target_outcome
+    target_order = db.query_one("SELECT * FROM orders WHERE id=?", (target_order_id,))
+    assert target_order["status"] == "paid", \
+        "a fresh order must not inherit another order's build-failure count"
+    print("PASS: each order's retry count is scoped to its own audit log entries")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_completed_order_gets_emailed_and_marked_fulfilled()
     test_report_email_escapes_html_in_customer_and_model_supplied_fields()
@@ -379,6 +455,8 @@ if __name__ == "__main__":
     test_still_running_order_is_left_alone()
     test_unpaid_orders_are_never_touched()
     test_missing_assessment_row_fails_loudly_not_silently()
+    test_build_failure_exhausts_retries_and_marks_order_failed()
+    test_build_failure_retry_count_is_scoped_to_its_own_order()
     test_app_feasibility_order_gets_emailed_and_marked_fulfilled()
     test_app_feasibility_missing_assessment_row_fails_loudly_not_silently()
     print("\nAll fulfillment.py offline tests passed.")
