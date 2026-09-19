@@ -207,6 +207,69 @@ def test_overview_aggregation_spans_all_businesses():
           "this feature closes -- plus correct per-business and global rollup counts")
 
 
+DELETE_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_delete_research_logic.db")
+
+
+def test_delete_research_items_removes_only_the_targeted_row():
+    """Mirrors the logic behind DELETE .../opportunities/{id},
+    .../roblox-trends/{id}, and .../app-feasibility/{id}: the owner
+    asked for a way to clear out old research cards they no longer
+    want cluttering the dashboard. Each endpoint scopes its lookup to
+    (id, business_id) before deleting -- this proves that scoping
+    actually excludes a different business, not just that the delete
+    itself works."""
+    if os.path.exists(DELETE_TEST_DB_PATH):
+        os.remove(DELETE_TEST_DB_PATH)
+    db = Database(DELETE_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    biz_id = businesses.create("Delete Test Co", "test", "prove delete endpoints work", 0.0)
+    other_biz_id = businesses.create("Other Co", "test", "a second, unrelated business", 0.0)
+
+    db.execute(
+        "INSERT INTO opportunities (id, business_id, topic, confidence_level, summary) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("opp_1", biz_id, "Test topic", "medium", "summary"),
+    )
+    assert db.query_one("SELECT id FROM opportunities WHERE id=?", ("opp_1",)) is not None
+    # Same guard the endpoint applies before deleting: a real id looked
+    # up under the WRONG business_id must not resolve.
+    assert db.query_one("SELECT id FROM opportunities WHERE id=? AND business_id=?",
+                         ("opp_1", other_biz_id)) is None
+    db.execute("DELETE FROM opportunities WHERE id=?", ("opp_1",))
+    db.audit("owner", "delete_opportunity", "opportunity", "opp_1", {"business_id": biz_id})
+    assert db.query_one("SELECT id FROM opportunities WHERE id=?", ("opp_1",)) is None
+    print("PASS: delete_opportunity removes the row and is scoped to its own business")
+
+    db.execute(
+        "INSERT INTO roblox_trends (id, business_id, concept, confidence_level, summary) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("trend_1", biz_id, "Test concept", "medium", "summary"),
+    )
+    db.execute("DELETE FROM roblox_trends WHERE id=?", ("trend_1",))
+    db.audit("owner", "delete_roblox_trend", "roblox_trend", "trend_1", {"business_id": biz_id})
+    assert db.query_one("SELECT id FROM roblox_trends WHERE id=?", ("trend_1",)) is None
+    print("PASS: delete_roblox_trend removes the row")
+
+    db.execute(
+        "INSERT INTO app_feasibility_assessments (id, business_id, concept, confidence_level, summary) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("assess_1", biz_id, "Test app idea", "medium", "summary"),
+    )
+    db.execute("DELETE FROM app_feasibility_assessments WHERE id=?", ("assess_1",))
+    db.audit("owner", "delete_app_feasibility_assessment", "app_feasibility_assessment", "assess_1",
+              {"business_id": biz_id})
+    assert db.query_one("SELECT id FROM app_feasibility_assessments WHERE id=?", ("assess_1",)) is None
+    print("PASS: delete_app_feasibility_assessment removes the row")
+
+    audit_rows = db.query("SELECT * FROM audit_log WHERE action LIKE 'delete_%'")
+    assert len(audit_rows) == 3
+    print("PASS: all three deletions are recorded in the audit log")
+
+    db.close()
+    os.remove(DELETE_TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     main()
     test_overview_aggregation_spans_all_businesses()
+    test_delete_research_items_removes_only_the_targeted_row()

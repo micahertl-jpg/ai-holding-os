@@ -32,6 +32,23 @@
     setTimeout(() => el.classList.add("hidden"), 6000);
   }
 
+  // The dashboard polls every AUTO_REFRESH_INTERVAL_MS regardless of
+  // whether anything actually changed. Blindly reassigning innerHTML
+  // on every poll destroys and recreates every child node even when
+  // the markup is byte-identical, which replays every CSS entrance
+  // animation in there (the orbital web's node-in/line animations, the
+  // opportunity/approval card fade-ins, etc.) -- the exact
+  // "disappears and reappears on every refresh" bug the owner
+  // reported. Skipping the DOM write entirely when the rendered HTML
+  // hasn't changed leaves the existing nodes (and their animation
+  // state) alone.
+  const lastHtmlById = {};
+  function setHtmlIfChanged(id, html) {
+    if (lastHtmlById[id] === html) return;
+    lastHtmlById[id] = html;
+    document.getElementById(id).innerHTML = html;
+  }
+
   async function loadBusinessList() {
     const businesses = await api("/businesses");
     document.getElementById("business-select").innerHTML =
@@ -49,47 +66,31 @@
     // approvals on a business the owner isn't currently viewing actually
     // visible, instead of silently sitting unnoticed.
     const data = await api("/overview");
-    document.getElementById("global-approvals-list").innerHTML =
-      R.renderApprovalsList(data.pending_approvals);
-    document.getElementById("global-stats").innerHTML =
-      R.renderGlobalStats(data);
-    document.getElementById("businesses-overview-table").innerHTML =
-      R.renderBusinessesOverviewTable(data.businesses);
-    document.getElementById("system-core-center").innerHTML =
-      R.renderSystemCoreCenter(data);
-    document.getElementById("core-orbital-overlay").innerHTML =
-      R.renderOrbitalRing(data);
+    setHtmlIfChanged("global-approvals-list", R.renderApprovalsList(data.pending_approvals));
+    setHtmlIfChanged("global-stats", R.renderGlobalStats(data));
+    setHtmlIfChanged("businesses-overview-table", R.renderBusinessesOverviewTable(data.businesses));
+    setHtmlIfChanged("system-core-center", R.renderSystemCoreCenter(data));
+    setHtmlIfChanged("core-orbital-overlay", R.renderOrbitalRing(data));
   }
 
   async function loadDashboard() {
     if (!currentBusinessId) return;
     const data = await api(`/businesses/${currentBusinessId}/dashboard`);
-    document.getElementById("business-header").innerHTML =
-      R.renderBusinessHeader(data.business);
-    document.getElementById("agents-table").innerHTML =
-      R.renderAgentsTable(data.agents);
-    document.getElementById("tasks-table").innerHTML =
-      R.renderTasksTable(data.tasks);
-    document.getElementById("arc-summary").innerHTML =
-      R.renderArcSummary(data.arc_summary);
-    document.getElementById("jobs-table").innerHTML =
-      R.renderJobsTable(data.scheduled_jobs);
-    document.getElementById("opportunities-list").innerHTML =
-      R.renderOpportunitiesTable(data.opportunities);
-    document.getElementById("roblox-trends-list").innerHTML =
-      R.renderRobloxTrendsTable(data.roblox_trends);
-    document.getElementById("app-feasibility-list").innerHTML =
-      R.renderAppFeasibilityTable(data.app_feasibility_assessments);
-    document.getElementById("allocate-arc-agent-select").innerHTML =
-      R.renderAgentOptions(data.agents);
-    document.getElementById("trading-portfolio").innerHTML =
-      R.renderTradingPortfolio(data.trading_portfolio);
-    document.getElementById("trading-positions").innerHTML =
-      R.renderTradingPositions(data.trading_portfolio ? data.trading_portfolio.positions : []);
-    document.getElementById("trading-trades").innerHTML =
-      R.renderTradingTrades(data.trading_trades);
-    document.getElementById("trading-strategy-versions").innerHTML =
-      R.renderTradingStrategyVersions(data.trading_strategy_versions);
+    setHtmlIfChanged("business-header", R.renderBusinessHeader(data.business));
+    setHtmlIfChanged("agents-table", R.renderAgentsTable(data.agents));
+    setHtmlIfChanged("tasks-table", R.renderTasksTable(data.tasks));
+    setHtmlIfChanged("arc-summary", R.renderArcSummary(data.arc_summary));
+    setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
+    setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
+    setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
+    setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));
+    setHtmlIfChanged("allocate-arc-agent-select", R.renderAgentOptions(data.agents));
+    setHtmlIfChanged("trading-portfolio", R.renderTradingPortfolio(data.trading_portfolio));
+    setHtmlIfChanged("trading-positions",
+      R.renderTradingPositions(data.trading_portfolio ? data.trading_portfolio.positions : []));
+    setHtmlIfChanged("trading-trades", R.renderTradingTrades(data.trading_trades));
+    setHtmlIfChanged("trading-strategy-versions",
+      R.renderTradingStrategyVersions(data.trading_strategy_versions));
   }
 
   async function refresh() {
@@ -411,6 +412,18 @@
             method: "POST",
             body: JSON.stringify({ enabled }),
           });
+          await refresh();
+        } else if (action === "delete-opportunity") {
+          if (!currentBusinessId) return;
+          await api(`/businesses/${currentBusinessId}/opportunities/${t.dataset.id}`, { method: "DELETE" });
+          await refresh();
+        } else if (action === "delete-roblox-trend") {
+          if (!currentBusinessId) return;
+          await api(`/businesses/${currentBusinessId}/roblox-trends/${t.dataset.id}`, { method: "DELETE" });
+          await refresh();
+        } else if (action === "delete-app-feasibility") {
+          if (!currentBusinessId) return;
+          await api(`/businesses/${currentBusinessId}/app-feasibility/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         }
       } catch (e) {

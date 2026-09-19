@@ -741,6 +741,19 @@ def list_opportunities(business_id: str):
                                "ORDER BY created_at DESC", (business_id,))]
 
 
+@app.delete("/businesses/{business_id}/opportunities/{opportunity_id}")
+def delete_opportunity(business_id: str, opportunity_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    if not db.query_one("SELECT id FROM opportunities WHERE id=? AND business_id=?",
+                         (opportunity_id, business_id)):
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    db.execute("DELETE FROM opportunities WHERE id=?", (opportunity_id,))
+    db.audit("owner", "delete_opportunity", "opportunity", opportunity_id, {"business_id": business_id})
+    return {"status": "deleted"}
+
+
 # ---------------------------------------------------------------------
 # Roblox Game Development — the second business vertical. Same pattern
 # as Opportunity Discovery above: creates a task_type='research_roblox_
@@ -772,6 +785,19 @@ def list_roblox_trends(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.delete("/businesses/{business_id}/roblox-trends/{trend_id}")
+def delete_roblox_trend(business_id: str, trend_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    if not db.query_one("SELECT id FROM roblox_trends WHERE id=? AND business_id=?",
+                         (trend_id, business_id)):
+        raise HTTPException(status_code=404, detail="roblox trend not found")
+    db.execute("DELETE FROM roblox_trends WHERE id=?", (trend_id,))
+    db.audit("owner", "delete_roblox_trend", "roblox_trend", trend_id, {"business_id": business_id})
+    return {"status": "deleted"}
 
 
 # ---------------------------------------------------------------------
@@ -810,6 +836,20 @@ def list_app_feasibility_assessments(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM app_feasibility_assessments WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.delete("/businesses/{business_id}/app-feasibility/{assessment_id}")
+def delete_app_feasibility_assessment(business_id: str, assessment_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    if not db.query_one("SELECT id FROM app_feasibility_assessments WHERE id=? AND business_id=?",
+                         (assessment_id, business_id)):
+        raise HTTPException(status_code=404, detail="app feasibility assessment not found")
+    db.execute("DELETE FROM app_feasibility_assessments WHERE id=?", (assessment_id,))
+    db.audit("owner", "delete_app_feasibility_assessment", "app_feasibility_assessment", assessment_id,
+              {"business_id": business_id})
+    return {"status": "deleted"}
 
 
 # ---------------------------------------------------------------------
