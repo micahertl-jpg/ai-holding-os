@@ -25,6 +25,27 @@
   <div id="error-banner" class="error-banner hidden"></div>
 
   <main class="layout">
+    <section class="panel system-core-panel" id="system-core-section">
+      <h3>System Core</h3>
+      <div class="system-core-body">
+        <div class="core-hud" aria-hidden="true">
+          <div class="core-hud-ticks"></div>
+          <svg class="core-hud-rings" viewBox="0 0 220 220" width="220" height="220">
+            <circle class="core-ring core-ring-1" cx="110" cy="110" r="100" fill="none" />
+            <circle class="core-ring core-ring-2" cx="110" cy="110" r="78" fill="none" />
+            <circle class="core-ring core-ring-3" cx="110" cy="110" r="56" fill="none" />
+            <line class="core-crosshair" x1="110" y1="4" x2="110" y2="26" />
+            <line class="core-crosshair" x1="110" y1="194" x2="110" y2="216" />
+            <line class="core-crosshair" x1="4" y1="110" x2="26" y2="110" />
+            <line class="core-crosshair" x1="194" y1="110" x2="216" y2="110" />
+          </svg>
+          <div class="core-hud-sweep"></div>
+          <div class="core-hud-center" id="system-core-center"></div>
+        </div>
+        <div class="core-side-stats arc-summary" id="system-core-side-stats"></div>
+      </div>
+    </section>
+
     <section class="panel panel-approvals" id="global-approvals-section">
       <h3>Owner Approvals Awaiting Decision — all businesses</h3>
       <div id="global-approvals-list"></div>

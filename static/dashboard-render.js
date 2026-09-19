@@ -392,6 +392,41 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  // A minimal line+area sparkline instrument, e.g. for an equity curve.
+  // `points` is [{value}, ...] in chronological (oldest-first) order —
+  // exactly the shape GET .../trading/portfolio's equity_history
+  // returns. Real recorded history only; never interpolated/fabricated
+  // points, and it says plainly when there isn't enough history yet
+  // rather than drawing a flat or misleading line.
+  function renderSparkline(points, opts) {
+    opts = opts || {};
+    const width = opts.width || 220;
+    const height = opts.height || 46;
+    if (!points || points.length < 2) {
+      return '<p class="empty sparkline-empty">Not enough history yet for a trend line.</p>';
+    }
+    const values = points.map((p) => Number(p.value));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const stepX = width / (values.length - 1);
+    const coords = values.map((v, i) => [
+      (i * stepX).toFixed(1),
+      (height - ((v - min) / range) * (height - 6) - 3).toFixed(1),
+    ]);
+    const linePoints = coords.map(([x, y]) => `${x},${y}`).join(" ");
+    const areaPoints = `0,${height} ${linePoints} ${width},${height}`;
+    const trendUp = values[values.length - 1] >= values[0];
+    const color = opts.color || (trendUp ? "var(--green)" : "var(--red)");
+    return `
+      <div class="sparkline">
+        <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="none">
+          <polygon class="sparkline-area" points="${areaPoints}" style="fill:${color}" />
+          <polyline class="sparkline-line" points="${linePoints}" style="stroke:${color}" fill="none" />
+        </svg>
+      </div>`;
+  }
+
   function renderTradingPortfolio(view) {
     if (!view) {
       return '<p class="empty">No paper trading portfolio yet — create one below, or use ' +
@@ -400,6 +435,8 @@
     const p = view.portfolio;
     const snap = view.latest_snapshot;
     const pnl = snap ? snap.equity_usd - p.starting_cash_usd : null;
+    const history = view.equity_history || [];
+    const sparkline = renderSparkline(history.map((h) => ({ value: h.equity_usd })));
     return `
       <div class="arc-summary">
         <div class="arc-stat"><span class="label">Cash</span><span class="value">${fmtUsd(p.cash_usd)}</span></div>
@@ -412,6 +449,10 @@
         <div class="arc-stat"><span class="label">Open positions</span><span class="value">${
           snap ? escapeHtml(snap.open_positions) : view.positions.length
         }</span></div>
+      </div>
+      <div class="sparkline-block">
+        <div class="stat-bars-title">Equity trend (last ${history.length} snapshots)</div>
+        ${sparkline}
       </div>
       <p class="panel-note">Started with ${fmtUsd(p.starting_cash_usd)} in simulated cash on
         ${escapeHtml(p.created_at)}.${
@@ -504,7 +545,10 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
-  function renderGlobalStats(overview) {
+  // Shared by renderGlobalStats and the System Core hero readouts so the
+  // two panels can never silently disagree on what "open tasks" or
+  // "total agents" means.
+  function computeOverviewCounts(overview) {
     const totalBusinesses = (overview.businesses || []).length;
     const agentsByStatus = overview.agents_by_status || {};
     const totalAgents = Object.values(agentsByStatus).reduce((a, b) => a + b, 0);
@@ -515,6 +559,57 @@
       .filter(([status]) => !terminal.has(status))
       .reduce((sum, [, c]) => sum + c, 0);
     const totalTasks = Object.values(tasksByStatus).reduce((a, b) => a + b, 0);
+    return { totalBusinesses, totalAgents, idleAgents, tasksByStatus, openTasks, totalTasks };
+  }
+
+  // The big central "System Core" HUD's live-text overlay: a plain
+  // status line (flips to an amber alert the moment anything is
+  // actually waiting on the owner) plus a compact business/agent/task
+  // readout, both real, both already computed by computeOverviewCounts.
+  function renderSystemCoreCenter(overview) {
+    const counts = computeOverviewCounts(overview);
+    const pendingApprovals = (overview.businesses || []).reduce(
+      (sum, b) => sum + Number(b.pending_approval_count || 0), 0
+    );
+    const alert = pendingApprovals > 0;
+    return `
+      <div class="core-hud-status${alert ? " core-hud-status-amber" : ""}">${
+        alert ? "AWAITING APPROVAL" : "OPERATIONAL"
+      }</div>
+      <div class="core-hud-readout">${escapeHtml(counts.totalBusinesses)} BIZ &middot; ${escapeHtml(
+        counts.totalAgents
+      )} AGENTS<br>${escapeHtml(counts.openTasks)} OPEN TASKS</div>`;
+  }
+
+  // The System Core hero panel's side readouts: system-wide ARC totals
+  // summed across every business's own arc_summary (GET /overview
+  // already includes one arc_summary per business) -- a genuinely new
+  // aggregate, not shown anywhere else in the dashboard.
+  function renderSystemCoreSideStats(overview) {
+    const businesses = overview.businesses || [];
+    const totalEarn = businesses.reduce(
+      (sum, b) => sum + Number((b.arc_summary && b.arc_summary.earn) || 0), 0
+    );
+    const totalSpend = businesses.reduce(
+      (sum, b) => sum + Number((b.arc_summary && b.arc_summary.spend) || 0), 0
+    );
+    const pendingApprovals = businesses.reduce(
+      (sum, b) => sum + Number(b.pending_approval_count || 0), 0
+    );
+    return `
+      <div class="arc-stat"><span class="label">ARC Earned (system)</span><span class="value">${fmtArc(totalEarn)}</span></div>
+      <div class="arc-stat"><span class="label">ARC Spent (system)</span><span class="value">${fmtArc(totalSpend)}</span></div>
+      <div class="arc-stat"><span class="label">Approvals Pending</span><span class="value">${escapeHtml(pendingApprovals)}</span></div>`;
+  }
+
+  function renderGlobalStats(overview) {
+    const counts = computeOverviewCounts(overview);
+    const totalBusinesses = counts.totalBusinesses;
+    const totalAgents = counts.totalAgents;
+    const idleAgents = counts.idleAgents;
+    const openTasks = counts.openTasks;
+    const totalTasks = counts.totalTasks;
+    const tasksByStatus = counts.tasksByStatus;
     const revenue = (overview.real_revenue_usd_cents || 0) / 100;
     const idleGauge = renderRadialGauge(idleAgents, totalAgents || 1, "agents idle", {
       color: "var(--green)",
@@ -577,6 +672,10 @@
     statusColorVar,
     renderRadialGauge,
     renderStatusBars,
+    renderSparkline,
+    computeOverviewCounts,
+    renderSystemCoreCenter,
+    renderSystemCoreSideStats,
     renderBusinessOptions,
     renderAgentOptions,
     renderBusinessHeader,
