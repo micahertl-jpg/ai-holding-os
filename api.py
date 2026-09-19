@@ -340,6 +340,34 @@ def health(response: Response):
     return {"status": "ok" if healthy else "degraded", "checks": checks}
 
 
+@app.get("/audit")
+def list_audit_log(target_type: Optional[str] = None, target_id: Optional[str] = None,
+                    action: Optional[str] = None, limit: int = 50):
+    """Read-only view of audit_log — protected by the same dashboard
+    auth as everything else outside /store and /health (this route
+    isn't under either prefix, so require_dashboard_auth covers it).
+    Added specifically so a stuck order/task can be diagnosed from the
+    browser (e.g. GET /audit?target_type=order&target_id=ord_xxx) without
+    needing direct database access. limit is capped at 200 to keep this
+    a quick diagnostic view, not a full log export."""
+    limit = max(1, min(limit, 200))
+    query = "SELECT * FROM audit_log WHERE 1=1"
+    params = []
+    if target_type:
+        query += " AND target_type=?"
+        params.append(target_type)
+    if target_id:
+        query += " AND target_id=?"
+        params.append(target_id)
+    if action:
+        query += " AND action=?"
+        params.append(action)
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    rows = state["db"].query(query, tuple(params))
+    return [row_to_dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------------
 # Businesses
 # ---------------------------------------------------------------------
