@@ -30,7 +30,8 @@ import threading
 from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from permission_levels import LEVEL_NAMES, MIN_LEVEL, MAX_LEVEL
 
 from db import get_database
 from registry import BusinessRegistry, AgentRegistry
@@ -236,7 +237,7 @@ class CreateAgentRequest(BaseModel):
     department: Optional[str] = None
     manager_id: Optional[str] = None
     model: str = "unassigned"
-    permission_level: int = 1
+    permission_level: int = Field(1, ge=MIN_LEVEL, le=MAX_LEVEL)
     # Since executor.py now charges agents real (estimated) ARC cost for
     # LLM usage instead of always 0.0, a brand-new agent needs some
     # starting balance or its very first task would fail with
@@ -251,7 +252,7 @@ class CreateTaskRequest(BaseModel):
     department: Optional[str] = None
     priority: int = 3
     budget_arc: float = 0.0
-    permission_level_required: int = 1
+    permission_level_required: int = Field(1, ge=MIN_LEVEL, le=MAX_LEVEL)
 
 
 class CompleteTaskRequest(BaseModel):
@@ -280,7 +281,7 @@ class CreateScheduledJobRequest(BaseModel):
     objective: str
     interval_seconds: int
     department: Optional[str] = None
-    permission_level_required: int = 1
+    permission_level_required: int = Field(1, ge=MIN_LEVEL, le=MAX_LEVEL)
     budget_arc: float = 0.0
     enabled: bool = True
 
@@ -293,7 +294,7 @@ class ResearchOpportunityRequest(BaseModel):
     topic: str
     reference_urls: List[str] = []
     department: Optional[str] = None
-    permission_level_required: int = 2
+    permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
     priority: int = 3
     budget_arc: float = 0.0
 
@@ -302,7 +303,7 @@ class ResearchRobloxTrendRequest(BaseModel):
     concept: str
     reference_urls: List[str] = []
     department: Optional[str] = None
-    permission_level_required: int = 2
+    permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
     priority: int = 3
     budget_arc: float = 0.0
 
@@ -349,6 +350,14 @@ def health(response: Response):
     if not healthy:
         response.status_code = 503
     return {"status": "ok" if healthy else "degraded", "checks": checks}
+
+
+@app.get("/permission-levels")
+def list_permission_levels():
+    """The full 0-7 permission-level ladder (permission_levels.py), so
+    the dashboard can show names instead of bare integers when setting
+    an agent's permission_level or a task's permission_level_required."""
+    return [{"level": lvl, "name": name} for lvl, name in sorted(LEVEL_NAMES.items())]
 
 
 @app.get("/audit")

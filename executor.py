@@ -29,6 +29,7 @@ from tasks.summarize_urls import summarize_urls
 from tasks.research_opportunity import research_opportunity, OpportunityAssessmentError
 from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssessmentError
 from db import new_id
+from permission_levels import HUMAN_ONLY_LEVEL
 
 # ---------------------------------------------------------------------
 # ARC accounting policy for the executor's task handlers.
@@ -207,9 +208,17 @@ def run_once(db, orchestrator, client=None):
     client = client or get_default_client()
     orchestrator.retry_queued_tasks()
     placeholders = ",".join("?" for _ in HANDLERS)
+    # permission_level_required < HUMAN_ONLY_LEVEL excludes level-7
+    # (HUMAN_ONLY) tasks even once they reach 'assigned' status after
+    # owner approval — those must only ever be completed by the owner
+    # calling complete_task()/fail_task() by hand, never auto-run here.
+    # Before this filter existed, a level-7 task using an executable
+    # task_type was silently auto-executed the moment it was approved,
+    # defeating the whole point of "human-only".
     assigned = db.query(
-        f"SELECT * FROM tasks WHERE status='assigned' AND task_type IN ({placeholders})",
-        tuple(HANDLERS.keys()),
+        f"SELECT * FROM tasks WHERE status='assigned' AND permission_level_required < ? "
+        f"AND task_type IN ({placeholders})",
+        (HUMAN_ONLY_LEVEL,) + tuple(HANDLERS.keys()),
     )
     outcomes = []
     for task in assigned:

@@ -15,6 +15,7 @@ once there are hundreds of agents.
 from db import Database, new_id
 from banker import Banker
 from approval import ApprovalQueue
+from permission_levels import APPROVAL_REQUIRED_LEVEL, HUMAN_ONLY_LEVEL, MIN_ASSIGNABLE_AGENT_LEVEL
 import json
 
 
@@ -81,7 +82,7 @@ class Orchestrator:
         # test_api_logic_offline.py, fixed here: the task's risk tier
         # decides the approval gate, independent of whether any agent
         # happens to be cleared for it.
-        if perm_required >= 6:
+        if perm_required >= APPROVAL_REQUIRED_LEVEL:
             query = ("SELECT * FROM agents WHERE business_id=? AND status IN "
                      "('created','idle','active')")
             params = [business_id]
@@ -104,9 +105,13 @@ class Orchestrator:
                            {"approval_id": appr_id, "candidate_agent": candidate_id})
             return candidate_id
 
+        # An OBSERVE_ONLY (level 0) agent is never auto-assigned real work,
+        # even for a task that only requires level 0 itself — so the
+        # floor here is max(perm_required, MIN_ASSIGNABLE_AGENT_LEVEL),
+        # not perm_required directly.
         query = ("SELECT * FROM agents WHERE business_id=? AND status IN "
                  "('created','idle','active') AND permission_level >= ?")
-        params = [business_id, perm_required]
+        params = [business_id, max(perm_required, MIN_ASSIGNABLE_AGENT_LEVEL)]
         if department:
             query += " AND department=?"
             params.append(department)

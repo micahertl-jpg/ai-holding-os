@@ -40,7 +40,7 @@
         <input name="name" placeholder="Agent name" required>
         <input name="role" placeholder="Role">
         <input name="department" placeholder="Department">
-        <input name="permission_level" type="number" min="0" max="7" value="1" title="Permission level 0-7">
+        <input name="permission_level" type="number" min="0" max="7" value="1" title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
         <button type="submit" class="btn-small">Add Agent</button>
       </form>
     </section>
@@ -52,7 +52,7 @@
         <input name="objective" placeholder="Task objective" required>
         <input name="department" placeholder="Department">
         <input name="permission_level_required" type="number" min="0" max="7" value="1"
-               title="Permission level required — 6+ always requires owner approval">
+               title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
         <button type="submit" class="btn-small">Add Task</button>
       </form>
     </section>
@@ -108,7 +108,8 @@
         <input name="objective" placeholder="Task objective it creates" required>
         <input name="interval_seconds" type="number" min="30" value="3600" title="Minimum 30 seconds">
         <input name="department" placeholder="Department">
-        <input name="permission_level_required" type="number" min="0" max="7" value="1">
+        <input name="permission_level_required" type="number" min="0" max="7" value="1"
+               title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
         <button type="submit" class="btn-small">Add Scheduled Job</button>
       </form>
     </section>
