@@ -210,3 +210,85 @@ CREATE TABLE IF NOT EXISTS roblox_trends (
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Automated Stock Trading — PAPER TRADING ONLY. Nothing in this schema
+-- or anywhere it's read/written (tasks/trading_cycle.py, executor.py,
+-- api.py) can move real money — there is no brokerage integration in
+-- this codebase. One portfolio per business for this MVP.
+CREATE TABLE IF NOT EXISTS paper_portfolios (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    agent_id TEXT REFERENCES agents(id),
+    starting_cash_usd REAL NOT NULL,
+    cash_usd REAL NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Current open (or previously-open, quantity may be 0) positions. One
+-- row per (portfolio, symbol) — upserted by executor.py's trading_cycle
+-- handler on every executed trade, never inserted more than once per
+-- symbol per portfolio.
+CREATE TABLE IF NOT EXISTS paper_positions (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    symbol TEXT NOT NULL,
+    quantity REAL NOT NULL DEFAULT 0,
+    avg_cost_usd REAL NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(portfolio_id, symbol)
+);
+
+-- Append-only paper trade log — the full history behind every equity
+-- number and every strategy-review statistic. realized_pnl_usd is set
+-- only on 'sell' rows (NULL for 'buy'); strategy_version is the
+-- trading_strategy_versions.version that was ACTIVE at the moment this
+-- trade executed, so a version's real track record can always be
+-- reconstructed later even after a newer version becomes active.
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    task_id TEXT REFERENCES tasks(id),
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,               -- buy | sell
+    quantity REAL NOT NULL,
+    price_usd REAL NOT NULL,
+    realized_pnl_usd REAL,            -- set for 'sell' only
+    confidence_level TEXT,            -- the model's stated confidence — low|medium|high
+    rationale TEXT,                   -- the model's stated reasoning, never hidden from the owner
+    strategy_version INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Full version history of strategy parameters (see
+-- tasks/trading_common.py's schema). Exactly one row per business should
+-- have active=1 at a time (enforced in application code, not a DB
+-- constraint, to keep this MVP's schema portable across both backends).
+-- Rows are NEVER deleted or edited after creation — a "rollback" is
+-- reactivating an older version's parameters as a new row, so the full
+-- history (including what was tried and abandoned) is always visible.
+CREATE TABLE IF NOT EXISTS trading_strategy_versions (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    version INTEGER NOT NULL,
+    parameters TEXT NOT NULL,         -- JSON, validated by trading_common.validate_parameters
+    rationale TEXT,                   -- why this version differs from the last
+    confidence_level TEXT,            -- the model's stated confidence in this proposal (NULL for v1/owner-set)
+    source TEXT NOT NULL DEFAULT 'system',  -- 'system' (initial default) | 'strategy_review' | 'owner_override'
+    active INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- One row per trading_cycle task, recording mark-to-market equity at
+-- that moment. This is what powers the equity curve and drawdown circuit
+-- breaker (see executor.py's _handle_trading_cycle) without re-fetching
+-- live quotes just to render the dashboard.
+CREATE TABLE IF NOT EXISTS trading_snapshots (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    strategy_version INTEGER,
+    equity_usd REAL NOT NULL,         -- cash + mark-to-market open positions
+    cash_usd REAL NOT NULL,
+    open_positions INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);

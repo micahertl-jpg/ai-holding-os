@@ -39,7 +39,11 @@ as a separate later task.
    automatically — check it's actually pointing at the Postgres
    service, not blank).
 5. Also set `ANTHROPIC_API_KEY` as a variable (Settings → Variables).
-   Never commit it to the repo.
+   Never commit it to the repo. For the Automated Stock Trading vertical,
+   also set `ALPHAVANTAGE_API_KEY` (free key at alphavantage.co) — without
+   it, `trading_cycle` tasks fail loudly instead of trading on fabricated
+   prices, which is correct behavior but means the feature is otherwise
+   invisible.
 6. Railway should detect the `Dockerfile` and build/deploy from it. If
    it instead tries to auto-detect Python directly, that's fine too —
    it'll pick up `requirements.txt`. Either path should work; if one

@@ -271,6 +271,118 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  function renderTradingPortfolio(view) {
+    if (!view) {
+      return '<p class="empty">No paper trading portfolio yet — create one below, or use ' +
+        '"Enable Auto-Trading" to set everything up (portfolio + agent + schedule) in one step.</p>';
+    }
+    const p = view.portfolio;
+    const snap = view.latest_snapshot;
+    const pnl = snap ? snap.equity_usd - p.starting_cash_usd : null;
+    return `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Cash</span><span class="value">${fmtUsd(p.cash_usd)}</span></div>
+        <div class="arc-stat"><span class="label">Equity (last cycle)</span><span class="value">${
+          snap ? fmtUsd(snap.equity_usd) : "n/a"
+        }</span></div>
+        <div class="arc-stat"><span class="label">Total P&amp;L</span><span class="value">${
+          pnl !== null ? fmtUsd(pnl) : "n/a"
+        }</span></div>
+        <div class="arc-stat"><span class="label">Open positions</span><span class="value">${
+          snap ? escapeHtml(snap.open_positions) : view.positions.length
+        }</span></div>
+      </div>
+      <p class="panel-note">Started with ${fmtUsd(p.starting_cash_usd)} in simulated cash on
+        ${escapeHtml(p.created_at)}.${
+          snap ? ` Last snapshot: ${escapeHtml(snap.created_at)} (strategy v${escapeHtml(snap.strategy_version)}).`
+               : " No trading cycle has run yet."
+        }</p>`;
+  }
+
+  function renderTradingPositions(positions) {
+    if (!positions || positions.length === 0) {
+      return '<p class="empty">No open positions.</p>';
+    }
+    const rows = positions
+      .map(
+        (p) => `
+        <tr>
+          <td>${escapeHtml(p.symbol)}</td>
+          <td>${Number(p.quantity).toFixed(4)}</td>
+          <td>${fmtUsd(p.avg_cost_usd)}</td>
+        </tr>`
+      )
+      .join("");
+    return `
+      <table class="data-table">
+        <thead><tr><th>Symbol</th><th>Quantity</th><th>Avg Cost</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function renderTradingTrades(trades) {
+    if (!trades || trades.length === 0) {
+      return '<p class="empty">No paper trades yet.</p>';
+    }
+    const rows = trades
+      .map((t) => {
+        const hasPnl = t.realized_pnl_usd !== null && t.realized_pnl_usd !== undefined;
+        return `
+        <tr>
+          <td>${escapeHtml(t.created_at)}</td>
+          <td><span class="status ${t.side === "buy" ? "status-idle" : "status-working"}">${escapeHtml(t.side)}</span></td>
+          <td>${escapeHtml(t.symbol)}</td>
+          <td>${Number(t.quantity).toFixed(4)}</td>
+          <td>${fmtUsd(t.price_usd)}</td>
+          <td>${hasPnl ? fmtUsd(t.realized_pnl_usd) : "—"}</td>
+          <td>${escapeHtml(t.confidence_level || "")}</td>
+          <td>${escapeHtml(t.rationale || "")}</td>
+        </tr>`;
+      })
+      .join("");
+    return `
+      <table class="data-table">
+        <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
+          <th>Realized P&amp;L</th><th>Confidence</th><th>Rationale</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function renderTradingStrategyVersions(versions) {
+    if (!versions || versions.length === 0) {
+      return '<p class="empty">No strategy versions yet.</p>';
+    }
+    const cards = versions
+      .map((v) => {
+        let params = {};
+        try {
+          params = v.parameters ? JSON.parse(v.parameters) : {};
+        } catch (e) {
+          params = {};
+        }
+        const confidence = escapeHtml(v.confidence_level || "unknown");
+        const watchlist = (params.watchlist || []).map((s) => escapeHtml(s)).join(", ");
+        return `
+        <div class="opportunity-card confidence-${confidence}">
+          <div class="opportunity-head">
+            <strong>Version ${escapeHtml(v.version)}${v.active ? " (active)" : ""}</strong>
+            <span class="status status-${v.source === "owner_override" ? "awaiting_approval" : "idle"}">${escapeHtml(v.source)}</span>
+          </div>
+          <p class="opportunity-summary">${escapeHtml(v.rationale || "")}</p>
+          <dl class="opportunity-fields">
+            <dt>Watchlist</dt><dd>${watchlist}</dd>
+            <dt>Max position %</dt><dd>${params.max_position_pct != null ? (params.max_position_pct * 100).toFixed(0) + "%" : ""}</dd>
+            <dt>Max trade % of cash</dt><dd>${params.max_trade_pct_of_cash != null ? (params.max_trade_pct_of_cash * 100).toFixed(0) + "%" : ""}</dd>
+            <dt>Max open positions</dt><dd>${escapeHtml(params.max_open_positions)}</dd>
+            <dt>Drawdown halt</dt><dd>${params.drawdown_halt_pct != null ? (params.drawdown_halt_pct * 100).toFixed(0) + "%" : ""}</dd>
+            <dt>Min confidence to trade</dt><dd>${escapeHtml(params.min_confidence_to_trade)}</dd>
+          </dl>
+        </div>`;
+      })
+      .join("");
+    return `<div class="opportunities-list">${cards}</div>`;
+  }
+
   const api = {
     escapeHtml,
     fmtArc,
@@ -285,6 +397,10 @@
     renderJobsTable,
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
+    renderTradingPortfolio,
+    renderTradingPositions,
+    renderTradingTrades,
+    renderTradingStrategyVersions,
   };
 
   if (typeof module !== "undefined" && module.exports) {

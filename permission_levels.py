@@ -24,10 +24,15 @@ let an agent do), but two have real enforced behavior, noted below:
                            The storefront's paid research tasks require
                            this level.
 3  SIMULATE              - can run a simulation / paper / no-real-effect
-                           version of an action (e.g. paper trading).
-                           Not backed by a real simulation task type in
-                           this MVP yet — reserved for the trading
-                           vertical the spec describes.
+                           version of an action. Backed by a real task
+                           type as of the Automated Stock Trading
+                           vertical: 'trading_cycle' and
+                           'trading_strategy_review' both default to
+                           permission_level_required=3. This is PAPER
+                           TRADING ONLY — there is no brokerage
+                           integration anywhere in this codebase, so
+                           nothing at this level (or any level) can place
+                           a real order. See tasks/trading_cycle.py.
 4  EXECUTE_LOW_RISK       - can take a real, low-risk, easily-reversible
                            action with no spending budget attached.
 5  EXECUTE_WITH_BUDGET    - can take a real action that spends ARC/real

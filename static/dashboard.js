@@ -64,6 +64,14 @@
       R.renderRobloxTrendsTable(data.roblox_trends);
     document.getElementById("allocate-arc-agent-select").innerHTML =
       R.renderAgentOptions(data.agents);
+    document.getElementById("trading-portfolio").innerHTML =
+      R.renderTradingPortfolio(data.trading_portfolio);
+    document.getElementById("trading-positions").innerHTML =
+      R.renderTradingPositions(data.trading_portfolio ? data.trading_portfolio.positions : []);
+    document.getElementById("trading-trades").innerHTML =
+      R.renderTradingTrades(data.trading_trades);
+    document.getElementById("trading-strategy-versions").innerHTML =
+      R.renderTradingStrategyVersions(data.trading_strategy_versions);
   }
 
   async function refresh() {
@@ -236,6 +244,68 @@
         await refresh();
       } catch (e) {
         showError("Failed to request Roblox trend research: " + e.message);
+      }
+    });
+
+    document.getElementById("create-trading-portfolio-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      const watchlistRaw = f.watchlist.value.trim();
+      const watchlist = watchlistRaw
+        ? watchlistRaw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
+        : [];
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/portfolio`, {
+          method: "POST",
+          body: JSON.stringify({
+            starting_cash_usd: parseFloat(f.starting_cash_usd.value) || 10000,
+            watchlist,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to create paper trading portfolio: " + e.message);
+      }
+    });
+
+    document.getElementById("enable-auto-trading-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/enable-auto-trading`, {
+          method: "POST",
+          body: JSON.stringify({
+            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 14400,
+            review_interval_seconds: parseInt(f.review_interval_seconds.value, 10) || 86400,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to enable auto-trading: " + e.message);
+      }
+    });
+
+    document.getElementById("trigger-cycle-btn").addEventListener("click", async () => {
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/cycle`, { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger trading cycle: " + e.message);
+      }
+    });
+
+    document.getElementById("trigger-review-btn").addEventListener("click", async () => {
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/strategy-review`, { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger strategy review: " + e.message);
       }
     });
 

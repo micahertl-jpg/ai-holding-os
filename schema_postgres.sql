@@ -184,3 +184,62 @@ CREATE TABLE IF NOT EXISTS roblox_trends (
     reference_urls_used TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Automated Stock Trading — PAPER TRADING ONLY. See schema.sql for the
+-- full explanation; this mirrors it exactly.
+CREATE TABLE IF NOT EXISTS paper_portfolios (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    agent_id TEXT REFERENCES agents(id),
+    starting_cash_usd DOUBLE PRECISION NOT NULL,
+    cash_usd DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS paper_positions (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    symbol TEXT NOT NULL,
+    quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    avg_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(portfolio_id, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    task_id TEXT REFERENCES tasks(id),
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity DOUBLE PRECISION NOT NULL,
+    price_usd DOUBLE PRECISION NOT NULL,
+    realized_pnl_usd DOUBLE PRECISION,
+    confidence_level TEXT,
+    rationale TEXT,
+    strategy_version INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS trading_strategy_versions (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    version INTEGER NOT NULL,
+    parameters TEXT NOT NULL,
+    rationale TEXT,
+    confidence_level TEXT,
+    source TEXT NOT NULL DEFAULT 'system',
+    active INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS trading_snapshots (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    strategy_version INTEGER,
+    equity_usd DOUBLE PRECISION NOT NULL,
+    cash_usd DOUBLE PRECISION NOT NULL,
+    open_positions INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

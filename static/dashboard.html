@@ -100,6 +100,40 @@
         thread finishes.</p>
     </section>
 
+    <section class="panel panel-trading">
+      <h3>Automated Stock Trading — PAPER TRADING ONLY, no real money moves</h3>
+      <div id="trading-portfolio"></div>
+      <form id="create-trading-portfolio-form" class="inline-form">
+        <input name="starting_cash_usd" type="number" min="1" step="0.01" value="10000"
+               title="Starting simulated cash">
+        <input name="watchlist" placeholder="Watchlist tickers, comma-separated (optional, default AAPL,MSFT,GOOGL,AMZN,NVDA)">
+        <button type="submit" class="btn-small">Create Paper Portfolio</button>
+      </form>
+      <form id="enable-auto-trading-form" class="inline-form">
+        <input name="cycle_interval_seconds" type="number" min="30" value="14400"
+               title="Seconds between trading cycles (default 14400 = 4 hours)">
+        <input name="review_interval_seconds" type="number" min="30" value="86400"
+               title="Seconds between strategy reviews (default 86400 = 24 hours)">
+        <button type="submit" class="btn-small">Enable Auto-Trading</button>
+      </form>
+      <div class="inline-form">
+        <button id="trigger-cycle-btn" type="button" class="btn-small">Run Trading Cycle Now</button>
+        <button id="trigger-review-btn" type="button" class="btn-small">Run Strategy Review Now</button>
+      </div>
+      <h4>Positions</h4>
+      <div id="trading-positions"></div>
+      <h4>Trade History</h4>
+      <div id="trading-trades"></div>
+      <h4>Strategy Versions (self-improvement history)</h4>
+      <div id="trading-strategy-versions"></div>
+      <p class="panel-note">No brokerage integration exists anywhere in this codebase — nothing
+        here can ever place a real order. Every trade shows the model's stated confidence and
+        rationale; the system (not the model) enforces every position/trade/exposure limit. A
+        drawdown past the active strategy's threshold automatically pauses the trading agent for
+        owner review. "Enable Auto-Trading" requires ALPHAVANTAGE_API_KEY to be set — without it,
+        cycles fail loudly rather than trading on fabricated prices.</p>
+    </section>
+
     <section class="panel">
       <h3>Scheduled Jobs (recurring tasks)</h3>
       <div id="jobs-table"></div>
