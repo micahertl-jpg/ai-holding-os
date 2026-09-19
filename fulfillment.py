@@ -20,14 +20,26 @@ Building real refund automation is a deliberate later step, not an
 oversight; issuing money back automatically is exactly the kind of
 consequential action this project's spec says should default to
 requiring human judgment, not be silently automated on day one.
+Because that refund step can't be automated, a failed order sends a
+best-effort alert email to OWNER_EMAIL (if configured) so it doesn't
+just sit there waiting to be noticed in the dashboard's Store Orders
+panel -- see _notify_owner_of_failed_order().
 """
 
 import html
+import os
 import threading
 
 from emailer import send_email, EmailError
 
 TERMINAL_TASK_STATUSES = ("completed", "failed", "cancelled")
+
+# Optional: where to alert the owner that an order needs a manual Stripe
+# refund (see the module docstring -- refunds are never automated). Unset
+# by default, matching every other optional integration in this codebase
+# (e.g. STORE_BUSINESS_ID) -- fulfillment must keep working for every
+# other order even if this is never configured.
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
 
 
 def _build_report_email(order, task, db):
@@ -137,6 +149,36 @@ def _build_report_email(order, task, db):
     return subject, html_body
 
 
+def _notify_owner_of_failed_order(order, task, db):
+    """Best-effort alert that an order needs a manual Stripe refund. The
+    order is already correctly marked 'failed' in the database by the
+    time this runs, so a missing OWNER_EMAIL or a broken Resend send
+    must never crash the fulfillment loop or affect that outcome for
+    this order (or any other) -- it's only ever logged via the audit
+    trail, same as every other failure mode in this module."""
+    if not OWNER_EMAIL:
+        return
+    subject = f"[Action needed] Order failed after payment: {order['topic']}"
+    body = f"""
+    <div style="font-family:sans-serif;max-width:600px;">
+      <h2>An order needs a manual refund</h2>
+      <p>Order <strong>{html.escape(order['id'])}</strong>
+        (topic: {html.escape(order['topic'])}, customer:
+        {html.escape(order['customer_email'])}) was paid, but its research
+        task ended in status <strong>{html.escape(task['status'])}</strong>
+        instead of completing.</p>
+      <p>This system does not automate refunds -- the customer was already
+        charged and needs a manual refund via the Stripe dashboard.</p>
+    </div>
+    """
+    try:
+        send_email(OWNER_EMAIL, subject, body)
+        db.audit("fulfillment", "owner_failed_order_alert_sent", "order", order["id"], {})
+    except EmailError as e:
+        db.audit("fulfillment", "owner_failed_order_alert_failed", "order", order["id"],
+                  {"error": str(e)})
+
+
 def run_once(db, client=None):
     """One fulfillment pass. `client` is unused currently (kept for
     signature symmetry with scheduler.run_once/executor.run_once and
@@ -155,6 +197,7 @@ def run_once(db, client=None):
             db.execute("UPDATE orders SET status='failed' WHERE id=?", (order["id"],))
             db.audit("fulfillment", "order_fulfillment_failed", "order", order["id"],
                       {"reason": f"linked task ended in status={task['status']}"})
+            _notify_owner_of_failed_order(order, task, db)
             outcomes.append((order["id"], "failed"))
             continue
 

@@ -18,6 +18,7 @@ from banker import Banker
 from approval import ApprovalQueue
 from orchestrator import Orchestrator
 from db import new_id
+from emailer import EmailError
 import fulfillment
 
 TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_fulfillment.db")
@@ -139,7 +140,6 @@ def test_order_never_marked_fulfilled_if_send_email_raises():
     )
     order_id = _make_order(db, biz_id, task_id=task_id)
 
-    from emailer import EmailError
     with patch("fulfillment.send_email", side_effect=EmailError("Resend is down")):
         outcomes = fulfillment.run_once(db)
 
@@ -159,7 +159,8 @@ def test_failed_task_marks_order_failed():
     orch.fail_task(task_id, reason="model error")
     order_id = _make_order(db, biz_id, task_id=task_id)
 
-    with patch("fulfillment.send_email") as mock_send:
+    with patch.object(fulfillment, "OWNER_EMAIL", None), \
+         patch("fulfillment.send_email") as mock_send:
         outcomes = fulfillment.run_once(db)
 
     assert outcomes == [(order_id, "failed")], outcomes
@@ -167,6 +168,73 @@ def test_failed_task_marks_order_failed():
     order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
     assert order["status"] == "failed"
     print("PASS: an order whose research task failed is marked failed, no email ever sent")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_failed_order_alerts_owner_when_owner_email_is_configured():
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": "a subscription box for plants"})
+    orch.fail_task(task_id, reason="model error")
+    order_id = _make_order(db, biz_id, topic="a subscription box for plants", task_id=task_id)
+
+    with patch.object(fulfillment, "OWNER_EMAIL", "owner@example.com"), \
+         patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "failed")], outcomes
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "owner@example.com"
+    assert "a subscription box for plants" in call_args[1]  # subject
+    assert "refund" in call_args[2].lower()
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "failed"
+    print("PASS: a failed order alerts the configured OWNER_EMAIL that a manual refund is needed")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_failed_order_alert_escapes_customer_supplied_fields():
+    db, orch, biz_id = _setup()
+    evil_topic = '<script>alert("xss")</script>'
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": evil_topic})
+    orch.fail_task(task_id, reason="model error")
+    order_id = _make_order(db, biz_id, topic=evil_topic, task_id=task_id)
+
+    with patch.object(fulfillment, "OWNER_EMAIL", "owner@example.com"), \
+         patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "failed")], outcomes
+    html_body = mock_send.call_args[0][2]
+    assert "<script>" not in html_body
+    print("PASS: the owner failed-order alert escapes customer-submitted topic text")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_failed_order_stays_failed_even_if_owner_alert_email_errors():
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": "x"})
+    orch.fail_task(task_id, reason="model error")
+    order_id = _make_order(db, biz_id, task_id=task_id)
+
+    with patch.object(fulfillment, "OWNER_EMAIL", "owner@example.com"), \
+         patch("fulfillment.send_email", side_effect=EmailError("Resend is down")):
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "failed")], outcomes
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "failed", \
+        "a broken owner-alert send must never undo the order's own already-correct status"
+    print("PASS: a broken owner-alert email never crashes the loop or reverts the order's status")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -305,6 +373,9 @@ if __name__ == "__main__":
     test_report_email_escapes_html_in_customer_and_model_supplied_fields()
     test_order_never_marked_fulfilled_if_send_email_raises()
     test_failed_task_marks_order_failed()
+    test_failed_order_alerts_owner_when_owner_email_is_configured()
+    test_failed_order_alert_escapes_customer_supplied_fields()
+    test_failed_order_stays_failed_even_if_owner_alert_email_errors()
     test_still_running_order_is_left_alone()
     test_unpaid_orders_are_never_touched()
     test_missing_assessment_row_fails_loudly_not_silently()

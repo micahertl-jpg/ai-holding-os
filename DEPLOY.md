@@ -107,6 +107,13 @@ Optional: `STORE_PRICE_OPPORTUNITY_CENTS` / `STORE_PRICE_ROBLOX_CENTS` /
 `STORE_PRICE_APP_FEASIBILITY_CENTS` override the default $19.00 price
 per report (each is a number of cents, e.g. `2900` for $29.00).
 
+Optional: **`OWNER_EMAIL`** — your own address. Refunds are never
+automated (see `fulfillment.py`'s module docstring) — if a paid order's
+research task fails, the customer has already been charged and someone
+has to notice and refund them manually via Stripe. Without this set,
+that's only visible by opening the dashboard's Store Orders panel; with
+it set, you also get an email the moment it happens.
+
 **Before accepting real money, verify the whole loop with Stripe's test
 mode** (test-mode keys, and Stripe's published test card
 `4242 4242 4242 4242`, any future expiry/CVC):
