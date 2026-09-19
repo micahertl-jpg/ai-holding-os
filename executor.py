@@ -28,6 +28,11 @@ from llm_client import get_default_client, CostTrackingClient
 from tasks.summarize_urls import summarize_urls
 from tasks.research_opportunity import research_opportunity, OpportunityAssessmentError
 from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssessmentError
+from tasks.trading_cycle import run_trading_cycle, TradingCycleError
+from tasks.trading_strategy_review import (
+    compute_stats, propose_strategy_update, TradingStrategyReviewError,
+)
+import market_data
 from db import new_id
 from permission_levels import HUMAN_ONLY_LEVEL
 
@@ -60,6 +65,16 @@ CONFIDENCE_REWARD_ARC = {"low": 5.0, "medium": 15.0, "high": 30.0}
 # URL that actually got a real summary (fetch+model call both
 # succeeded) — a failed/empty URL earns nothing.
 REWARD_ARC_PER_SUMMARIZED_URL = 3.0
+
+# trading_cycle: a small flat reward for completing a cycle (running the
+# analysis and reporting honestly is worth something even on a hold-only
+# cycle), plus a bonus scaled by THIS cycle's realized P&L if positive —
+# capped so one favorable cycle can't mint an outsized amount of ARC.
+# Same "weak simple proxy, not a claim of true economic value" caveat as
+# every other reward constant in this file.
+TRADING_CYCLE_BASE_REWARD_ARC = 5.0
+TRADING_PNL_REWARD_ARC_PER_USD = 2.0
+TRADING_PNL_REWARD_ARC_CAP = 50.0
 
 
 def _require_affordable(task_row, db, cost_arc):
@@ -183,12 +198,269 @@ def _handle_research_roblox_trend(task_row, client, db):
     return result_text, cost_arc, reward_arc
 
 
+# ---------------------------------------------------------------------
+# Automated Stock Trading — PAPER TRADING ONLY (see tasks/trading_cycle.py
+# for the full safety explanation: no brokerage integration exists
+# anywhere in this codebase, so real order execution is structurally
+# impossible here, not just disabled by config).
+# ---------------------------------------------------------------------
+
+def _row_to_dict(row):
+    """Same one-liner as api.py's row_to_dict, duplicated here (not
+    imported) to avoid executor.py depending on api.py — api.py already
+    depends on executor.py, and this module needs to stay importable on
+    its own (see test_trading_cycle_offline.py / test_executor_offline.py,
+    neither of which touches api.py)."""
+    return dict(row) if row is not None else None
+
+
+def _get_active_trading_strategy(db, business_id):
+    row = db.query_one(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? AND active=1 "
+        "ORDER BY version DESC LIMIT 1", (business_id,),
+    )
+    if not row:
+        raise ValueError(
+            "no active trading strategy for this business — create a paper trading "
+            "portfolio first (POST /businesses/{id}/trading/portfolio)"
+        )
+    row = _row_to_dict(row)
+    return row, json.loads(row["parameters"])
+
+
+def _get_trading_portfolio(db, business_id):
+    row = db.query_one("SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not row:
+        raise ValueError(
+            "no paper trading portfolio for this business — create one first "
+            "(POST /businesses/{id}/trading/portfolio)"
+        )
+    return _row_to_dict(row)
+
+
+def _upsert_paper_position(db, portfolio_id, symbol, quantity, avg_cost_usd):
+    # Deliberately a SELECT-then-INSERT-or-UPDATE, not an SQL-level
+    # upsert (ON CONFLICT / INSERT OR REPLACE) — those dialects differ
+    # between SQLite and Postgres, and db.py's translation layer only
+    # handles `?` and `datetime('now')`. Two extra round-trips per
+    # touched symbol is a fine tradeoff for staying on one SQL string
+    # that works unmodified on both backends.
+    existing = db.query_one(
+        "SELECT id FROM paper_positions WHERE portfolio_id=? AND symbol=?",
+        (portfolio_id, symbol),
+    )
+    if existing:
+        db.execute(
+            "UPDATE paper_positions SET quantity=?, avg_cost_usd=?, updated_at=datetime('now') "
+            "WHERE id=?", (quantity, avg_cost_usd, existing["id"]),
+        )
+    else:
+        db.execute(
+            "INSERT INTO paper_positions (id, portfolio_id, symbol, quantity, avg_cost_usd) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (new_id("pos"), portfolio_id, symbol, quantity, avg_cost_usd),
+        )
+
+
+def _handle_trading_cycle(task_row, client, db):
+    business_id = task_row["business_id"]
+    strategy_row, strategy_params = _get_active_trading_strategy(db, business_id)
+    portfolio = _get_trading_portfolio(db, business_id)
+    positions = [_row_to_dict(r) for r in
+                 db.query("SELECT * FROM paper_positions WHERE portfolio_id=?", (portfolio["id"],))]
+
+    recent = [_row_to_dict(r) for r in db.query(
+        "SELECT * FROM paper_trades WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 10",
+        (portfolio["id"],),
+    )]
+    recent_trades_summary = "\n".join(
+        f"- {r['side']} {r['quantity']:.4f} {r['symbol']} @ ${r['price_usd']:.2f}"
+        + (f" (realized P&L ${r['realized_pnl_usd']:+.2f})"
+           if r["side"] == "sell" and r["realized_pnl_usd"] is not None else "")
+        + (f" — {r['rationale']}" if r.get("rationale") else "")
+        for r in recent
+    )
+
+    tracked_client = CostTrackingClient(client)
+    result = run_trading_cycle(
+        portfolio["cash_usd"], positions, strategy_params, recent_trades_summary,
+        market_data.get_default_client(), tracked_client,
+    )
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    positions_by_symbol = {p["symbol"]: p for p in positions}
+    cash = portfolio["cash_usd"]
+    cycle_realized_pnl = 0.0
+    touched_symbols = set()
+
+    for t in result["trades"]:
+        if not t["executed"]:
+            continue
+        existing = positions_by_symbol.get(t["symbol"], {"symbol": t["symbol"], "quantity": 0.0,
+                                                           "avg_cost_usd": 0.0})
+        realized_pnl = None
+        if t["side"] == "buy":
+            new_qty = existing["quantity"] + t["quantity"]
+            existing["avg_cost_usd"] = (
+                (existing["quantity"] * existing["avg_cost_usd"] + t["quantity"] * t["price"]) / new_qty
+                if new_qty > 0 else 0.0
+            )
+            existing["quantity"] = new_qty
+            cash -= t["quantity"] * t["price"]
+        else:  # sell
+            realized_pnl = (t["price"] - existing["avg_cost_usd"]) * t["quantity"]
+            cycle_realized_pnl += realized_pnl
+            existing["quantity"] -= t["quantity"]
+            if existing["quantity"] <= 1e-9:
+                existing["quantity"] = 0.0
+                existing["avg_cost_usd"] = 0.0
+            cash += t["quantity"] * t["price"]
+
+        positions_by_symbol[t["symbol"]] = existing
+        touched_symbols.add(t["symbol"])
+
+        db.execute(
+            "INSERT INTO paper_trades (id, portfolio_id, task_id, symbol, side, quantity, "
+            "price_usd, realized_pnl_usd, confidence_level, rationale, strategy_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id("ptr"), portfolio["id"], task_row["id"], t["symbol"], t["side"],
+             t["quantity"], t["price"], realized_pnl, t["confidence_level"], t["rationale"],
+             strategy_row["version"]),
+        )
+
+    for symbol in touched_symbols:
+        p = positions_by_symbol[symbol]
+        _upsert_paper_position(db, portfolio["id"], symbol, p["quantity"], p["avg_cost_usd"])
+
+    db.execute("UPDATE paper_portfolios SET cash_usd=?, updated_at=datetime('now') WHERE id=?",
+               (cash, portfolio["id"]))
+
+    quotes = result["quotes"]
+    equity = cash + sum(p["quantity"] * quotes[p["symbol"]]["price"]
+                         for p in positions_by_symbol.values()
+                         if p["quantity"] > 0 and p["symbol"] in quotes)
+    open_positions_count = sum(1 for p in positions_by_symbol.values() if p["quantity"] > 0)
+
+    db.execute(
+        "INSERT INTO trading_snapshots (id, portfolio_id, strategy_version, equity_usd, "
+        "cash_usd, open_positions) VALUES (?, ?, ?, ?, ?, ?)",
+        (new_id("snap"), portfolio["id"], strategy_row["version"], equity, cash, open_positions_count),
+    )
+
+    peak_row = db.query_one(
+        "SELECT MAX(equity_usd) as peak FROM trading_snapshots WHERE portfolio_id=?",
+        (portfolio["id"],),
+    )
+    peak_equity = peak_row["peak"] if peak_row and peak_row["peak"] is not None else equity
+    drawdown_pct = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+
+    halted = drawdown_pct >= strategy_params["drawdown_halt_pct"]
+    if halted:
+        db.audit("executor", "trading_drawdown_halt", "agent", task_row["agent_id"], {
+            "business_id": business_id, "drawdown_pct": drawdown_pct,
+            "halt_threshold": strategy_params["drawdown_halt_pct"],
+            "equity_usd": equity, "peak_equity_usd": peak_equity,
+        })
+
+    lines = [f"Trading cycle complete. Equity ${equity:.2f} (cash ${cash:.2f}), "
+             f"{open_positions_count} open position(s)."]
+    for t in result["trades"]:
+        if t["executed"]:
+            lines.append(f"  EXECUTED {t['side'].upper()} {t['quantity']:.4f} {t['symbol']} "
+                         f"@ ${t['price']:.2f} [{t['confidence_level']}] — {t['rationale']}")
+        else:
+            lines.append(f"  skipped {t['action']} {t['symbol']}: {t['skip_reason']}")
+    if result["quote_errors"]:
+        lines.append(f"Quote fetch errors this cycle: {result['quote_errors']}")
+    if halted:
+        lines.append(
+            f"*** DRAWDOWN HALT TRIGGERED at {drawdown_pct:.1%} (threshold "
+            f"{strategy_params['drawdown_halt_pct']:.1%} of peak equity ${peak_equity:.2f}) — "
+            f"trading agent paused. Owner review required to resume. ***"
+        )
+    result_text = "\n".join(lines)
+
+    reward_arc = TRADING_CYCLE_BASE_REWARD_ARC
+    if cycle_realized_pnl > 0:
+        reward_arc += min(cycle_realized_pnl * TRADING_PNL_REWARD_ARC_PER_USD,
+                           TRADING_PNL_REWARD_ARC_CAP)
+
+    # A 4th, optional return element: the agent status to force AFTER
+    # orchestrator.complete_task() runs. Necessary because complete_task()
+    # unconditionally resets the agent to 'idle' on success — a real bug
+    # found via this feature's own offline tests: without this, pausing
+    # the agent for a drawdown breach here got silently undone the moment
+    # the task completed successfully. See run_once() below for how this
+    # optional 4th element is consumed; every other handler still returns
+    # a plain 3-tuple and is completely unaffected.
+    if halted:
+        return result_text, cost_arc, reward_arc, "paused"
+    return result_text, cost_arc, reward_arc
+
+
+def _handle_trading_strategy_review(task_row, client, db):
+    business_id = task_row["business_id"]
+    strategy_row, strategy_params = _get_active_trading_strategy(db, business_id)
+    portfolio = _get_trading_portfolio(db, business_id)
+
+    trades = [_row_to_dict(r) for r in db.query(
+        "SELECT * FROM paper_trades WHERE portfolio_id=? ORDER BY created_at ASC", (portfolio["id"],),
+    )]
+    snapshots = [_row_to_dict(r) for r in db.query(
+        "SELECT * FROM trading_snapshots WHERE portfolio_id=? ORDER BY created_at ASC", (portfolio["id"],),
+    )]
+    stats = compute_stats(trades, snapshots)
+
+    recent = trades[-10:]
+    recent_trades_summary = "\n".join(
+        f"- {r['side']} {r['quantity']:.4f} {r['symbol']} @ ${r['price_usd']:.2f}"
+        + (f" (realized P&L ${r['realized_pnl_usd']:+.2f})"
+           if r["side"] == "sell" and r["realized_pnl_usd"] is not None else "")
+        for r in recent
+    )
+
+    tracked_client = CostTrackingClient(client)
+    proposal = propose_strategy_update(strategy_params, stats, recent_trades_summary, tracked_client)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    new_version = strategy_row["version"] + 1
+    db.execute("UPDATE trading_strategy_versions SET active=0 WHERE business_id=? AND active=1",
+               (business_id,))
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, rationale, "
+        "confidence_level, source, active) VALUES (?, ?, ?, ?, ?, ?, 'strategy_review', 1)",
+        (new_id("strat"), business_id, new_version, json.dumps(proposal["parameters"]),
+         proposal["rationale"], proposal["confidence_level"]),
+    )
+    db.audit("executor", "trading_strategy_updated", "trading_strategy_version", None, {
+        "business_id": business_id, "new_version": new_version,
+        "confidence_level": proposal["confidence_level"],
+    })
+
+    win_rate_str = f"{stats['win_rate']:.1%}" if stats["win_rate"] is not None else "n/a (no completed trades yet)"
+    result_text = (
+        f"Strategy reviewed: promoted version {strategy_row['version']} -> {new_version} "
+        f"(proposal confidence: {proposal['confidence_level']}).\n"
+        f"Stats at review time: {stats['sell_trades']} completed trades, win rate {win_rate_str}, "
+        f"total realized P&L ${stats['total_realized_pnl_usd']:.2f}.\n"
+        f"Rationale: {proposal['rationale']}"
+    )
+    reward_arc = CONFIDENCE_REWARD_ARC.get(proposal["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
+
+
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).
 # 'manual' is deliberately absent — those tasks are never auto-executed.
 HANDLERS = {
     "summarize_urls": _handle_summarize_urls,
     "research_opportunity": _handle_research_opportunity,
     "research_roblox_trend": _handle_research_roblox_trend,
+    "trading_cycle": _handle_trading_cycle,
+    "trading_strategy_review": _handle_trading_strategy_review,
 }
 
 
@@ -204,7 +476,15 @@ def run_once(db, orchestrator, client=None):
     A handler exception fails the task with the real error message —
     never silently retried forever, never papered over with a fake
     success. Retrying a genuinely transient failure (a dead network,
-    say) is a deliberate future decision, not a default."""
+    say) is a deliberate future decision, not a default.
+
+    A handler normally returns (result_text, cost_arc, reward_arc). It
+    may optionally return a 4th element, the agent status to force AFTER
+    orchestrator.complete_task() runs — needed because complete_task()
+    unconditionally resets the agent to 'idle' on success, which would
+    otherwise silently undo something a handler just did (e.g.
+    _handle_trading_cycle pausing the agent on a drawdown-halt). Every
+    handler that doesn't need this still returns a plain 3-tuple."""
     client = client or get_default_client()
     orchestrator.retry_queued_tasks()
     placeholders = ",".join("?" for _ in HANDLERS)
@@ -224,9 +504,18 @@ def run_once(db, orchestrator, client=None):
     for task in assigned:
         handler = HANDLERS[task["task_type"]]
         try:
-            result_text, cost_arc, reward_arc = handler(task, client, db)
+            outcome = handler(task, client, db)
+            if len(outcome) == 4:
+                result_text, cost_arc, reward_arc, forced_agent_status = outcome
+            else:
+                result_text, cost_arc, reward_arc = outcome
+                forced_agent_status = None
+
             orchestrator.complete_task(task["id"], result=result_text, cost_arc=cost_arc,
                                         reward_arc=reward_arc)
+            if forced_agent_status and task["agent_id"]:
+                db.execute("UPDATE agents SET status=?, updated_at=datetime('now') WHERE id=?",
+                           (forced_agent_status, task["agent_id"]))
             outcomes.append((task["id"], "completed"))
         except Exception as e:
             orchestrator.fail_task(task["id"], reason=f"executor error: {e}")

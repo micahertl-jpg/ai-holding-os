@@ -274,4 +274,106 @@ test("renderRobloxTrendsTable never throws on malformed reference_urls_used JSON
   assert.ok(html.includes("based on general knowledge only"));
 });
 
+test("renderTradingPortfolio handles the no-portfolio-yet case", () => {
+  const html = R.renderTradingPortfolio(null);
+  assert.ok(html.includes("No paper trading portfolio yet"));
+  assert.ok(html.includes("Enable Auto-Trading"));
+});
+
+test("renderTradingPortfolio shows cash/equity/P&L with a real snapshot", () => {
+  const view = {
+    portfolio: { starting_cash_usd: 10000, cash_usd: 8000, created_at: "2026-01-01 00:00:00" },
+    positions: [{ symbol: "AAPL", quantity: 10, avg_cost_usd: 200 }],
+    latest_snapshot: {
+      equity_usd: 10500, open_positions: 1, strategy_version: 2,
+      created_at: "2026-01-02 00:00:00",
+    },
+  };
+  const html = R.renderTradingPortfolio(view);
+  assert.ok(html.includes("$8000.00") || html.includes("$8,000.00") || html.includes("$8000"));
+  assert.ok(html.includes("$10500.00") || html.includes("$10500"));
+  assert.ok(html.includes("$500.00")); // total P&L = 10500 - 10000
+  assert.ok(html.includes("strategy v2"));
+});
+
+test("renderTradingPortfolio falls back cleanly with no snapshot yet", () => {
+  const view = {
+    portfolio: { starting_cash_usd: 5000, cash_usd: 5000, created_at: "2026-01-01 00:00:00" },
+    positions: [],
+    latest_snapshot: null,
+  };
+  const html = R.renderTradingPortfolio(view);
+  assert.ok(html.includes("No trading cycle has run yet"));
+  assert.ok(html.includes("n/a"));
+});
+
+test("renderTradingPositions handles the empty case", () => {
+  const html = R.renderTradingPositions([]);
+  assert.ok(html.includes("No open positions"));
+});
+
+test("renderTradingPositions renders symbol/quantity/avg cost", () => {
+  const html = R.renderTradingPositions([{ symbol: "NVDA", quantity: 3.5, avg_cost_usd: 120.25 }]);
+  assert.ok(html.includes("NVDA"));
+  assert.ok(html.includes("3.5000"));
+  assert.ok(html.includes("$120.25"));
+});
+
+test("renderTradingTrades handles the empty case", () => {
+  const html = R.renderTradingTrades([]);
+  assert.ok(html.includes("No paper trades yet"));
+});
+
+test("renderTradingTrades shows realized P&L only for sell rows, and shows rationale/confidence", () => {
+  const trades = [
+    { created_at: "t1", side: "buy", symbol: "AAPL", quantity: 5, price_usd: 190,
+      realized_pnl_usd: null, confidence_level: "medium", rationale: "Momentum looked solid." },
+    { created_at: "t2", side: "sell", symbol: "AAPL", quantity: 5, price_usd: 200,
+      realized_pnl_usd: 50, confidence_level: "high", rationale: "Hit target." },
+  ];
+  const html = R.renderTradingTrades(trades);
+  assert.ok(html.includes("Momentum looked solid."));
+  assert.ok(html.includes("Hit target."));
+  assert.ok(html.includes("$50.00"));
+  assert.ok(html.includes("—")); // the buy row's empty realized P&L placeholder
+});
+
+test("renderTradingTrades escapes rationale to prevent HTML injection", () => {
+  const trades = [{ created_at: "t1", side: "buy", symbol: "AAPL", quantity: 1, price_usd: 1,
+                     realized_pnl_usd: null, confidence_level: "low",
+                     rationale: "<img src=x onerror=alert(1)>" }];
+  const html = R.renderTradingTrades(trades);
+  assert.ok(!html.includes("<img"));
+});
+
+test("renderTradingStrategyVersions handles the empty case", () => {
+  const html = R.renderTradingStrategyVersions([]);
+  assert.ok(html.includes("No strategy versions yet"));
+});
+
+test("renderTradingStrategyVersions shows parameters, active badge, and source", () => {
+  const versions = [{
+    version: 2, active: 1, source: "strategy_review", confidence_level: "medium",
+    rationale: "Tightened position sizing after a losing streak.",
+    parameters: JSON.stringify({
+      watchlist: ["AAPL", "MSFT"], max_position_pct: 0.15, max_trade_pct_of_cash: 0.08,
+      max_open_positions: 4, drawdown_halt_pct: 0.12, min_confidence_to_trade: "high",
+    }),
+  }];
+  const html = R.renderTradingStrategyVersions(versions);
+  assert.ok(html.includes("Version 2 (active)"));
+  assert.ok(html.includes("strategy_review"));
+  assert.ok(html.includes("Tightened position sizing"));
+  assert.ok(html.includes("AAPL, MSFT"));
+  assert.ok(html.includes("15%"));
+  assert.ok(html.includes("12%"));
+});
+
+test("renderTradingStrategyVersions never throws on malformed parameters JSON", () => {
+  const versions = [{ version: 1, active: 0, source: "system", parameters: "not valid json",
+                       rationale: "init" }];
+  const html = R.renderTradingStrategyVersions(versions); // should not throw
+  assert.ok(html.includes("Version 1"));
+});
+
 console.log("\nAll dashboard-render.js tests finished.");

@@ -12,13 +12,29 @@ import os
 import json
 from unittest.mock import patch
 
-from db import Database
+from db import Database, new_id
 from registry import BusinessRegistry, AgentRegistry
 from banker import Banker
 from approval import ApprovalQueue
 from orchestrator import Orchestrator
 from llm_client import MockClient
+from tasks.trading_common import DEFAULT_STRATEGY_PARAMS
 import executor
+
+
+class _FakeMarketClient:
+    """Real (non-mock=True) quotes for executor.py's trading handlers to
+    consume in these DB-integration tests -- market_data.MockMarketDataClient
+    itself is deliberately refused by tasks/trading_cycle.py (see
+    test_trading_cycle_offline.py), so these tests inject a client that
+    looks like a real one, without any real network call."""
+
+    def __init__(self, prices):
+        self.prices = prices
+
+    def get_quote(self, symbol):
+        return {"symbol": symbol, "price": self.prices[symbol], "as_of": "2026-01-01",
+                "mock": False}
 
 
 class _FakeCostClient:
@@ -335,6 +351,168 @@ def test_queued_task_gets_retried_and_executed_once_an_agent_becomes_available()
     os.remove(TEST_DB_PATH)
 
 
+def _setup_trading(db, biz_id, drawdown_halt_pct=None):
+    """Creates a permission_level=3 trading agent plus a fresh paper
+    portfolio + active v1 strategy for biz_id. Returns (trading_agent_id,
+    portfolio_id, params)."""
+    agents = AgentRegistry(db)
+    trading_agent_id = agents.create(biz_id, "Trading Agent", role="Paper Trading Analyst",
+                                      permission_level=3)
+    agents.set_status(trading_agent_id, "idle")
+
+    portfolio_id = new_id("port")
+    db.execute(
+        "INSERT INTO paper_portfolios (id, business_id, starting_cash_usd, cash_usd) "
+        "VALUES (?, ?, ?, ?)", (portfolio_id, biz_id, 10000.0, 10000.0),
+    )
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    if drawdown_halt_pct is not None:
+        params["drawdown_halt_pct"] = drawdown_halt_pct
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+        "rationale, source, active) VALUES (?, ?, 1, ?, ?, 'system', 1)",
+        (new_id("strat"), biz_id, json.dumps(params), "Initial default strategy parameters."),
+    )
+    return trading_agent_id, portfolio_id, params
+
+
+def test_trading_cycle_task_executes_a_paper_trade_and_records_a_snapshot():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
+                                permission_level_required=3, task_type="trading_cycle")
+
+    canned = json.dumps({"decisions": [
+        {"symbol": s, "action": "buy" if s == "AAPL" else "hold",
+         "confidence_level": "high", "size_pct": 0.05, "rationale": "test rationale"}
+        for s in params["watchlist"]
+    ]})
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=canned))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+
+    trades = db.query("SELECT * FROM paper_trades WHERE portfolio_id=?", (portfolio_id,))
+    assert len(trades) == 1 and trades[0]["symbol"] == "AAPL" and trades[0]["side"] == "buy"
+    assert trades[0]["rationale"] == "test rationale"
+
+    portfolio = db.query_one("SELECT * FROM paper_portfolios WHERE id=?", (portfolio_id,))
+    assert portfolio["cash_usd"] < 10000.0, "cash should have decreased after a real buy"
+
+    snapshots = db.query("SELECT * FROM trading_snapshots WHERE portfolio_id=?", (portfolio_id,))
+    assert len(snapshots) == 1
+
+    print("PASS: a trading_cycle task executes a real paper trade, updates cash/positions, "
+          "and records an equity snapshot")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_trading_cycle_drawdown_halt_pauses_the_trading_agent():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id, drawdown_halt_pct=0.05)
+
+    # Seed a much higher prior peak equity so this cycle's flat equity
+    # already represents a >5% drawdown from that peak.
+    db.execute(
+        "INSERT INTO trading_snapshots (id, portfolio_id, strategy_version, equity_usd, "
+        "cash_usd, open_positions) VALUES (?, ?, 1, 20000.0, 20000.0, 0)",
+        (new_id("snap"), portfolio_id),
+    )
+
+    task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
+                                permission_level_required=3, task_type="trading_cycle")
+    canned = json.dumps({"decisions": [
+        {"symbol": s, "action": "hold", "confidence_level": "high", "size_pct": 0.0, "rationale": "x"}
+        for s in params["watchlist"]
+    ]})
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=canned))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    agent = db.query_one("SELECT * FROM agents WHERE id=?", (trading_agent_id,))
+    assert agent["status"] == "paused", agent["status"]
+    print("PASS: a drawdown past the active strategy's halt threshold automatically pauses "
+          "the trading agent -- the circuit breaker is real, not just documented")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_trading_cycle_without_a_portfolio_fails_loudly():
+    db, orch, biz_id, agent_id = _setup()
+    agents = AgentRegistry(db)
+    trading_agent_id = agents.create(biz_id, "Trading Agent", role="x", permission_level=3)
+    agents.set_status(trading_agent_id, "idle")
+
+    task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
+                                permission_level_required=3, task_type="trading_cycle")
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "portfolio" in outcomes[0][1]
+    print("PASS: a trading_cycle task with no portfolio set up fails loudly with a clear "
+          "error, never silently no-ops")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_trading_strategy_review_task_promotes_a_new_validated_version():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Review paper-trading strategy performance",
+                                permission_level_required=3, task_type="trading_strategy_review")
+
+    proposal = json.dumps({
+        "parameters": {**params, "max_position_pct": 0.10},
+        "rationale": "Tightening after a thin trade history.",
+        "confidence_level": "medium",
+    })
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response=proposal))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    versions = db.query(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version",
+        (biz_id,),
+    )
+    assert len(versions) == 2
+    assert versions[0]["active"] == 0
+    assert versions[1]["active"] == 1
+    assert json.loads(versions[1]["parameters"])["max_position_pct"] == 0.10
+    print("PASS: a trading_strategy_review task promotes a new, validated strategy version "
+          "and deactivates the previous one -- full version history preserved, no code touched")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_trading_strategy_review_rejects_an_out_of_bounds_proposal():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Review paper-trading strategy performance",
+                                permission_level_required=3, task_type="trading_strategy_review")
+    proposal = json.dumps({
+        "parameters": {**params, "max_position_pct": 0.95},  # past the absolute ceiling
+        "rationale": "x", "confidence_level": "high",
+    })
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response=proposal))
+
+    assert len(outcomes) == 1 and outcomes[0][1].startswith("failed:")
+    versions = db.query("SELECT * FROM trading_strategy_versions WHERE business_id=?", (biz_id,))
+    assert len(versions) == 1, "an out-of-bounds proposal must never be saved as a new version"
+    print("PASS: an out-of-bounds strategy proposal fails the task loudly and is never saved "
+          "as a new active version")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_summarize_urls_task_gets_executed_and_completed()
     test_research_opportunity_task_gets_executed_and_saved()
@@ -345,4 +523,9 @@ if __name__ == "__main__":
     test_manual_tasks_are_never_auto_executed()
     test_queued_typed_tasks_are_not_touched_until_assigned()
     test_queued_task_gets_retried_and_executed_once_an_agent_becomes_available()
+    test_trading_cycle_task_executes_a_paper_trade_and_records_a_snapshot()
+    test_trading_cycle_drawdown_halt_pauses_the_trading_agent()
+    test_trading_cycle_without_a_portfolio_fails_loudly()
+    test_trading_strategy_review_task_promotes_a_new_validated_version()
+    test_trading_strategy_review_rejects_an_out_of_bounds_proposal()
     print("\nAll executor.py offline tests passed.")

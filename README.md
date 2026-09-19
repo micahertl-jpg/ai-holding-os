@@ -386,6 +386,135 @@ assessment and an honest confidence level. Make sure at least one agent
 in the business is `idle` (not `working` on something else) when you
 submit, or give it ~10s for the retry to kick in once one frees up.
 
+## Automated Stock Trading — status (PAPER TRADING ONLY)
+
+Per the project spec's Trading Safety section: this is simulation only.
+There is no brokerage integration anywhere in this codebase — that's a
+structural fact (no code path exists that could place a real order), not
+a config flag someone could flip on. Real trading stays out of scope
+until explicitly, separately authorized and built.
+
+**What's new:**
+- `market_data.py` — a real Alpha Vantage quote client (`GLOBAL_QUOTE`),
+  stdlib-only (`urllib`, same pattern as `llm_client.py`), plus an
+  explicitly-labeled `MockMarketDataClient` for when no
+  `ALPHAVANTAGE_API_KEY` is set. Every quote is tagged `mock: True/False`
+  so downstream code can refuse to trade on fake prices.
+- `tasks/trading_common.py` — the strategy-parameter schema (watchlist,
+  position/trade/exposure limits, the drawdown circuit breaker, a
+  minimum-confidence floor) and `validate_parameters()`, which enforces
+  hard *absolute* ceilings no proposal — including the self-improvement
+  loop's own output — can ever exceed.
+- `tasks/trading_cycle.py` — the recurring task type. The model
+  *proposes* a decision per watchlist symbol (buy/sell/hold, a mandatory
+  confidence level, a rationale); `apply_risk_limits()` is a separate,
+  pure, deterministic function that clamps or skips every proposal
+  against the strategy's limits, independent of what the model asked
+  for. This is unit-tested with no LLM involved at all — the safety
+  guarantee doesn't depend on model behavior.
+- `tasks/trading_strategy_review.py` — the "self-improving" half, run
+  far less often. It computes real statistics (win rate, realized P&L,
+  drawdown) in code — never asks the model to recall or invent numbers —
+  and asks for a revised parameter proposal with a rationale, framed
+  explicitly as an untested hypothesis. Per the project spec's warning
+  against uncontrolled self-modification: this **never touches code**,
+  only ever produces a new, versioned row of parameters that must pass
+  the same `validate_parameters()` bounds check as anything else. Every
+  prior version is kept (not overwritten), so the owner can always see
+  the full history and what changed why.
+- Schema: `paper_portfolios`, `paper_positions`, `paper_trades`,
+  `trading_strategy_versions`, `trading_snapshots` (both `schema.sql` and
+  `schema_postgres.sql`).
+- `executor.py`: `trading_cycle` and `trading_strategy_review` handlers,
+  registered in `HANDLERS`. The drawdown circuit breaker pauses the
+  trading agent when triggered — see "Real bugs found" below for a real
+  bug this surfaced and fixed.
+- New endpoints under `/businesses/{id}/trading/...`: create a paper
+  portfolio, read it (with positions + latest equity snapshot), read
+  trade history, read/override the strategy version history, manually
+  trigger a cycle or review, and `POST .../enable-auto-trading` — a
+  single call that creates the portfolio (if missing), a dedicated
+  Trading Agent (`permission_level=3`/SIMULATE) if none exists yet, and
+  two scheduled jobs (`trading_cycle`, `trading_strategy_review`) — this
+  is what makes it actually *automatic*, since nothing runs on its own
+  without a scheduled job.
+- A new dashboard panel: portfolio summary (cash/equity/P&L), open
+  positions, trade history (with the model's stated rationale and
+  confidence shown on every row, never hidden), and the full strategy
+  version history.
+
+**What was actually verified in THIS build** (unlike the sections above,
+this session had real PyPI access and could actually install and run
+`fastapi`/`uvicorn`/`psycopg2-binary`):
+- `python3 -m py_compile` on every new/changed `.py` file, `node --check`
+  on both dashboard JS files.
+- The full offline suite: `test_market_data_offline.py` (6 checks),
+  `test_trading_cycle_offline.py` (21 checks, including every risk-limit
+  scenario with no LLM involved), `test_trading_strategy_review_offline.py`
+  (8 checks), new `test_executor_offline.py` cases (5 more, DB-integration
+  level: a real paper trade executing and updating cash/positions/a
+  snapshot, the drawdown circuit breaker actually pausing the agent, a
+  missing-portfolio task failing loudly, a strategy review promoting a
+  validated version, an out-of-bounds proposal being rejected outright),
+  and 13 new `test_dashboard_render.js` checks. Every pre-existing test
+  in this repo still passes unchanged.
+- **The real thing this sandbox's predecessor couldn't do:** installed
+  the actual dependencies, stood up a real local Postgres database, ran
+  `uvicorn api:app` for real, and exercised the new endpoints over real
+  HTTP — created a business, created a paper portfolio, called
+  `enable-auto-trading` (which really did create the agent + both
+  scheduled jobs), watched the real scheduler and executor background
+  threads fire the jobs over real wall-clock time, confirmed
+  `/businesses/{id}/dashboard` returns the new trading fields, and loaded
+  `/dashboard` in a real headless browser (screenshot taken) — the new
+  panel renders correctly and matches the existing visual style.
+- With no `ANTHROPIC_API_KEY`/`ALPHAVANTAGE_API_KEY` set (neither was
+  available in this build environment either), a triggered
+  `trading_cycle` task correctly **failed loudly** with
+  `"refusing to trade — mock market data for [...] (ALPHAVANTAGE_API_KEY
+  not configured...)"`, and a `trading_strategy_review` task correctly
+  failed on the mock LLM client's non-JSON response — exactly the
+  intended behavior, never a fabricated trade or a silently-accepted bad
+  proposal.
+- **A real bug found and fixed via this live testing, not by
+  inspection:** `Orchestrator.complete_task()` unconditionally resets the
+  completing agent's status to `'idle'` on success. The drawdown-halt
+  logic was originally written to pause the agent *inside* the
+  `trading_cycle` handler, before `complete_task()` ran — which silently
+  got overwritten back to `'idle'` the moment the task completed,
+  defeating the circuit breaker entirely. Fixed by adding a small,
+  backward-compatible extension point: a handler may optionally return a
+  4th element (the agent status to force *after* `complete_task()`
+  runs) instead of the usual 3-tuple; every other handler is completely
+  unaffected. Caught by this feature's own offline test
+  (`test_trading_cycle_drawdown_halt_pauses_the_trading_agent`), not by
+  inspection — proof the circuit breaker actually works, not just that
+  it's documented.
+
+**What was NOT verified** (needs a real Anthropic + Alpha Vantage key,
+same as every other LLM-driven task type in this project):
+- An actual `trading_cycle` task running against real market prices and
+  a real model decision, executing a real (paper) trade end to end.
+- An actual `trading_strategy_review` proposing a real parameter change
+  from real accumulated trade history.
+- The new dashboard panel's forms (Create Paper Portfolio, Enable
+  Auto-Trading, Run Cycle/Review Now) clicked through in a real browser
+  by a human — only automated/headless verification happened here.
+
+**To verify it yourself:**
+```
+export ANTHROPIC_API_KEY=sk-ant-...
+export ALPHAVANTAGE_API_KEY=...   # free key at alphavantage.co
+python -m uvicorn api:app --reload
+```
+Open the dashboard, pick or create a business, click **Enable
+Auto-Trading** (creates a $10,000 paper portfolio, a Trading Agent, and
+both scheduled jobs in one step), then click **Run Trading Cycle Now** —
+within a few seconds you should see a real decision with a stated
+confidence and rationale, and (if it decided to buy/sell) a real paper
+trade in the Trade History table. Try **Run Strategy Review Now** too,
+though it's more informative after a handful of real trades exist.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done on SQLite, verified
@@ -396,11 +525,12 @@ submit, or give it ~10s for the retry to kick in once one frees up.
 5. ~~Start the first business vertical (Opportunity Discovery)~~ —
    verified live end to end, including a real retry-logic bug found
    and fixed via actual use.
-6. **24/7 hosting** — see `DEPLOY.md`. Recommendation: Railway, paired
-   with its one-click Postgres (which also resolves item 2's remaining
-   gap in the same step). Dockerfile written; nothing here has been
-   deployed or tested yet — this sandbox has no Docker and no access
-   to any hosting platform.
+6. ~~24/7 hosting~~ — deployed to Railway with a managed Postgres add-on;
+   confirmed live (`/health`, `/dashboard`, real Postgres persistence).
+7. ~~Automated Stock Trading vertical (paper trading only)~~ — built and
+   verified against a real local Postgres + real HTTP in this session;
+   still needs a real Anthropic + Alpha Vantage key to see a real
+   decision/trade end to end (see above).
 
 ## ACTION REQUIRED FROM OWNER
 - **Now:** read `DEPLOY.md` and, when ready, push this repo to GitHub
@@ -410,3 +540,9 @@ submit, or give it ~10s for the retry to kick in once one frees up.
 - **Important:** SQLite will NOT survive a redeploy on any of these
   platforms (ephemeral filesystem) — set up the Postgres add-on as
   part of this same step, not as an afterthought.
+- **For the Automated Stock Trading vertical:** set `ALPHAVANTAGE_API_KEY`
+  as a Railway variable (free key at alphavantage.co) alongside the
+  existing `ANTHROPIC_API_KEY`. Without it, `trading_cycle` tasks fail
+  loudly with a clear error instead of trading on fabricated prices —
+  this is intentional, not a bug, but it means the feature does nothing
+  visible until the key is set.

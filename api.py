@@ -24,6 +24,7 @@ revisit with a real connection pool before this sees production traffic.
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
+import json
 import os
 import threading
 
@@ -43,6 +44,7 @@ import executor as executor_module
 import fulfillment as fulfillment_module
 import stripe_client
 import dashboard_auth
+from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
 from db import new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -314,6 +316,23 @@ class CheckoutRequest(BaseModel):
     customer_email: str
 
 
+class CreateTradingPortfolioRequest(BaseModel):
+    starting_cash_usd: float = 10000.0
+    watchlist: List[str] = []  # empty -> tasks.trading_common.DEFAULT_STRATEGY_PARAMS watchlist
+
+
+class TradingStrategyOverrideRequest(BaseModel):
+    parameters: dict
+    rationale: str = "Owner manual override"
+
+
+class EnableAutoTradingRequest(BaseModel):
+    starting_cash_usd: float = 10000.0
+    watchlist: List[str] = []
+    cycle_interval_seconds: int = 14400    # 4 hours
+    review_interval_seconds: int = 86400   # 24 hours
+
+
 # ---------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------
@@ -433,6 +452,15 @@ def business_dashboard(business_id: str):
     roblox_trends = [row_to_dict(r) for r in
                       db.query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+    trading_portfolio = _trading_portfolio_view(business_id)
+    trading_trades = []
+    if trading_portfolio:
+        trading_trades = [row_to_dict(r) for r in db.query(
+            "SELECT * FROM paper_trades WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 20",
+            (trading_portfolio["portfolio"]["id"],))]
+    trading_strategy_versions = [row_to_dict(r) for r in db.query(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version DESC",
+        (business_id,))]
     return {
         "business": row_to_dict(biz),
         "agents": agents,
@@ -442,6 +470,9 @@ def business_dashboard(business_id: str):
         "scheduled_jobs": scheduled_jobs,
         "opportunities": opportunities,
         "roblox_trends": roblox_trends,
+        "trading_portfolio": trading_portfolio,
+        "trading_trades": trading_trades,
+        "trading_strategy_versions": trading_strategy_versions,
     }
 
 
@@ -661,6 +692,224 @@ def list_roblox_trends(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+# ---------------------------------------------------------------------
+# Automated Stock Trading — PAPER TRADING ONLY. See tasks/trading_cycle.py
+# for the full safety explanation: there is no brokerage integration
+# anywhere in this codebase, so nothing reachable through these endpoints
+# can ever place a real order, regardless of any setting here. One
+# paper_portfolios row per business. task_type='trading_cycle' and
+# 'trading_strategy_review' tasks are picked up and run by the same
+# executor background thread as every other typed task.
+# ---------------------------------------------------------------------
+
+def _trading_portfolio_view(business_id: str):
+    db = state["db"]
+    portfolio = db.query_one("SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not portfolio:
+        return None
+    positions = [row_to_dict(r) for r in db.query(
+        "SELECT * FROM paper_positions WHERE portfolio_id=? AND quantity > 0", (portfolio["id"],)
+    )]
+    latest_snapshot = db.query_one(
+        "SELECT * FROM trading_snapshots WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 1",
+        (portfolio["id"],),
+    )
+    return {
+        "portfolio": row_to_dict(portfolio),
+        "positions": positions,
+        "latest_snapshot": row_to_dict(latest_snapshot),
+    }
+
+
+@app.post("/businesses/{business_id}/trading/portfolio")
+def create_trading_portfolio(business_id: str, req: CreateTradingPortfolioRequest):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    if db.query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+        raise HTTPException(status_code=409,
+                             detail="this business already has a paper trading portfolio")
+
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    if req.watchlist:
+        params["watchlist"] = req.watchlist
+    try:
+        params = validate_parameters(params)
+    except StrategyParameterError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if req.starting_cash_usd <= 0:
+        raise HTTPException(status_code=400, detail="starting_cash_usd must be positive")
+
+    portfolio_id = new_id("port")
+    db.execute(
+        "INSERT INTO paper_portfolios (id, business_id, starting_cash_usd, cash_usd) "
+        "VALUES (?, ?, ?, ?)",
+        (portfolio_id, business_id, req.starting_cash_usd, req.starting_cash_usd),
+    )
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+        "rationale, source, active) VALUES (?, ?, 1, ?, ?, 'system', 1)",
+        (new_id("strat"), business_id, json.dumps(params), "Initial default strategy parameters."),
+    )
+    db.audit("owner", "create_trading_portfolio", "paper_portfolio", portfolio_id,
+              {"starting_cash_usd": req.starting_cash_usd, "watchlist": params["watchlist"]})
+    return _trading_portfolio_view(business_id)
+
+
+@app.get("/businesses/{business_id}/trading/portfolio")
+def get_trading_portfolio(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    view = _trading_portfolio_view(business_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="no paper trading portfolio for this business yet")
+    return view
+
+
+@app.get("/businesses/{business_id}/trading/trades")
+def list_trading_trades(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    portfolio = db.query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not portfolio:
+        return []
+    return [row_to_dict(r) for r in db.query(
+        "SELECT * FROM paper_trades WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 100",
+        (portfolio["id"],),
+    )]
+
+
+@app.get("/businesses/{business_id}/trading/strategy-versions")
+def list_trading_strategy_versions(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    return [row_to_dict(r) for r in state["db"].query(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version DESC",
+        (business_id,),
+    )]
+
+
+@app.post("/businesses/{business_id}/trading/strategy-override")
+def override_trading_strategy(business_id: str, req: TradingStrategyOverrideRequest):
+    """Owner-only manual override — the owner can always directly set the
+    active strategy (tighten OR loosen, up to the absolute ceilings in
+    tasks/trading_common.py), independent of the self-improvement loop.
+    Still versioned and still validated by the exact same
+    validate_parameters() the automatic review path uses — there is no
+    'trusted' path that skips the bounds check, owner included."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    current = db.query_one(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? AND active=1 "
+        "ORDER BY version DESC LIMIT 1", (business_id,),
+    )
+    if not current:
+        raise HTTPException(status_code=404,
+                             detail="no trading portfolio/strategy for this business yet")
+    try:
+        params = validate_parameters(req.parameters)
+    except StrategyParameterError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    new_version = current["version"] + 1
+    db.execute("UPDATE trading_strategy_versions SET active=0 WHERE business_id=? AND active=1",
+               (business_id,))
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+        "rationale, source, active) VALUES (?, ?, ?, ?, ?, 'owner_override', 1)",
+        (new_id("strat"), business_id, new_version, json.dumps(params), req.rationale),
+    )
+    db.audit("owner", "trading_strategy_overridden", "trading_strategy_version", None,
+              {"business_id": business_id, "new_version": new_version})
+    return {"version": new_version, "parameters": params}
+
+
+@app.post("/businesses/{business_id}/trading/cycle")
+def trigger_trading_cycle(business_id: str, department: Optional[str] = None):
+    """Manually trigger one trading_cycle task right now, outside any
+    scheduled job — for testing or an on-demand check. Creates a real
+    task through the same orchestrator path (auto-assignment, permission
+    gating) as anything else; returns immediately — the executor thread
+    picks it up within EXECUTOR_POLL_INTERVAL_SECONDS."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if not state["db"].query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+        raise HTTPException(status_code=404, detail="create a paper trading portfolio first")
+    task_id = state["orchestrator"].create_task(
+        business_id, "Run a paper-trading cycle", department=department,
+        permission_level_required=3, task_type="trading_cycle",
+    )
+    return {"task_id": task_id}
+
+
+@app.post("/businesses/{business_id}/trading/strategy-review")
+def trigger_trading_strategy_review(business_id: str, department: Optional[str] = None):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if not state["db"].query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+        raise HTTPException(status_code=404, detail="create a paper trading portfolio first")
+    task_id = state["orchestrator"].create_task(
+        business_id, "Review paper-trading strategy performance", department=department,
+        permission_level_required=3, task_type="trading_strategy_review",
+    )
+    return {"task_id": task_id}
+
+
+@app.post("/businesses/{business_id}/trading/enable-auto-trading")
+def enable_auto_trading(business_id: str, req: EnableAutoTradingRequest):
+    """Convenience endpoint: creates the paper portfolio (if it doesn't
+    exist yet), a dedicated Trading Agent (permission_level=3/SIMULATE —
+    if the business has no agent cleared for it already), and two
+    scheduled jobs — trading_cycle on cycle_interval_seconds,
+    trading_strategy_review on review_interval_seconds — in one call.
+    This is what makes trading actually 'automatic': without a scheduled
+    job, nothing ever runs a cycle on its own. Scheduled jobs are created
+    with department=None (not restricted to a specific department) so
+    assignment isn't accidentally narrower than the agent this endpoint
+    itself creates."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+
+    if not db.query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+        create_trading_portfolio(business_id, CreateTradingPortfolioRequest(
+            starting_cash_usd=req.starting_cash_usd, watchlist=req.watchlist,
+        ))
+
+    trading_agent = db.query_one(
+        "SELECT id FROM agents WHERE business_id=? AND permission_level >= 3 "
+        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
+    )
+    if not trading_agent:
+        agent_id = state["agents"].create(
+            business_id, "Trading Agent", role="Paper Trading Analyst",
+            department="Trading", model="unassigned", permission_level=3,
+        )
+        state["agents"].set_status(agent_id, "idle")
+        state["banker"].allocate(business_id, agent_id, 500.0,
+                                  reason="starting ARC runway for automated trading")
+
+    cycle_job_id = state["jobs"].create(
+        business_id, "Paper trading cycle", "Run a paper-trading cycle",
+        interval_seconds=req.cycle_interval_seconds, permission_level_required=3,
+        task_type="trading_cycle",
+    )
+    review_job_id = state["jobs"].create(
+        business_id, "Paper trading strategy review", "Review paper-trading strategy performance",
+        interval_seconds=req.review_interval_seconds, permission_level_required=3,
+        task_type="trading_strategy_review",
+    )
+    db.audit("owner", "enable_auto_trading", "business", business_id,
+              {"cycle_job_id": cycle_job_id, "review_job_id": review_job_id})
+    return {
+        "cycle_job_id": cycle_job_id,
+        "review_job_id": review_job_id,
+        "portfolio": _trading_portfolio_view(business_id),
+    }
 
 
 # ---------------------------------------------------------------------
