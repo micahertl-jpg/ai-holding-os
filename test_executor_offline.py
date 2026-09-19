@@ -351,6 +351,78 @@ def test_queued_task_gets_retried_and_executed_once_an_agent_becomes_available()
     os.remove(TEST_DB_PATH)
 
 
+def test_reconcile_stuck_agents_resets_an_agent_with_no_live_task():
+    """Crash-recovery scenario: an agent shows status='working' but has
+    no task of its own in ('assigned','in_progress') -- the signature of
+    a process restart landing between complete_task()'s separate,
+    individually-committed writes (task status, then agent status).
+    Without reconcile_stuck_agents(), this agent would be permanently
+    unassignable (_try_assign only picks 'created'/'idle'/'active')."""
+    db, orch, biz_id, agent_id = _setup()
+    # Simulate the crash gap directly: force 'working' with no live task,
+    # exactly what complete_task() could leave behind if killed between
+    # its task-status write and its agent-status write.
+    db.execute("UPDATE agents SET status='working' WHERE id=?", (agent_id,))
+
+    reset_ids = orch.reconcile_stuck_agents()
+
+    assert reset_ids == [agent_id], reset_ids
+    agent = db.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+    assert agent["status"] == "idle"
+    print("PASS: an agent stuck in 'working' with no live task is reset to 'idle'")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_reconcile_stuck_agents_leaves_a_genuinely_busy_agent_alone():
+    """The other half of the same guarantee: an agent legitimately
+    working on an in-flight task must NOT be touched -- reconcile_stuck_
+    agents() is a crash-recovery sweep, not a way to interrupt real
+    work."""
+    db, orch, biz_id, agent_id = _setup()
+    orch.create_task(biz_id, "Research a niche", department="research",
+                      permission_level_required=2, task_type="research_opportunity",
+                      task_input={"topic": "x"})
+    agent = db.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+    assert agent["status"] == "working", "sanity check: the task should have been assigned"
+
+    reset_ids = orch.reconcile_stuck_agents()
+
+    assert reset_ids == []
+    agent_after = db.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+    assert agent_after["status"] == "working", "a genuinely busy agent must not be reset"
+    print("PASS: an agent with a live assigned task is left alone by the reconciliation sweep")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_run_once_heals_a_stuck_agent_and_makes_it_assignable_again_same_pass():
+    """Integration-level proof: the sweep is actually wired into
+    executor.run_once() (not just unit-tested in isolation), and healing
+    happens early enough in the pass that the now-idle agent can pick up
+    a brand-new task in that SAME pass -- proving this isn't just a
+    cosmetic status flip."""
+    db, orch, biz_id, agent_id = _setup()
+    db.execute("UPDATE agents SET status='working' WHERE id=?", (agent_id,))
+
+    task_id = orch.create_task(biz_id, "Research a niche", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": "x"})
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "queued", (
+        "sanity check: with the agent stuck 'working', creation should find no eligible agent"
+    )
+
+    with patch("tasks.research_opportunity.fetch_url_text", return_value=""):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=VALID_ASSESSMENT_JSON))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    print("PASS: run_once() heals a crash-stuck agent and it becomes assignable again "
+          "within that same pass")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def _setup_trading(db, biz_id, drawdown_halt_pct=None):
     """Creates a permission_level=3 trading agent plus a fresh paper
     portfolio + active v1 strategy for biz_id. Returns (trading_agent_id,
@@ -523,6 +595,9 @@ if __name__ == "__main__":
     test_manual_tasks_are_never_auto_executed()
     test_queued_typed_tasks_are_not_touched_until_assigned()
     test_queued_task_gets_retried_and_executed_once_an_agent_becomes_available()
+    test_reconcile_stuck_agents_resets_an_agent_with_no_live_task()
+    test_reconcile_stuck_agents_leaves_a_genuinely_busy_agent_alone()
+    test_run_once_heals_a_stuck_agent_and_makes_it_assignable_again_same_pass()
     test_trading_cycle_task_executes_a_paper_trade_and_records_a_snapshot()
     test_trading_cycle_drawdown_halt_pauses_the_trading_agent()
     test_trading_cycle_without_a_portfolio_fails_loudly()

@@ -72,6 +72,42 @@ class Orchestrator:
                 moved.append(task["id"])
         return moved
 
+    def reconcile_stuck_agents(self):
+        """Crash-recovery sweep: resets any agent stuck in 'working' with
+        no actually-live task back to 'idle'. 'working' is only ever set
+        in the same operation that sets a task to 'assigned' (see
+        _try_assign above and promote_approved_task below) -- there is no
+        other path that sets it. So an agent showing 'working' with no
+        task of its own in ('assigned','in_progress') can only mean a
+        crash/restart happened between two of complete_task()'s separate,
+        individually-committed writes (task status -> ARC charge/reward
+        -> agent status -> audit log -- there is no wrapping transaction
+        across them). Without this sweep, such an agent would be
+        permanently stuck: never eligible for a new task (_try_assign
+        only picks 'created'/'idle'/'active' agents) and nothing else
+        ever looks at it again, since its task already reached a
+        terminal state and stopped being retried.
+
+        Same style as retry_queued_tasks() above (a periodic self-healing
+        pass called from executor.py's run loop, not a one-time fix) --
+        found by reasoning about what a Railway restart mid-task-
+        completion actually does to this system's state, not by
+        observing it happen live. Returns the list of agent ids reset,
+        for callers/tests to inspect."""
+        stuck = self.db.query(
+            "SELECT a.id as id FROM agents a WHERE a.status='working' AND NOT EXISTS "
+            "(SELECT 1 FROM tasks t WHERE t.agent_id=a.id AND t.status IN ('assigned','in_progress'))"
+        )
+        reset_ids = []
+        for agent in stuck:
+            self.db.execute("UPDATE agents SET status='idle', updated_at=datetime('now') "
+                             "WHERE id=?", (agent["id"],))
+            self.db.audit("system", "reconcile_stuck_agent", "agent", agent["id"],
+                           {"reason": "status='working' with no live task -- likely a crash "
+                                      "mid-completion; reset to idle"})
+            reset_ids.append(agent["id"])
+        return reset_ids
+
     def _try_assign(self, task_id, business_id, department, perm_required):
         # Consequential tasks (permission_level_required >= 6) MUST always
         # reach the human approval queue — this is checked FIRST and
