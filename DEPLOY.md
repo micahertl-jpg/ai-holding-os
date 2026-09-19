@@ -112,7 +112,11 @@ automated (see `fulfillment.py`'s module docstring) — if a paid order's
 research task fails, the customer has already been charged and someone
 has to notice and refund them manually via Stripe. Without this set,
 that's only visible by opening the dashboard's Store Orders panel; with
-it set, you also get an email the moment it happens.
+it set, you also get an email the moment it happens. This same alert
+also fires if a completed task's report data never shows up (a bug,
+not a normal outcome) after `FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`
+fulfillment passes (default 5) — that order is then also given up on
+and marked `failed` rather than being retried forever.
 
 **Before accepting real money, verify the whole loop with Stripe's test
 mode** (test-mode keys, and Stripe's published test card

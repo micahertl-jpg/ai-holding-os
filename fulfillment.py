@@ -6,7 +6,11 @@ executor's, in api.py's lifespan) polls for orders with status='paid'
 whose linked task has reached a terminal state, and either emails the
 customer their report (task completed) or marks the order failed
 (task failed) — never silently retrying forever, never emailing a
-fabricated result.
+fabricated result. A completed task whose expected result row never
+shows up (a data bug elsewhere, not a normal outcome) is retried for
+up to BUILD_FAILURE_RETRY_LIMIT passes and then also given up on and
+marked 'failed', rather than being logged identically forever with no
+terminal state.
 
 Split the same way as scheduler.py/executor.py: `run_once()` is a
 pure-enough, directly-testable pass; `run_forever()` is the thin
@@ -40,6 +44,15 @@ TERMINAL_TASK_STATUSES = ("completed", "failed", "cancelled")
 # (e.g. STORE_BUSINESS_ID) -- fulfillment must keep working for every
 # other order even if this is never configured.
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
+
+# A completed task whose expected result row is missing (see
+# _build_report_email) indicates a real data problem, not a transient
+# one -- it will never fix itself by being retried. Without a cap, that
+# order stays 'paid' and gets re-logged identically on every fulfillment
+# pass forever, with no terminal state and no owner alert, ever. After
+# this many passes the order is given up on and marked 'failed' like any
+# other unfulfillable order.
+BUILD_FAILURE_RETRY_LIMIT = int(os.environ.get("FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT", "5"))
 
 
 def _build_report_email(order, task, db):
@@ -149,7 +162,7 @@ def _build_report_email(order, task, db):
     return subject, html_body
 
 
-def _notify_owner_of_failed_order(order, task, db):
+def _notify_owner_of_failed_order(order, reason, db):
     """Best-effort alert that an order needs a manual Stripe refund. The
     order is already correctly marked 'failed' in the database by the
     time this runs, so a missing OWNER_EMAIL or a broken Resend send
@@ -164,9 +177,7 @@ def _notify_owner_of_failed_order(order, task, db):
       <h2>An order needs a manual refund</h2>
       <p>Order <strong>{html.escape(order['id'])}</strong>
         (topic: {html.escape(order['topic'])}, customer:
-        {html.escape(order['customer_email'])}) was paid, but its research
-        task ended in status <strong>{html.escape(task['status'])}</strong>
-        instead of completing.</p>
+        {html.escape(order['customer_email'])}) was paid, but {html.escape(reason)}.</p>
       <p>This system does not automate refunds -- the customer was already
         charged and needs a manual refund via the Stripe dashboard.</p>
     </div>
@@ -197,7 +208,9 @@ def run_once(db, client=None):
             db.execute("UPDATE orders SET status='failed' WHERE id=?", (order["id"],))
             db.audit("fulfillment", "order_fulfillment_failed", "order", order["id"],
                       {"reason": f"linked task ended in status={task['status']}"})
-            _notify_owner_of_failed_order(order, task, db)
+            _notify_owner_of_failed_order(
+                order, f"its research task ended in status '{task['status']}' instead "
+                       f"of completing", db)
             outcomes.append((order["id"], "failed"))
             continue
 
@@ -206,11 +219,27 @@ def run_once(db, client=None):
         except (RuntimeError, ValueError) as e:
             # A data problem (e.g. the assessment row is missing), not
             # a delivery problem — will keep failing identically every
-            # pass, surfaced via the audit log rather than silently
-            # swallowed or endlessly retried as if it might fix itself.
+            # pass. Logged every time either way, but only given up on
+            # (marked 'failed' + owner alerted) once it's clearly not
+            # going to resolve itself, rather than being retried forever
+            # with no terminal state and no one ever told.
             db.audit("fulfillment", "order_report_build_failed", "order", order["id"],
                       {"error": str(e)})
-            outcomes.append((order["id"], f"build_failed: {e}"))
+            prior_failures = db.query_one(
+                "SELECT COUNT(*) as c FROM audit_log WHERE action='order_report_build_failed' "
+                "AND target_id=?", (order["id"],),
+            )["c"]
+            if prior_failures >= BUILD_FAILURE_RETRY_LIMIT:
+                db.execute("UPDATE orders SET status='failed' WHERE id=?", (order["id"],))
+                db.audit("fulfillment", "order_fulfillment_failed", "order", order["id"],
+                          {"reason": f"report data never became available after "
+                                     f"{prior_failures} attempts: {e}"})
+                _notify_owner_of_failed_order(
+                    order, f"its report could not be generated after {prior_failures} "
+                           f"attempts ({e})", db)
+                outcomes.append((order["id"], f"failed: build_failed_permanently: {e}"))
+            else:
+                outcomes.append((order["id"], f"build_failed: {e}"))
             continue
 
         try:
