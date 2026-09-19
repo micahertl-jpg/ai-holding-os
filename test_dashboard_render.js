@@ -320,6 +320,74 @@ test("renderAppFeasibilityTable never throws on malformed reference_urls_used JS
   assert.ok(html.includes("based on general knowledge only"));
 });
 
+test("renderRadialGauge computes the correct dasharray ratio for a partial value", () => {
+  // size=88, stroke=7 (defaults) -> r=40.5, circumference = 2*PI*40.5 ~= 254.47
+  // value=25, max=100 -> 25% -> dash ~= 63.6
+  const html = R.renderRadialGauge(25, 100, "test label");
+  assert.ok(html.includes("25%"), "should show a rounded percentage as the default display value");
+  assert.ok(html.includes("test label"));
+  const dashMatch = html.match(/stroke-dasharray="([\d.]+) ([\d.]+)"/);
+  assert.ok(dashMatch, "should render a stroke-dasharray attribute");
+  const [, dash, circumference] = dashMatch.map(Number);
+  assert.ok(Math.abs(dash / circumference - 0.25) < 0.01, "dash/circumference should be ~0.25");
+});
+
+test("renderRadialGauge clamps ratio to [0,1] and never divides by zero on a zero max", () => {
+  const zeroMax = R.renderRadialGauge(5, 0, "x"); // should not throw, falls back to max=1
+  assert.ok(zeroMax.includes("radial-gauge"));
+  const overMax = R.renderRadialGauge(150, 100, "x");
+  assert.ok(overMax.includes("100%"), "a value over max should clamp display to 100%, not overflow");
+});
+
+test("renderRadialGauge accepts a custom displayValue and color", () => {
+  const html = R.renderRadialGauge(3, 6, "agents idle", { displayValue: "3/6", color: "var(--green)" });
+  assert.ok(html.includes("3/6"));
+  assert.ok(html.includes("var(--green)"));
+});
+
+test("statusColorVar maps known statuses to the right CSS var and falls back for unknown", () => {
+  assert.strictEqual(R.statusColorVar("idle"), "var(--green)");
+  assert.strictEqual(R.statusColorVar("working"), "var(--accent)");
+  assert.strictEqual(R.statusColorVar("awaiting_approval"), "var(--amber)");
+  assert.strictEqual(R.statusColorVar("failed"), "var(--red)");
+  assert.strictEqual(R.statusColorVar("some_unknown_status"), "var(--muted)");
+});
+
+test("renderStatusBars handles the empty case", () => {
+  assert.ok(R.renderStatusBars({}).includes("No data yet"));
+  assert.ok(R.renderStatusBars(null).includes("No data yet"));
+});
+
+test("renderStatusBars renders a bar per nonzero status, sized relative to the max", () => {
+  const html = R.renderStatusBars({ queued: 2, completed: 10, failed: 0 });
+  assert.ok(html.includes("queued"));
+  assert.ok(html.includes("completed"));
+  assert.ok(!html.includes("failed"), "a zero-count status should be omitted, not shown as an empty bar");
+  assert.ok(html.includes("width:100%"), "the max-count status (completed:10) should fill the full track");
+  assert.ok(html.includes("width:20%"), "queued:2 relative to max 10 should be a 20% bar");
+});
+
+test("renderArcSummary includes a utilization gauge alongside the existing stat blocks", () => {
+  const html = R.renderArcSummary({ allocation: 100, spend: 25 });
+  assert.ok(html.includes("radial-gauge"));
+  assert.ok(html.includes("25%"), "spend 25 / allocation 100 should render a 25% gauge");
+  assert.ok(html.includes("100.0")); // existing Allocated stat still present
+});
+
+test("renderGlobalStats includes idle/completion gauges and a tasks-by-status bar chart", () => {
+  const overview = {
+    businesses: [{ id: "biz_1" }],
+    agents_by_status: { idle: 2, working: 2 },
+    tasks_by_status: { queued: 1, completed: 3 },
+    real_revenue_usd_cents: 0,
+  };
+  const html = R.renderGlobalStats(overview);
+  assert.ok(html.includes("radial-gauge"));
+  assert.ok(html.includes("Tasks by status"));
+  assert.ok(html.includes("queued"));
+  assert.ok(html.includes("completed"));
+});
+
 test("renderTradingPortfolio handles the no-portfolio-yet case", () => {
   const html = R.renderTradingPortfolio(null);
   assert.ok(html.includes("No paper trading portfolio yet"));
