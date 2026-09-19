@@ -81,6 +81,7 @@
     setHtmlIfChanged("tasks-table", R.renderTasksTable(data.tasks));
     setHtmlIfChanged("arc-summary", R.renderArcSummary(data.arc_summary));
     setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
+    setHtmlIfChanged("orders-table", R.renderOrdersTable(data.orders));
     setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
     setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
     setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));

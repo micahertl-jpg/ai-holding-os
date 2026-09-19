@@ -268,6 +268,67 @@
       </table>`;
   }
 
+  // Maps a storefront order's status to the same four-color status
+  // vocabulary used everywhere else in the dashboard (status-completed
+  // = green, status-working = cyan/in-progress, status-awaiting_approval
+  // = amber/needs-a-look, status-failed = red), so an owner recognizes
+  // "this needs attention" at a glance without learning a second color
+  // scheme just for orders.
+  function orderStatusClass(status) {
+    if (status === "fulfilled") return "status-completed";
+    if (status === "paid") return "status-working";
+    if (status === "pending_payment") return "status-awaiting_approval";
+    return "status-failed"; // failed | refunded | anything unexpected
+  }
+
+  // "pending_payment" is an unbreakable 16-character token that alone
+  // forced the Status column wider than the whole orders table could
+  // spare -- every other real status value is already short enough to
+  // display as-is.
+  function orderStatusLabel(status) {
+    return status === "pending_payment" ? "pending" : status;
+  }
+
+  // Short labels for the table -- the raw product_type values are long,
+  // unbreakable snake_case tokens (e.g. "research_app_feasibility") that
+  // don't wrap, so they were forcing the table wider than its panel.
+  const ORDER_PRODUCT_LABELS = {
+    research_opportunity: "Opportunity Research",
+    research_roblox_trend: "Roblox Trend Research",
+    research_app_feasibility: "App Feasibility",
+  };
+
+  function orderProductLabel(productType) {
+    return ORDER_PRODUCT_LABELS[productType] || productType;
+  }
+
+  function renderOrdersTable(orders) {
+    if (!orders || orders.length === 0) {
+      return '<p class="empty">No store orders yet.</p>';
+    }
+    const rows = orders
+      .map(
+        (o) => `
+        <tr>
+          <td>${escapeHtml(o.topic)}</td>
+          <td>${escapeHtml(orderProductLabel(o.product_type))}</td>
+          <td>${escapeHtml(o.customer_email)}</td>
+          <td>${fmtUsd((o.price_usd_cents || 0) / 100)}</td>
+          <td><span class="status ${orderStatusClass(o.status)}">${escapeHtml(orderStatusLabel(o.status))}</span></td>
+          <td>${escapeHtml(o.created_at)}</td>
+        </tr>`
+      )
+      .join("");
+    return `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Topic</th><th>Product</th><th>Customer</th>
+            <th>Price</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
   function renderOpportunitiesTable(opportunities) {
     if (!opportunities || opportunities.length === 0) {
       return '<p class="empty">No opportunities researched yet.</p>';
@@ -752,6 +813,9 @@
     renderApprovalsList,
     renderArcSummary,
     renderJobsTable,
+    orderStatusClass,
+    orderStatusLabel,
+    renderOrdersTable,
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
     renderAppFeasibilityTable,

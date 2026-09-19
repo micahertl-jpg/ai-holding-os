@@ -411,6 +411,12 @@ select:focus, input:focus {
 
 /* ---------- Tables ---------- */
 
+/* Safety net for tables with more/wider columns than a panel can fit
+   (e.g. the orders table's email/product columns) -- scrolls the table
+   itself horizontally instead of letting it overflow into neighboring
+   panels or get silently clipped. */
+.table-scroll { overflow-x: auto; }
+
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th, .data-table td {
   text-align: left;

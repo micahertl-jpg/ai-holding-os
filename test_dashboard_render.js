@@ -181,6 +181,86 @@ test("renderJobsTable renders a disabled job with an Enable button", () => {
   }
 });
 
+test("orderStatusClass maps every real order status to the shared status vocabulary", () => {
+  assert.strictEqual(R.orderStatusClass("fulfilled"), "status-completed");
+  assert.strictEqual(R.orderStatusClass("paid"), "status-working");
+  assert.strictEqual(R.orderStatusClass("pending_payment"), "status-awaiting_approval");
+  assert.strictEqual(R.orderStatusClass("failed"), "status-failed");
+  assert.strictEqual(R.orderStatusClass("refunded"), "status-failed");
+});
+
+test("orderStatusLabel shortens the one unusually long status value, passes the rest through", () => {
+  assert.strictEqual(R.orderStatusLabel("pending_payment"), "pending");
+  assert.strictEqual(R.orderStatusLabel("fulfilled"), "fulfilled");
+  assert.strictEqual(R.orderStatusLabel("paid"), "paid");
+  assert.strictEqual(R.orderStatusLabel("failed"), "failed");
+  assert.strictEqual(R.orderStatusLabel("refunded"), "refunded");
+});
+
+test("renderOrdersTable shows the shortened label for a pending_payment order, not the raw value", () => {
+  const orders = [{
+    id: "ord_5", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
+    created_at: "2026-09-19 12:00:00",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes(">pending<"));
+  assert.ok(!html.includes(">pending_payment<"));
+  assert.ok(html.includes("status-awaiting_approval"));
+});
+
+test("renderOrdersTable handles the empty case", () => {
+  assert.ok(R.renderOrdersTable([]).includes("No store orders yet"));
+  assert.ok(R.renderOrdersTable(null).includes("No store orders yet"));
+});
+
+test("renderOrdersTable renders the real shape from the orders table", () => {
+  const orders = [{
+    id: "ord_1", product_type: "research_app_feasibility", topic: "a habit tracker app",
+    customer_email: "customer@example.com", price_usd_cents: 1900, status: "fulfilled",
+    created_at: "2026-09-19 12:00:00",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes("a habit tracker app"));
+  assert.ok(html.includes("App Feasibility"));
+  assert.ok(html.includes("customer@example.com"));
+  assert.ok(html.includes("$19.00"));
+  assert.ok(html.includes("status-completed"));
+  assert.ok(html.includes(">fulfilled<"));
+});
+
+test("renderOrdersTable falls back to the raw product_type for an unknown value", () => {
+  const orders = [{
+    id: "ord_4", product_type: "some_future_product", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "paid",
+    created_at: "2026-09-19 12:00:00",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes("some_future_product"));
+});
+
+test("renderOrdersTable flags a failed order with the failed status class", () => {
+  const orders = [{
+    id: "ord_2", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "failed",
+    created_at: "2026-09-19 12:00:00",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes("status-failed"));
+  assert.ok(html.includes(">failed<"));
+});
+
+test("renderOrdersTable escapes customer-submitted topic and email to prevent HTML injection", () => {
+  const orders = [{
+    id: "ord_3", product_type: "research_opportunity",
+    topic: '<script>alert("xss")</script>', customer_email: '"><img src=x onerror=alert(1)>',
+    price_usd_cents: 1900, status: "paid", created_at: "2026-09-19 12:00:00",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(!html.includes("<script>"));
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderOpportunitiesTable handles the empty case", () => {
   assert.ok(R.renderOpportunitiesTable([]).includes("No opportunities researched yet"));
   assert.ok(R.renderOpportunitiesTable(null).includes("No opportunities researched yet"));
