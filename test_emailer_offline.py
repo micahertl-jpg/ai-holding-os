@@ -66,7 +66,20 @@ def test_success_path_returns_real_response():
         assert sent_body["subject"] == "Your Report"
         assert sent_body["html"] == "<p>Hi</p>"
         assert sent_body["text"] == "Hi"
+
+        # Real production bug this guards against: Resend's API sits behind
+        # Cloudflare, which blocks requests carrying urllib's default
+        # User-Agent ("Python-urllib/3.x") with a 403 (error code 1010)
+        # before Resend ever sees the request. A missing/default-looking
+        # User-Agent header must never regress back in silently.
+        sent_headers = {k.lower(): v for k, v in sent_req.headers.items()}
+        assert "user-agent" in sent_headers, "must set a real User-Agent header"
+        assert "python-urllib" not in sent_headers["user-agent"].lower(), (
+            "must not send urllib's default User-Agent — Cloudflare blocks it"
+        )
         print("PASS: send_email sends the real recipient/subject/body and returns Resend's response")
+        print("PASS: send_email sets a non-default User-Agent header (avoids the Cloudflare "
+              "1010 block found in production)")
     finally:
         del os.environ["RESEND_API_KEY"]
         del os.environ["RESEND_FROM_EMAIL"]

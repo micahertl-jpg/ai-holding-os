@@ -58,6 +58,15 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         headers={
             "content-type": "application/json",
             "authorization": f"Bearer {api_key}",
+            # Resend's API sits behind Cloudflare, and Cloudflare's bot
+            # protection blocks requests carrying urllib's default
+            # User-Agent ("Python-urllib/3.x") with a 403 (error code
+            # 1010) before the request ever reaches Resend itself — hit
+            # this for real in production. A normal-looking UA header
+            # is enough to pass; this changes nothing about what's
+            # actually sent, just how the HTTP client identifies itself.
+            "user-agent": "ai-holding-os-fulfillment/1.0 (+https://resend.com/docs/api-reference)",
+            "accept": "application/json",
         },
     )
     try:
