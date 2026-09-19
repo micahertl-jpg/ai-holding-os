@@ -207,12 +207,50 @@ body::after {
   background-position: 0 0, 0% 50%;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.4);
+  /* Outer drop shadow + an inset hairline "bezel" one pixel in from the
+     gradient border, echoing an edge-lit acrylic instrument panel
+     (double-frame look) rather than a single flat rule. */
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.3),
+    inset 0 0 0 1px rgba(255,255,255,0.04),
+    inset 0 0 20px rgba(34,211,238,0.03),
+    0 8px 24px rgba(0,0,0,0.4);
   animation: panel-in 0.5s ease both, holo-border-shift 14s ease-in-out infinite;
   transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 .panel:hover {
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.4), 0 0 24px rgba(34,211,238,0.12);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.3),
+    inset 0 0 0 1px rgba(255,255,255,0.06),
+    inset 0 0 24px rgba(34,211,238,0.05),
+    0 8px 24px rgba(0,0,0,0.4),
+    0 0 24px rgba(34,211,238,0.12);
+}
+
+/* Applied to one focal panel (Command Center Overview) to echo the
+   reference's big central circular HUD: a faint watermark of
+   concentric rings + crosshair sitting behind the panel's own content,
+   as a third background layer stacked under the existing two. */
+.panel-scanner {
+  background-image:
+    radial-gradient(circle at 50% 50%,
+      transparent 0, transparent 36%,
+      rgba(34,211,238,0.14) 36%, rgba(34,211,238,0.14) 36.6%, transparent 36.6%, transparent 47%,
+      rgba(124,107,245,0.12) 47%, rgba(124,107,245,0.12) 47.6%, transparent 47.6%, transparent 60%,
+      rgba(238,107,208,0.10) 60%, rgba(238,107,208,0.10) 60.6%, transparent 60.6%),
+    linear-gradient(160deg, rgba(10,20,32,0.88) 0%, rgba(13,26,40,0.82) 100%),
+    linear-gradient(120deg, var(--holo-1), var(--holo-2) 30%, var(--holo-3) 55%, var(--holo-4) 80%, var(--holo-1));
+  background-origin: padding-box, padding-box, border-box;
+  background-clip: padding-box, padding-box, border-box;
+  background-size: 460px 460px, 100% 100%, 320% 320%;
+  background-position: 92% -60px, 0 0, 0% 50%;
+  background-repeat: no-repeat;
+  animation: panel-in 0.5s ease both, holo-border-shift 14s ease-in-out infinite, scanner-drift 16s ease-in-out infinite;
+}
+
+@keyframes scanner-drift {
+  0%, 100% { background-position: 92% -60px, 0 0, 0% 50%; }
+  50% { background-position: 96% -40px, 0 0, 100% 50%; }
 }
 
 @keyframes holo-border-shift {
@@ -598,4 +636,111 @@ select:focus, input:focus {
   margin: 0;
   padding-top: 8px;
   border-top: 1px dashed var(--border);
+}
+
+/* ---------- Instrument widgets: radial gauges + status bar charts ----------
+   Small HUD-style readouts (dial rings, mini bar charts) that sit
+   alongside the existing plain-number stat blocks, giving panels the
+   denser "cluster of instruments" feel of a real control-room display
+   rather than a flat data table. */
+
+.instrument-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.instrument-row-tight { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border); }
+
+.radial-gauge {
+  position: relative;
+  flex-shrink: 0;
+}
+.radial-gauge svg { display: block; overflow: visible; }
+.radial-gauge-track {
+  stroke: rgba(255,255,255,0.07);
+  stroke-width: 7;
+}
+.radial-gauge-fill {
+  stroke-width: 7;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px currentColor);
+  transition: stroke-dasharray 0.6s ease;
+  animation: gauge-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes gauge-in {
+  from { stroke-dasharray: 0 1000; }
+}
+.radial-gauge-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+.radial-gauge-value {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--text);
+  text-shadow: 0 0 8px rgba(34,211,238,0.35);
+  line-height: 1.1;
+}
+.radial-gauge-sub {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.stat-bars-block { flex: 1; min-width: 200px; }
+.stat-bars-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.stat-bars { display: flex; flex-direction: column; gap: 6px; }
+.stat-bar-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 24px;
+  align-items: center;
+  gap: 8px;
+}
+.stat-bar-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.3);
+  overflow: hidden;
+}
+.stat-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  box-shadow: 0 0 6px currentColor;
+  animation: bar-grow 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes bar-grow {
+  from { width: 0 !important; }
+}
+.stat-bar-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  text-align: right;
 }

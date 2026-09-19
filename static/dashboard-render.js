@@ -26,6 +26,78 @@
     return "$" + Number(n).toFixed(2);
   }
 
+  // Same four-way color mapping the .status-* CSS classes use, exposed
+  // as a JS helper so instrument widgets (gauges, bar charts) can pick
+  // a matching fill color for a given status/entry_type string.
+  function statusColorVar(status) {
+    const s = String(status || "").toLowerCase();
+    if (["idle", "completed", "active", "earn"].includes(s)) return "var(--green)";
+    if (["working", "assigned", "queued"].includes(s)) return "var(--accent)";
+    if (["awaiting_approval", "penalty"].includes(s)) return "var(--amber)";
+    if (["failed", "paused", "retired", "cancelled", "spend"].includes(s)) return "var(--red)";
+    return "var(--muted)";
+  }
+
+  // A single instrument-panel radial gauge (SVG ring), matching the
+  // dial-style readouts on a HUD control panel. Pure function of
+  // value/max — no DOM/animation state, so it's trivial to unit test
+  // and re-renders cleanly every dashboard refresh.
+  function renderRadialGauge(value, max, label, opts) {
+    opts = opts || {};
+    const size = opts.size || 88;
+    const stroke = opts.stroke || 7;
+    const r = (size - stroke) / 2;
+    const circumference = 2 * Math.PI * r;
+    const safeMax = max && max > 0 ? max : 1;
+    const ratio = Math.max(0, Math.min(1, (Number(value) || 0) / safeMax));
+    const dash = (circumference * ratio).toFixed(1);
+    const color = opts.color || "var(--accent)";
+    const displayValue =
+      opts.displayValue !== undefined ? opts.displayValue : Math.round(ratio * 100) + "%";
+    return `
+      <div class="radial-gauge" style="width:${size}px;height:${size}px;" title="${escapeHtml(
+        label || ""
+      )}">
+        <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+          <circle class="radial-gauge-track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" />
+          <circle class="radial-gauge-fill" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none"
+            stroke="${color}" stroke-dasharray="${dash} ${circumference.toFixed(1)}"
+            transform="rotate(-90 ${size / 2} ${size / 2})" />
+        </svg>
+        <div class="radial-gauge-label">
+          <span class="radial-gauge-value">${escapeHtml(displayValue)}</span>
+          ${label ? `<span class="radial-gauge-sub">${escapeHtml(label)}</span>` : ""}
+        </div>
+      </div>`;
+  }
+
+  // A small horizontal bar-chart instrument, e.g. "tasks by status" or
+  // "agents by status" — takes a {status: count} map (the exact shape
+  // GET /overview already returns) and needs no extra aggregation.
+  function renderStatusBars(counts) {
+    const entries = Object.entries(counts || {}).filter(([, c]) => c > 0);
+    if (entries.length === 0) {
+      return '<p class="empty">No data yet.</p>';
+    }
+    const max = Math.max(...entries.map(([, c]) => c));
+    const rows = entries
+      .map(([status, count]) => {
+        const pct = max > 0 ? Math.round((count / max) * 100) : 0;
+        return `
+        <div class="stat-bar-row">
+          <span class="stat-bar-label">${escapeHtml(status)}</span>
+          <div class="stat-bar-track">
+            <div class="stat-bar-fill" style="width:${pct}%; background:${statusColorVar(
+              status
+            )};"></div>
+          </div>
+          <span class="stat-bar-count">${escapeHtml(count)}</span>
+        </div>`;
+      })
+      .join("");
+    return `<div class="stat-bars">${rows}</div>`;
+  }
+
   function renderAgentOptions(agents) {
     if (!agents || agents.length === 0) {
       return '<option value="">No agents yet — add one above</option>';
@@ -140,16 +212,24 @@
   }
 
   function renderArcSummary(summary) {
-    const allocation = fmtArc(summary && summary.allocation);
+    const allocationNum = Number((summary && summary.allocation) || 0);
+    const spendNum = Number((summary && summary.spend) || 0);
+    const allocation = fmtArc(allocationNum);
     const earn = fmtArc(summary && summary.earn);
-    const spend = fmtArc(summary && summary.spend);
+    const spend = fmtArc(spendNum);
     const penalty = fmtArc(summary && summary.penalty);
+    const gauge = renderRadialGauge(spendNum, allocationNum || spendNum || 1, "ARC utilized", {
+      color: "var(--accent)",
+    });
     return `
-      <div class="arc-summary">
-        <div class="arc-stat"><span class="label">Allocated</span><span class="value">${allocation}</span></div>
-        <div class="arc-stat"><span class="label">Earned</span><span class="value">${earn}</span></div>
-        <div class="arc-stat"><span class="label">Spent</span><span class="value">${spend}</span></div>
-        <div class="arc-stat"><span class="label">Penalties</span><span class="value">${penalty}</span></div>
+      <div class="instrument-row">
+        ${gauge}
+        <div class="arc-summary">
+          <div class="arc-stat"><span class="label">Allocated</span><span class="value">${allocation}</span></div>
+          <div class="arc-stat"><span class="label">Earned</span><span class="value">${earn}</span></div>
+          <div class="arc-stat"><span class="label">Spent</span><span class="value">${spend}</span></div>
+          <div class="arc-stat"><span class="label">Penalties</span><span class="value">${penalty}</span></div>
+        </div>
       </div>`;
   }
 
@@ -428,18 +508,34 @@
     const totalBusinesses = (overview.businesses || []).length;
     const agentsByStatus = overview.agents_by_status || {};
     const totalAgents = Object.values(agentsByStatus).reduce((a, b) => a + b, 0);
+    const idleAgents = agentsByStatus.idle || 0;
     const tasksByStatus = overview.tasks_by_status || {};
     const terminal = new Set(["completed", "failed", "cancelled"]);
     const openTasks = Object.entries(tasksByStatus)
       .filter(([status]) => !terminal.has(status))
       .reduce((sum, [, c]) => sum + c, 0);
+    const totalTasks = Object.values(tasksByStatus).reduce((a, b) => a + b, 0);
     const revenue = (overview.real_revenue_usd_cents || 0) / 100;
+    const idleGauge = renderRadialGauge(idleAgents, totalAgents || 1, "agents idle", {
+      color: "var(--green)",
+    });
+    const completionGauge = renderRadialGauge(totalTasks - openTasks, totalTasks || 1, "tasks done", {
+      color: "var(--accent)",
+    });
     return `
       <div class="arc-summary">
         <div class="arc-stat"><span class="label">Businesses</span><span class="value">${totalBusinesses}</span></div>
         <div class="arc-stat"><span class="label">Agents</span><span class="value">${totalAgents}</span></div>
         <div class="arc-stat"><span class="label">Open Tasks</span><span class="value">${openTasks}</span></div>
         <div class="arc-stat"><span class="label">Real Revenue Collected</span><span class="value">${fmtUsd(revenue)}</span></div>
+      </div>
+      <div class="instrument-row instrument-row-tight">
+        ${idleGauge}
+        ${completionGauge}
+        <div class="stat-bars-block">
+          <div class="stat-bars-title">Tasks by status</div>
+          ${renderStatusBars(tasksByStatus)}
+        </div>
       </div>`;
   }
 
@@ -478,6 +574,9 @@
     escapeHtml,
     fmtArc,
     fmtUsd,
+    statusColorVar,
+    renderRadialGauge,
+    renderStatusBars,
     renderBusinessOptions,
     renderAgentOptions,
     renderBusinessHeader,
