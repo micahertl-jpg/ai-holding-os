@@ -22,6 +22,7 @@ consequential action this project's spec says should default to
 requiring human judgment, not be silently automated on day one.
 """
 
+import html
 import threading
 
 from emailer import send_email, EmailError
@@ -32,7 +33,21 @@ TERMINAL_TASK_STATUSES = ("completed", "failed", "cancelled")
 def _build_report_email(order, task, db):
     """Returns (subject, html_body) for a completed order, pulling the
     real saved assessment row (never re-deriving/re-summarizing it —
-    the email must say exactly what was actually produced)."""
+    the email must say exactly what was actually produced).
+
+    Every value interpolated into html_body is passed through
+    html.escape() first. `topic`/`concept` traces back to unauthenticated,
+    customer-submitted input at checkout (api.py's /store/checkout takes
+    it with no sanitization beyond .strip()) and the other fields are
+    model output that could itself echo/quote that same input — without
+    escaping, a customer could submit e.g. `<a href="...">` as their
+    "topic" and have it rendered as live HTML in a real transactional
+    email sent, from this business's verified sending domain, to
+    whatever `customer_email` they also supplied (not necessarily their
+    own address). The dashboard already escapes this same data
+    (dashboard-render.js's escapeHtml) before rendering it — this brings
+    the email path in line with that, closing a real gap between the
+    two."""
     if order["product_type"] == "research_opportunity":
         row = db.query_one("SELECT * FROM opportunities WHERE task_id=?", (task["id"],))
         if not row:
@@ -80,15 +95,15 @@ def _build_report_email(order, task, db):
         raise ValueError(f"unknown product_type: {order['product_type']!r}")
 
     rows_html = "".join(
-        f"<tr><td style='padding:6px 12px;font-weight:bold;vertical-align:top;'>{label}</td>"
-        f"<td style='padding:6px 12px;'>{value or ''}</td></tr>"
+        f"<tr><td style='padding:6px 12px;font-weight:bold;vertical-align:top;'>{html.escape(label)}</td>"
+        f"<td style='padding:6px 12px;'>{html.escape(value) if value else ''}</td></tr>"
         for label, value in fields
     )
     html_body = f"""
     <div style="font-family:sans-serif;max-width:600px;">
-      <h2>Research Report: {topic}</h2>
-      <p><strong>Confidence level: {confidence}</strong></p>
-      <p>{summary}</p>
+      <h2>Research Report: {html.escape(topic)}</h2>
+      <p><strong>Confidence level: {html.escape(confidence or '')}</strong></p>
+      <p>{html.escape(summary) if summary else ''}</p>
       <table style="border-collapse:collapse;width:100%;">{rows_html}</table>
       <p style="color:#666;font-size:12px;margin-top:24px;">
         This report was produced by an AI research process. Every field above is an

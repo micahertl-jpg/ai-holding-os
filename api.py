@@ -1040,8 +1040,12 @@ async def stripe_webhook(request: Request):
 
     # Idempotency: real_transactions.stripe_event_id is UNIQUE, so a
     # duplicate webhook delivery (Stripe retries on anything but a 2xx)
-    # hitting this INSERT twice raises here — caught and treated as
-    # "already processed", never as a second real payment.
+    # would hit that constraint on a second INSERT. Checked explicitly
+    # up front, rather than relying on catching the resulting exception,
+    # so the common case needs no exception handling at all.
+    if db.query_one("SELECT id FROM real_transactions WHERE stripe_event_id=?", (stripe_event_id,)):
+        return {"status": "already_processed", "order_id": order_id}
+
     try:
         db.execute(
             "INSERT INTO real_transactions (id, order_id, direction, source, destination, "
@@ -1052,6 +1056,19 @@ async def stripe_webhook(request: Request):
              f"store order: {order['product_type']} — {order['topic']}", stripe_event_id),
         )
     except Exception:
+        # Only reachable via a genuine race: another delivery of this
+        # same event landed between the SELECT above and this INSERT,
+        # and the UNIQUE constraint caught it. Confirm that's actually
+        # what happened before treating this as a harmless duplicate —
+        # a previous version of this code caught ANY exception here
+        # (a real DB error included) and silently told Stripe "success,
+        # don't retry" regardless of whether the transaction was ever
+        # actually recorded, which could lose a paid order's fulfillment
+        # entirely with no trace. If the row still doesn't exist, this
+        # is a real failure and must surface as one.
+        if not db.query_one("SELECT id FROM real_transactions WHERE stripe_event_id=?",
+                             (stripe_event_id,)):
+            raise
         return {"status": "already_processed", "order_id": order_id}
 
     if order["status"] == "pending_payment":
