@@ -47,6 +47,23 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+class ExecResult:
+    """Minimal, backend-agnostic result of an execute() call, exposing
+    just `.rowcount`. sqlite3.Cursor already provides this natively
+    (Database.execute returns the real cursor); PostgresDatabase.execute
+    wraps its cursor's rowcount in this before the cursor closes, so
+    callers can write one check (e.g. `if result.rowcount == 0`) that
+    works identically on both backends -- used by banker.charge() to
+    turn a check-then-write race into a single atomic conditional
+    UPDATE. No existing caller used execute()'s return value before this
+    (grepped: none did), so giving it real meaning here is safe."""
+
+    __slots__ = ("rowcount",)
+
+    def __init__(self, rowcount: int):
+        self.rowcount = rowcount
+
+
 class Database:
     """SQLite implementation. `check_same_thread=False` is needed
     because FastAPI's sync endpoints run in a worker thread pool, not
@@ -149,8 +166,9 @@ class PostgresDatabase:
         with self._lock:
             with self.conn.cursor(cursor_factory=self._cursor_factory) as cur:
                 cur.execute(self._translate(sql), params)
+                rowcount = cur.rowcount
             self.conn.commit()
-            return None
+            return ExecResult(rowcount)
 
     def query(self, sql, params=()):
         with self._lock:
