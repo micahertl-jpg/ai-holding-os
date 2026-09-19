@@ -383,6 +383,56 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  function renderGlobalStats(overview) {
+    const totalBusinesses = (overview.businesses || []).length;
+    const agentsByStatus = overview.agents_by_status || {};
+    const totalAgents = Object.values(agentsByStatus).reduce((a, b) => a + b, 0);
+    const tasksByStatus = overview.tasks_by_status || {};
+    const terminal = new Set(["completed", "failed", "cancelled"]);
+    const openTasks = Object.entries(tasksByStatus)
+      .filter(([status]) => !terminal.has(status))
+      .reduce((sum, [, c]) => sum + c, 0);
+    const revenue = (overview.real_revenue_usd_cents || 0) / 100;
+    return `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Businesses</span><span class="value">${totalBusinesses}</span></div>
+        <div class="arc-stat"><span class="label">Agents</span><span class="value">${totalAgents}</span></div>
+        <div class="arc-stat"><span class="label">Open Tasks</span><span class="value">${openTasks}</span></div>
+        <div class="arc-stat"><span class="label">Real Revenue Collected</span><span class="value">${fmtUsd(revenue)}</span></div>
+      </div>`;
+  }
+
+  function renderBusinessesOverviewTable(businesses) {
+    if (!businesses || businesses.length === 0) {
+      return '<p class="empty">No businesses yet — create one below.</p>';
+    }
+    const rows = businesses
+      .map((b) => {
+        const arc = b.arc_summary || {};
+        const approvalsCell =
+          b.pending_approval_count > 0
+            ? `<span class="status status-awaiting_approval">${escapeHtml(b.pending_approval_count)} pending</span>`
+            : "—";
+        return `
+        <tr>
+          <td>${escapeHtml(b.name)}</td>
+          <td>${escapeHtml(b.type || "")}</td>
+          <td><span class="badge badge-${escapeHtml(b.status)}">${escapeHtml(b.status)}</span></td>
+          <td>${escapeHtml(b.agent_count)}</td>
+          <td>${escapeHtml(b.open_task_count)}</td>
+          <td>${approvalsCell}</td>
+          <td>${fmtArc(arc.earn)} / ${fmtArc(arc.spend)}</td>
+        </tr>`;
+      })
+      .join("");
+    return `
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Agents</th>
+          <th>Open Tasks</th><th>Approvals</th><th>ARC Earned / Spent</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
   const api = {
     escapeHtml,
     fmtArc,
@@ -397,6 +447,8 @@
     renderJobsTable,
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
+    renderGlobalStats,
+    renderBusinessesOverviewTable,
     renderTradingPortfolio,
     renderTradingPositions,
     renderTradingTrades,

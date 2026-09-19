@@ -43,6 +43,20 @@
     }
   }
 
+  async function loadOverview() {
+    // Global, business-independent -- runs regardless of which business
+    // (if any) is currently selected below. This is what makes pending
+    // approvals on a business the owner isn't currently viewing actually
+    // visible, instead of silently sitting unnoticed.
+    const data = await api("/overview");
+    document.getElementById("global-approvals-list").innerHTML =
+      R.renderApprovalsList(data.pending_approvals);
+    document.getElementById("global-stats").innerHTML =
+      R.renderGlobalStats(data);
+    document.getElementById("businesses-overview-table").innerHTML =
+      R.renderBusinessesOverviewTable(data.businesses);
+  }
+
   async function loadDashboard() {
     if (!currentBusinessId) return;
     const data = await api(`/businesses/${currentBusinessId}/dashboard`);
@@ -52,8 +66,6 @@
       R.renderAgentsTable(data.agents);
     document.getElementById("tasks-table").innerHTML =
       R.renderTasksTable(data.tasks);
-    document.getElementById("approvals-list").innerHTML =
-      R.renderApprovalsList(data.pending_approvals);
     document.getElementById("arc-summary").innerHTML =
       R.renderArcSummary(data.arc_summary);
     document.getElementById("jobs-table").innerHTML =
@@ -81,7 +93,10 @@
     if (refreshInFlight) return;
     refreshInFlight = true;
     try {
-      await loadDashboard();
+      // loadOverview() runs unconditionally (global, not tied to
+      // currentBusinessId) -- loadDashboard() is a no-op until a
+      // business is selected.
+      await Promise.all([loadOverview(), loadDashboard()]);
     } catch (e) {
       showError("Failed to refresh: " + e.message);
     } finally {
@@ -92,6 +107,12 @@
   // --- event wiring ---
 
   document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      await loadOverview();
+    } catch (e) {
+      showError("Failed to load overview: " + e.message);
+    }
+
     try {
       await loadBusinessList();
     } catch (e) {
