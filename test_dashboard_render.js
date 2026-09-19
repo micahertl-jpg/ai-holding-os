@@ -388,6 +388,47 @@ test("renderGlobalStats includes idle/completion gauges and a tasks-by-status ba
   assert.ok(html.includes("completed"));
 });
 
+test("renderSparkline shows a not-enough-history message for fewer than 2 points", () => {
+  assert.ok(R.renderSparkline([]).includes("Not enough history"));
+  assert.ok(R.renderSparkline([{ value: 100 }]).includes("Not enough history"));
+  assert.ok(R.renderSparkline(null).includes("Not enough history"));
+});
+
+test("renderSparkline renders a polyline scaled to the value range, colored by trend", () => {
+  const up = R.renderSparkline([{ value: 100 }, { value: 105 }, { value: 120 }]);
+  assert.ok(up.includes("sparkline-line"));
+  assert.ok(up.includes("var(--green)"), "an upward trend should default to green");
+  const down = R.renderSparkline([{ value: 120 }, { value: 100 }]);
+  assert.ok(down.includes("var(--red)"), "a downward trend should default to red");
+});
+
+test("renderSparkline never throws on a flat (zero-range) series", () => {
+  const html = R.renderSparkline([{ value: 50 }, { value: 50 }, { value: 50 }]);
+  assert.ok(html.includes("sparkline-line"));
+});
+
+test("renderTradingPortfolio includes an equity sparkline when history is present", () => {
+  const view = {
+    portfolio: { starting_cash_usd: 10000, cash_usd: 8000, created_at: "2026-01-01 00:00:00" },
+    positions: [],
+    latest_snapshot: { equity_usd: 10500, open_positions: 0, strategy_version: 1, created_at: "2026-01-02 00:00:00" },
+    equity_history: [{ equity_usd: 10000 }, { equity_usd: 10200 }, { equity_usd: 10500 }],
+  };
+  const html = R.renderTradingPortfolio(view);
+  assert.ok(html.includes("sparkline-line"));
+  assert.ok(html.includes("Equity trend (last 3 snapshots)"));
+});
+
+test("renderTradingPortfolio degrades gracefully when equity_history is missing (older API shape)", () => {
+  const view = {
+    portfolio: { starting_cash_usd: 5000, cash_usd: 5000, created_at: "2026-01-01 00:00:00" },
+    positions: [],
+    latest_snapshot: null,
+  };
+  const html = R.renderTradingPortfolio(view); // should not throw
+  assert.ok(html.includes("Not enough history"));
+});
+
 test("renderTradingPortfolio handles the no-portfolio-yet case", () => {
   const html = R.renderTradingPortfolio(null);
   assert.ok(html.includes("No paper trading portfolio yet"));
@@ -541,6 +582,65 @@ test("renderBusinessesOverviewTable escapes business name/type to prevent HTML i
   const html = R.renderBusinessesOverviewTable(businesses);
   assert.ok(!html.includes("<img"));
   assert.ok(!html.includes("<script>evil"));
+});
+
+test("renderSystemCoreCenter shows OPERATIONAL with no pending approvals, an amber alert with some", () => {
+  const quiet = R.renderSystemCoreCenter({
+    businesses: [{ id: "biz_1", pending_approval_count: 0 }],
+    agents_by_status: { idle: 1 }, tasks_by_status: {},
+  });
+  assert.ok(quiet.includes("OPERATIONAL"));
+  assert.ok(!quiet.includes("core-hud-status-amber"));
+
+  const alert = R.renderSystemCoreCenter({
+    businesses: [{ id: "biz_1", pending_approval_count: 2 }],
+    agents_by_status: {}, tasks_by_status: {},
+  });
+  assert.ok(alert.includes("AWAITING APPROVAL"));
+  assert.ok(alert.includes("core-hud-status-amber"));
+});
+
+test("renderSystemCoreCenter includes the same business/agent/open-task counts as renderGlobalStats", () => {
+  const overview = {
+    businesses: [{ id: "biz_1" }, { id: "biz_2" }],
+    agents_by_status: { idle: 3, working: 2 },
+    tasks_by_status: { queued: 2, completed: 5 },
+  };
+  const center = R.renderSystemCoreCenter(overview);
+  assert.ok(center.includes("2 BIZ"));
+  assert.ok(center.includes("5 AGENTS"));
+  assert.ok(center.includes("2 OPEN TASKS"));
+});
+
+test("renderSystemCoreSideStats sums ARC earn/spend and pending approvals across all businesses", () => {
+  const overview = {
+    businesses: [
+      { id: "biz_1", arc_summary: { earn: 10, spend: 4 }, pending_approval_count: 1 },
+      { id: "biz_2", arc_summary: { earn: 5, spend: 2.5 }, pending_approval_count: 0 },
+    ],
+  };
+  const html = R.renderSystemCoreSideStats(overview);
+  assert.ok(html.includes("15.0")); // 10 + 5 earned
+  assert.ok(html.includes("6.5")); // 4 + 2.5 spent
+  assert.ok(html.includes(">1<")); // 1 + 0 pending
+});
+
+test("renderSystemCoreSideStats handles businesses with no arc_summary yet without throwing", () => {
+  const html = R.renderSystemCoreSideStats({ businesses: [{ id: "biz_1" }] });
+  assert.ok(html.includes("0.0"));
+});
+
+test("computeOverviewCounts matches the shape renderGlobalStats relies on", () => {
+  const counts = R.computeOverviewCounts({
+    businesses: [{ id: "biz_1" }],
+    agents_by_status: { idle: 2, working: 1 },
+    tasks_by_status: { queued: 1, completed: 4 },
+  });
+  assert.strictEqual(counts.totalBusinesses, 1);
+  assert.strictEqual(counts.totalAgents, 3);
+  assert.strictEqual(counts.idleAgents, 2);
+  assert.strictEqual(counts.openTasks, 1);
+  assert.strictEqual(counts.totalTasks, 5);
 });
 
 console.log("\nAll dashboard-render.js tests finished.");

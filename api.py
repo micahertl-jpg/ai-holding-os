@@ -834,10 +834,17 @@ def _trading_portfolio_view(business_id: str):
         "SELECT * FROM trading_snapshots WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 1",
         (portfolio["id"],),
     )
+    # Oldest-first, capped at 30 points -- exactly what a sparkline needs
+    # and no more; this is real recorded equity, never synthesized.
+    equity_history = [row_to_dict(r) for r in db.query(
+        "SELECT equity_usd, created_at FROM trading_snapshots WHERE portfolio_id=? "
+        "ORDER BY created_at DESC LIMIT 30", (portfolio["id"],),
+    )][::-1]
     return {
         "portfolio": row_to_dict(portfolio),
         "positions": positions,
         "latest_snapshot": row_to_dict(latest_snapshot),
+        "equity_history": equity_history,
     }
 
 

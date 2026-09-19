@@ -55,6 +55,10 @@
       R.renderGlobalStats(data);
     document.getElementById("businesses-overview-table").innerHTML =
       R.renderBusinessesOverviewTable(data.businesses);
+    document.getElementById("system-core-center").innerHTML =
+      R.renderSystemCoreCenter(data);
+    document.getElementById("system-core-side-stats").innerHTML =
+      R.renderSystemCoreSideStats(data);
   }
 
   async function loadDashboard() {
