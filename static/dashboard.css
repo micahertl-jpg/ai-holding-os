@@ -635,6 +635,26 @@ select:focus, input:focus {
   margin-bottom: 8px;
 }
 .opportunity-head strong { font-family: var(--font-mono); font-size: 14px; }
+.opportunity-head-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.btn-remove-card {
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  color: var(--muted);
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-remove-card:hover {
+  color: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 0 8px rgba(255,107,107,0.25);
+}
 
 .opportunity-summary { font-size: 13px; color: var(--text); margin: 0 0 10px 0; }
 

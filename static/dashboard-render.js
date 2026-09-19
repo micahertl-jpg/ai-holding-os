@@ -285,8 +285,12 @@
         <div class="opportunity-card confidence-${confidence}">
           <div class="opportunity-head">
             <strong>${escapeHtml(o.topic)}</strong>
-            <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-              confidence: ${confidence}
+            <span class="opportunity-head-right">
+              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+                confidence: ${confidence}
+              </span>
+              <button class="btn-remove-card" data-action="delete-opportunity" data-id="${escapeHtml(o.id)}"
+                title="Remove this researched opportunity">Remove</button>
             </span>
           </div>
           <p class="opportunity-summary">${escapeHtml(o.summary || "")}</p>
@@ -327,8 +331,12 @@
         <div class="opportunity-card confidence-${confidence}">
           <div class="opportunity-head">
             <strong>${escapeHtml(t.concept)}</strong>
-            <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-              confidence: ${confidence}
+            <span class="opportunity-head-right">
+              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+                confidence: ${confidence}
+              </span>
+              <button class="btn-remove-card" data-action="delete-roblox-trend" data-id="${escapeHtml(t.id)}"
+                title="Remove this researched concept">Remove</button>
             </span>
           </div>
           <p class="opportunity-summary">${escapeHtml(t.summary || "")}</p>
@@ -368,8 +376,12 @@
         <div class="opportunity-card confidence-${confidence}">
           <div class="opportunity-head">
             <strong>${escapeHtml(a.concept)}</strong>
-            <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-              confidence: ${confidence}
+            <span class="opportunity-head-right">
+              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+                confidence: ${confidence}
+              </span>
+              <button class="btn-remove-card" data-action="delete-app-feasibility" data-id="${escapeHtml(a.id)}"
+                title="Remove this feasibility assessment">Remove</button>
             </span>
           </div>
           <p class="opportunity-summary">${escapeHtml(a.summary || "")}</p>

@@ -210,6 +210,8 @@ test("renderOpportunitiesTable renders the real shape from the opportunities tab
   assert.ok(html.includes("Moderate, per reference material."));
   assert.ok(html.includes("https://example.com/a"));
   assert.ok(html.includes("confidence-medium"));
+  assert.ok(html.includes('data-action="delete-opportunity"'));
+  assert.ok(html.includes('data-id="opp_1"'));
 });
 
 test("renderOpportunitiesTable shows the no-references note when none were used", () => {
@@ -256,6 +258,8 @@ test("renderRobloxTrendsTable renders the real shape from the roblox_trends tabl
   assert.ok(html.includes("Moderate, per reference material."));
   assert.ok(html.includes("https://example.com/a"));
   assert.ok(html.includes("confidence-medium"));
+  assert.ok(html.includes('data-action="delete-roblox-trend"'));
+  assert.ok(html.includes('data-id="rbx_1"'));
 });
 
 test("renderRobloxTrendsTable shows the no-references note when none were used", () => {
@@ -302,6 +306,8 @@ test("renderAppFeasibilityTable renders the real shape from the app_feasibility_
   assert.ok(html.includes("React Native, FastAPI, Postgres."));
   assert.ok(html.includes("https://example.com/a"));
   assert.ok(html.includes("confidence-medium"));
+  assert.ok(html.includes('data-action="delete-app-feasibility"'));
+  assert.ok(html.includes('data-id="app_1"'));
 });
 
 test("renderAppFeasibilityTable shows the no-references note when none were used", () => {
