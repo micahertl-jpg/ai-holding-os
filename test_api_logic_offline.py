@@ -134,5 +134,79 @@ def main():
           "routing/validation) still needs to be run with fastapi installed.")
 
 
+OVERVIEW_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_overview_logic.db")
+
+
+def test_overview_aggregation_spans_all_businesses():
+    """Proves the exact logic behind GET /overview -- not by importing
+    api.py (needs fastapi), but by running the same underlying calls the
+    endpoint makes and checking the results, same convention as main()
+    above. This is the fix for a real gap: the dashboard used to only
+    ever show pending approvals scoped to whichever business happened to
+    be selected -- an approval on a DIFFERENT business could sit
+    unnoticed. approvals.pending() (used by /overview) is unscoped by
+    business_id; this proves that actually holds across multiple
+    businesses, not just within one."""
+    if os.path.exists(OVERVIEW_TEST_DB_PATH):
+        os.remove(OVERVIEW_TEST_DB_PATH)
+    db = Database(OVERVIEW_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    agents = AgentRegistry(db)
+    banker = Banker(db)
+    approvals = ApprovalQueue(db)
+    orch = Orchestrator(db, banker, approvals)
+
+    biz_a = businesses.create("Business A", "test", "x")
+    biz_b = businesses.create("Business B", "test", "x")
+    agent_a = agents.create(biz_a, "Agent A", role="x", permission_level=1)
+    agents.set_status(agent_a, "idle")
+    agent_b = agents.create(biz_b, "Agent B", role="x", permission_level=1)
+    agents.set_status(agent_b, "working")  # a genuinely busy agent, not stuck
+
+    # A level-6+ task on Business B routes to approval automatically --
+    # this is the approval that would have been invisible while the
+    # owner was looking at Business A.
+    orch.create_task(biz_b, "spend real money on something", permission_level_required=6)
+
+    all_pending = approvals.pending()
+    assert len(all_pending) == 1
+    assert all_pending[0]["business_id"] == biz_b, (
+        "the approval must be visible via the GLOBAL, unscoped query even though "
+        "the owner might currently have Business A selected in the dashboard"
+    )
+
+    # Mirror /overview's per-business rollup counts.
+    agent_count_a = db.query_one(
+        "SELECT COUNT(*) as c FROM agents WHERE business_id=?", (biz_a,)
+    )["c"]
+    agent_count_b = db.query_one(
+        "SELECT COUNT(*) as c FROM agents WHERE business_id=?", (biz_b,)
+    )["c"]
+    assert agent_count_a == 1 and agent_count_b == 1
+
+    pending_for_b = db.query_one(
+        "SELECT COUNT(*) as c FROM approvals WHERE business_id=? AND status='pending'", (biz_b,)
+    )["c"]
+    pending_for_a = db.query_one(
+        "SELECT COUNT(*) as c FROM approvals WHERE business_id=? AND status='pending'", (biz_a,)
+    )["c"]
+    assert pending_for_b == 1 and pending_for_a == 0
+
+    # Mirror /overview's global agents_by_status rollup.
+    agents_by_status = {
+        r["status"]: r["c"]
+        for r in db.query("SELECT status, COUNT(*) as c FROM agents GROUP BY status")
+    }
+    assert agents_by_status.get("idle") == 1
+    assert agents_by_status.get("working") == 1
+
+    db.close()
+    os.remove(OVERVIEW_TEST_DB_PATH)
+    print("PASS: /overview's aggregation logic correctly surfaces an approval on "
+          "a business other than the one that would be selected -- the real gap "
+          "this feature closes -- plus correct per-business and global rollup counts")
+
+
 if __name__ == "__main__":
     main()
+    test_overview_aggregation_spans_all_businesses()

@@ -25,6 +25,19 @@
   <div id="error-banner" class="error-banner hidden"></div>
 
   <main class="layout">
+    <section class="panel panel-approvals" id="global-approvals-section">
+      <h3>Owner Approvals Awaiting Decision — all businesses</h3>
+      <div id="global-approvals-list"></div>
+      <p class="panel-note">Shown here regardless of which business is selected below — an
+        approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
+    </section>
+
+    <section class="panel">
+      <h3>Command Center Overview</h3>
+      <div id="global-stats"></div>
+      <div id="businesses-overview-table"></div>
+    </section>
+
     <section class="panel panel-select">
       <label for="business-select">Business</label>
       <select id="business-select"></select>
@@ -146,11 +159,6 @@
                title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
         <button type="submit" class="btn-small">Add Scheduled Job</button>
       </form>
-    </section>
-
-    <section class="panel panel-approvals">
-      <h3>Owner Approvals Awaiting Decision</h3>
-      <div id="approvals-list"></div>
     </section>
 
     <section class="panel">

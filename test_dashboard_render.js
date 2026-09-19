@@ -376,4 +376,57 @@ test("renderTradingStrategyVersions never throws on malformed parameters JSON", 
   assert.ok(html.includes("Version 1"));
 });
 
+test("renderGlobalStats sums agents/tasks across all businesses and formats real revenue", () => {
+  const overview = {
+    businesses: [{ id: "biz_1" }, { id: "biz_2" }],
+    agents_by_status: { idle: 3, working: 2, paused: 1 },
+    tasks_by_status: { queued: 2, assigned: 1, completed: 10, failed: 1 },
+    real_revenue_usd_cents: 3800,
+  };
+  const html = R.renderGlobalStats(overview);
+  assert.ok(html.includes(">2<")); // 2 businesses
+  assert.ok(html.includes(">6<")); // 3+2+1 = 6 agents
+  assert.ok(html.includes(">3<")); // 2 queued + 1 assigned = 3 open tasks (excludes completed/failed)
+  assert.ok(html.includes("$38.00")); // 3800 cents
+});
+
+test("renderGlobalStats handles an empty system without throwing", () => {
+  const html = R.renderGlobalStats({ businesses: [], agents_by_status: {}, tasks_by_status: {} });
+  assert.ok(html.includes(">0<"));
+  assert.ok(html.includes("$0.00"));
+});
+
+test("renderBusinessesOverviewTable handles the empty case", () => {
+  const html = R.renderBusinessesOverviewTable([]);
+  assert.ok(html.includes("No businesses yet"));
+});
+
+test("renderBusinessesOverviewTable shows a pending-approvals badge only when count > 0", () => {
+  const businesses = [
+    { id: "biz_1", name: "Has Approvals", type: "trading", status: "active",
+      agent_count: 2, open_task_count: 1, pending_approval_count: 3,
+      arc_summary: { earn: 50, spend: 10 } },
+    { id: "biz_2", name: "No Approvals", type: "opportunity_discovery", status: "active",
+      agent_count: 1, open_task_count: 0, pending_approval_count: 0,
+      arc_summary: { earn: 5, spend: 0 } },
+  ];
+  const html = R.renderBusinessesOverviewTable(businesses);
+  assert.ok(html.includes("Has Approvals"));
+  assert.ok(html.includes("3 pending"));
+  assert.ok(html.includes("No Approvals"));
+  assert.ok(html.includes("—")); // the no-approvals placeholder
+  assert.ok(html.includes("50.0 / 10.0"));
+});
+
+test("renderBusinessesOverviewTable escapes business name/type to prevent HTML injection", () => {
+  const businesses = [{
+    id: "biz_1", name: '<img src=x onerror=alert(1)>', type: "<script>evil()</script>",
+    status: "active", agent_count: 0, open_task_count: 0, pending_approval_count: 0,
+    arc_summary: {},
+  }];
+  const html = R.renderBusinessesOverviewTable(businesses);
+  assert.ok(!html.includes("<img"));
+  assert.ok(!html.includes("<script>evil"));
+});
+
 console.log("\nAll dashboard-render.js tests finished.");

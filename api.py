@@ -407,6 +407,73 @@ def list_audit_log(target_type: Optional[str] = None, target_id: Optional[str] =
     return [row_to_dict(r) for r in rows]
 
 
+@app.get("/overview")
+def overview():
+    """Cross-business rollup -- the actual 'Command Center' view: every
+    business at a glance, without needing to select one from the
+    dashboard's dropdown first. Read-only aggregation over existing
+    tables/modules; adds no new state.
+
+    Closes a real gap: the dashboard previously only ever showed pending
+    approvals scoped to whichever business happened to be selected
+    (business_dashboard()'s pending_approvals field) -- an approval on a
+    DIFFERENT business could sit unnoticed indefinitely if the owner
+    wasn't currently looking at that one, in the single most safety-
+    critical part of this whole system. /approvals/pending already
+    existed as a global, unscoped endpoint; this wires that -- and the
+    equivalent global rollups for businesses/agents/tasks/ARC/revenue --
+    into the dashboard as an always-visible top section, independent of
+    which business (if any) is selected."""
+    db = state["db"]
+
+    businesses_overview = []
+    for b in state["businesses"].list():
+        agent_count = db.query_one(
+            "SELECT COUNT(*) as c FROM agents WHERE business_id=?", (b["id"],)
+        )["c"]
+        open_task_count = db.query_one(
+            "SELECT COUNT(*) as c FROM tasks WHERE business_id=? AND status NOT IN "
+            "('completed','failed','cancelled')", (b["id"],)
+        )["c"]
+        pending_approval_count = db.query_one(
+            "SELECT COUNT(*) as c FROM approvals WHERE business_id=? AND status='pending'",
+            (b["id"],),
+        )["c"]
+        businesses_overview.append({
+            **row_to_dict(b),
+            "agent_count": agent_count,
+            "open_task_count": open_task_count,
+            "pending_approval_count": pending_approval_count,
+            "arc_summary": state["banker"].business_summary(b["id"]),
+        })
+
+    agents_by_status = {
+        r["status"]: r["c"]
+        for r in db.query("SELECT status, COUNT(*) as c FROM agents GROUP BY status")
+    }
+    tasks_by_status = {
+        r["status"]: r["c"]
+        for r in db.query("SELECT status, COUNT(*) as c FROM tasks GROUP BY status")
+    }
+    real_revenue_usd_cents = db.query_one(
+        "SELECT COALESCE(SUM(amount_usd_cents),0) as total FROM real_transactions "
+        "WHERE direction='in'"
+    )["total"]
+    global_arc = {
+        r["entry_type"]: (r["total"] or 0)
+        for r in db.query("SELECT entry_type, SUM(amount) as total FROM arc_ledger GROUP BY entry_type")
+    }
+
+    return {
+        "businesses": businesses_overview,
+        "pending_approvals": [row_to_dict(r) for r in state["approvals"].pending()],
+        "agents_by_status": agents_by_status,
+        "tasks_by_status": tasks_by_status,
+        "real_revenue_usd_cents": real_revenue_usd_cents,
+        "global_arc": global_arc,
+    }
+
+
 # ---------------------------------------------------------------------
 # Businesses
 # ---------------------------------------------------------------------
