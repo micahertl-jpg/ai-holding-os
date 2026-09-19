@@ -65,6 +65,12 @@
     const ctx = canvas.getContext("2d");
     const reduceMotion =
       window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Slow way down rather than fully freeze under prefers-reduced-motion:
+    // a gentle constant rotation isn't the kind of motion that
+    // accessibility guidance is aimed at (no parallax, no flashing, no
+    // sudden movement), and a fully static globe reads as broken rather
+    // than intentional.
+    const rotationSpeed = reduceMotion ? 0.0006 : 0.0028;
 
     const POINT_COUNT = 190;
     const NEIGHBORS_PER_POINT = 3;
@@ -139,25 +145,18 @@
     }
 
     function loop() {
-      angleY += 0.0028;
+      angleY += rotationSpeed;
       drawFrame();
       requestAnimationFrame(loop);
     }
 
     resize();
-    if (reduceMotion) {
-      drawFrame();
-    } else {
-      loop();
-    }
+    loop();
 
     let resizeTimer = null;
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        resize();
-        if (reduceMotion) drawFrame();
-      }, 150);
+      resizeTimer = setTimeout(resize, 150);
     });
   }
 
