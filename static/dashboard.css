@@ -215,7 +215,12 @@ body::after {
     inset 0 0 0 1px rgba(255,255,255,0.04),
     inset 0 0 20px rgba(34,211,238,0.03),
     0 8px 24px rgba(0,0,0,0.4);
-  animation: panel-in 0.5s ease both, holo-border-shift 14s ease-in-out infinite;
+  /* fill-mode "backwards" (not "both"): holds the from-state before the
+     animation starts, but relinquishes `transform` back to the normal
+     cascade once it ends -- otherwise a "both"-filled finished
+     animation permanently pins `transform`, silently overriding both
+     the :hover rules below and dashboard-tilt.js's inline style. */
+  animation: panel-in 0.5s ease backwards, holo-border-shift 14s ease-in-out infinite;
   transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 .panel:hover {
@@ -245,7 +250,7 @@ body::after {
   background-size: 460px 460px, 100% 100%, 320% 320%;
   background-position: 92% -60px, 0 0, 0% 50%;
   background-repeat: no-repeat;
-  animation: panel-in 0.5s ease both, holo-border-shift 14s ease-in-out infinite, scanner-drift 16s ease-in-out infinite;
+  animation: panel-in 0.5s ease backwards, holo-border-shift 14s ease-in-out infinite, scanner-drift 16s ease-in-out infinite;
 }
 
 @keyframes scanner-drift {
@@ -516,11 +521,11 @@ select:focus, input:focus {
   align-items: center;
   gap: 12px;
   background: rgba(0,0,0,0.15);
-  animation: panel-in 0.4s ease both;
+  animation: panel-in 0.4s ease backwards;
   transition: transform 0.2s ease;
 }
 .approval-card:hover { transform: translateX(2px); }
-.approval-card.risk-high { border-left-color: var(--red); box-shadow: -2px 0 8px rgba(255,107,107,0.15); animation: panel-in 0.4s ease both, risk-high-breathe 2s ease-in-out infinite; }
+.approval-card.risk-high { border-left-color: var(--red); box-shadow: -2px 0 8px rgba(255,107,107,0.15); animation: panel-in 0.4s ease backwards, risk-high-breathe 2s ease-in-out infinite; }
 .approval-card.risk-medium { border-left-color: var(--amber); box-shadow: -2px 0 8px rgba(245,194,107,0.12); }
 .approval-card.risk-low { border-left-color: var(--green); box-shadow: -2px 0 8px rgba(52,229,168,0.1); }
 
@@ -581,7 +586,7 @@ select:focus, input:focus {
   border-radius: 2px;
   padding: 14px 16px;
   background: rgba(0,0,0,0.15);
-  animation: panel-in 0.45s ease both;
+  animation: panel-in 0.45s ease backwards;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .opportunity-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
@@ -769,10 +774,10 @@ select:focus, input:focus {
 .sparkline-empty { padding: 10px 0 0 0; }
 
 /* ---------- System Core hero panel ----------
-   A literal, oversized radar/target HUD — concentric rotating rings, a
-   compass-tick bezel, a rotating sweep wedge, and a crosshair — as the
-   dashboard's focal centerpiece, spanning the full grid width. The
-   text inside it is real, not decorative: renderSystemCoreCenter /
+   A real rotating 3D wireframe globe (see dashboard-globe.js — a
+   hand-rolled Canvas 2D + trigonometry renderer, no WebGL/Three.js) as
+   the dashboard's focal centerpiece, spanning the full grid width. The
+   text beneath it is real, not decorative: renderSystemCoreCenter /
    renderSystemCoreSideStats in dashboard-render.js. */
 
 .system-core-panel { grid-column: 1 / -1; }
@@ -786,77 +791,45 @@ select:focus, input:focus {
   padding: 12px 0 4px 0;
 }
 
-.core-hud {
+.core-globe-wrap {
   position: relative;
-  width: 220px;
-  height: 220px;
-  flex-shrink: 0;
-}
-
-/* Compass-tick bezel: a repeating-conic-gradient ring of short ticks,
-   masked down to a thin annulus just outside the outermost SVG ring,
-   rotating slowly and independently for a "live sensor" feel. */
-.core-hud-ticks {
-  position: absolute;
-  inset: -16px;
-  border-radius: 50%;
-  background: repeating-conic-gradient(
-    from 0deg,
-    rgba(34,211,238,0.55) 0deg 1deg,
-    transparent 1deg 7.5deg
-  );
-  -webkit-mask: radial-gradient(circle, transparent 63%, black 64%, black 69%, transparent 70%);
-  mask: radial-gradient(circle, transparent 63%, black 64%, black 69%, transparent 70%);
-  animation: spin 48s linear infinite;
-  opacity: 0.85;
-}
-.core-hud-ticks::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: repeating-conic-gradient(
-    from 15deg,
-    rgba(124,107,245,0.35) 0deg 0.6deg,
-    transparent 0.6deg 15deg
-  );
-  -webkit-mask: radial-gradient(circle, transparent 70%, black 71%, black 74%, transparent 75%);
-  mask: radial-gradient(circle, transparent 70%, black 71%, black 74%, transparent 75%);
-  animation: spin-rev 64s linear infinite;
-}
-
-.core-hud-rings { position: absolute; inset: 0; overflow: visible; }
-.core-ring { fill: none; stroke: var(--accent); stroke-width: 1; opacity: 0.55; }
-.core-ring-1 { stroke-dasharray: 3 6; animation: spin 30s linear infinite; transform-origin: 110px 110px; }
-.core-ring-2 { stroke: var(--holo-2); stroke-dasharray: 2 5; opacity: 0.45; animation: spin-rev 22s linear infinite; transform-origin: 110px 110px; }
-.core-ring-3 { stroke: var(--holo-3); opacity: 0.4; animation: core-ring-pulse 3.4s ease-in-out infinite; transform-origin: 110px 110px; }
-@keyframes core-ring-pulse {
-  0%, 100% { opacity: 0.25; stroke-width: 1; }
-  50% { opacity: 0.55; stroke-width: 1.6; }
-}
-.core-crosshair { stroke: var(--accent); stroke-width: 1.5; opacity: 0.65; }
-
-/* Rotating radar sweep wedge, screened over the rings/ticks beneath it. */
-.core-hud-sweep {
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(34,211,238,0.28), transparent 30%, transparent 100%);
-  animation: spin 4.5s linear infinite;
-  mix-blend-mode: screen;
-  pointer-events: none;
-}
-
-.core-hud-center {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
+  flex-shrink: 0;
+  width: 260px;
+}
+.core-globe-wrap::before {
+  /* A soft ambient glow behind the globe, like the reference photo's
+     halo -- purely atmospheric, sits behind the canvas. */
+  content: "";
+  position: absolute;
+  top: 0; left: 50%;
+  width: 260px; height: 260px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34,211,238,0.16), transparent 68%);
+  filter: blur(6px);
+  z-index: 0;
+  animation: badge-breathe-green 4s ease-in-out infinite;
+}
+.core-globe-canvas {
+  position: relative;
+  z-index: 1;
+  width: 260px;
+  height: 260px;
+  display: block;
+}
+
+.core-hud-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   gap: 6px;
-  pointer-events: none;
 }
 .core-hud-status {
   font-family: var(--font-mono);
