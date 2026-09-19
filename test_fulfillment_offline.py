@@ -207,6 +207,74 @@ def test_unpaid_orders_are_never_touched():
     os.remove(TEST_DB_PATH)
 
 
+def test_app_feasibility_order_gets_emailed_and_marked_fulfilled():
+    """Same success path as test_completed_order_gets_emailed_and_marked_fulfilled,
+    but for the third storefront product (added alongside the App
+    Development vertical) -- proves fulfillment.py's app_feasibility
+    branch actually works, not just that it compiles."""
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Assess feasibility", department="research",
+                                permission_level_required=2, task_type="research_app_feasibility",
+                                task_input={"concept": "a habit tracker app"})
+    orch.complete_task(task_id, result="ok")
+    assessment_id = new_id("app")
+    db.execute(
+        "INSERT INTO app_feasibility_assessments (id, business_id, task_id, concept, "
+        "platform_recommendation, suggested_tech_stack, complexity_tier, estimated_timeline, "
+        "estimated_cost_range, mvp_feature_scope, key_technical_risks, similar_existing_apps, "
+        "confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (assessment_id, biz_id, task_id, "a habit tracker app", "iOS + Android via React Native",
+         "React Native, FastAPI, Postgres", "moderate", "8-12 weeks", "$15k-$40k",
+         "Account creation, one core loop", "Push notification reliability",
+         "A few comparable apps exist", "medium", "Worth a small MVP validation effort.",
+         json.dumps([])),
+    )
+    order_id = _make_order(db, biz_id, product_type="research_app_feasibility",
+                            topic="a habit tracker app", task_id=task_id)
+
+    with patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "fulfilled")], outcomes
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "customer@example.com"
+    assert "a habit tracker app" in call_args[1]  # subject
+    html_body = call_args[2]
+    assert "React Native, FastAPI, Postgres" in html_body
+
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "fulfilled"
+    print("PASS: a completed research_app_feasibility order gets emailed and marked fulfilled")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_app_feasibility_missing_assessment_row_fails_loudly_not_silently():
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Assess feasibility", department="research",
+                                permission_level_required=2, task_type="research_app_feasibility",
+                                task_input={"concept": "x"})
+    orch.complete_task(task_id, result="ok")
+    # deliberately do NOT insert an app_feasibility_assessments row
+    order_id = _make_order(db, biz_id, product_type="research_app_feasibility",
+                            topic="x", task_id=task_id)
+
+    with patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes[0][0] == order_id
+    assert outcomes[0][1].startswith("build_failed:")
+    assert mock_send.call_count == 0
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "paid"
+    print("PASS: a completed research_app_feasibility task with no real assessment row "
+          "fails loudly, never fabricates an email")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_missing_assessment_row_fails_loudly_not_silently():
     """A completed task with NO opportunities row (shouldn't normally
     happen, but must never be papered over) must never be emailed as
@@ -240,4 +308,6 @@ if __name__ == "__main__":
     test_still_running_order_is_left_alone()
     test_unpaid_orders_are_never_touched()
     test_missing_assessment_row_fails_loudly_not_silently()
+    test_app_feasibility_order_gets_emailed_and_marked_fulfilled()
+    test_app_feasibility_missing_assessment_row_fails_loudly_not_silently()
     print("\nAll fulfillment.py offline tests passed.")

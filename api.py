@@ -85,6 +85,19 @@ PRODUCT_CATALOG = {
         ),
         "price_usd_cents": int(os.environ.get("STORE_PRICE_ROBLOX_CENTS", "1900")),
     },
+    "research_app_feasibility": {
+        "name": "App Feasibility & Planning Report",
+        "description": (
+            "A structured feasibility assessment for an app idea — platform "
+            "recommendation, suggested tech stack, complexity tier, rough timeline "
+            "and cost range, MVP feature scope, and key technical risks, each framed "
+            "as an estimate with an explicit confidence level. Any concept touching a "
+            "regulated domain (payments, health data, minors, etc.) is flagged for "
+            "dedicated legal/compliance review, not resolved here. Delivered by "
+            "email, usually within a minute of payment."
+        ),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "1900")),
+    },
 }
 
 # ---------------------------------------------------------------------
