@@ -96,10 +96,14 @@ body::after {
 .app-header {
   padding: 18px 28px;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(34,211,238,0.05), transparent);
+}
+.app-header-inner {
   display: flex;
   align-items: center;
   gap: 14px;
-  background: linear-gradient(180deg, rgba(34,211,238,0.05), transparent);
+  max-width: 1900px;
+  margin: 0 auto;
 }
 
 .header-glyph { display: flex; align-items: center; justify-content: center; flex-shrink: 0; animation: hue-drift 10s linear infinite; }
@@ -191,6 +195,11 @@ body::after {
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 18px;
   padding: 20px 28px;
+  /* Capped and centered so panels don't stretch edge-to-edge into
+     abnormally wide, sparse-looking columns on a large desktop
+     monitor -- the ambient body background stays full-bleed behind it. */
+  max-width: 1900px;
+  margin: 0 auto;
 }
 
 .panel {
@@ -782,13 +791,25 @@ select:focus, input:focus {
 
 .system-core-panel { grid-column: 1 / -1; }
 
+/* Three-column grid, not a flex row: with the side stats as a flex
+   sibling, the whole (globe + stats) *group* centered as a unit, which
+   visibly pushes the globe itself left of the panel's true center. A
+   center column sized to the globe's own width guarantees the globe
+   is centered on the panel regardless of how wide the flanking stats
+   are, matching a real control-room wall's big-center-screen layout. */
 .system-core-body {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
-  gap: 48px;
-  flex-wrap: wrap;
-  padding: 12px 0 4px 0;
+  gap: 32px;
+  padding: 12px 12px 4px 12px;
+}
+.core-globe-wrap { grid-column: 2; justify-self: center; }
+.core-side-stats { grid-column: 3; justify-self: start; }
+
+@media (max-width: 860px) {
+  .system-core-body { grid-template-columns: 1fr; justify-items: center; }
+  .core-globe-wrap, .core-side-stats { grid-column: 1; justify-self: center; }
 }
 
 .core-globe-wrap {
@@ -853,7 +874,8 @@ select:focus, input:focus {
 }
 
 .core-side-stats {
-  flex: 1;
-  min-width: 220px;
-  justify-content: center;
+  /* .arc-summary already gives this display:flex + flex-wrap + gap for
+     the stat tiles themselves; grid-column/justify-self above place
+     the whole block within .system-core-body. */
+  max-width: 360px;
 }
