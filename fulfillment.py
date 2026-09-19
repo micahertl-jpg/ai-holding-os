@@ -91,6 +91,27 @@ def _build_report_email(order, task, db):
         confidence = row["confidence_level"]
         summary = row["summary"]
         topic = row["concept"]
+    elif order["product_type"] == "research_app_feasibility":
+        row = db.query_one("SELECT * FROM app_feasibility_assessments WHERE task_id=?", (task["id"],))
+        if not row:
+            raise RuntimeError(
+                f"task {task['id']} is completed but no app_feasibility_assessments row "
+                f"exists for it — cannot build a real report from nothing"
+            )
+        subject = f"Your App Feasibility Report: {row['concept']}"
+        fields = [
+            ("Platform recommendation", row["platform_recommendation"]),
+            ("Suggested tech stack", row["suggested_tech_stack"]),
+            ("Complexity tier", row["complexity_tier"]),
+            ("Estimated timeline", row["estimated_timeline"]),
+            ("Estimated cost range", row["estimated_cost_range"]),
+            ("MVP feature scope", row["mvp_feature_scope"]),
+            ("Key technical risks", row["key_technical_risks"]),
+            ("Similar existing apps", row["similar_existing_apps"]),
+        ]
+        confidence = row["confidence_level"]
+        summary = row["summary"]
+        topic = row["concept"]
     else:
         raise ValueError(f"unknown product_type: {order['product_type']!r}")
 
