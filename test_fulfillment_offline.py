@@ -83,6 +83,48 @@ def test_completed_order_gets_emailed_and_marked_fulfilled():
     os.remove(TEST_DB_PATH)
 
 
+def test_report_email_escapes_html_in_customer_and_model_supplied_fields():
+    """Regression test for a real bug: topic/concept traces back to
+    unauthenticated, customer-submitted input at checkout with no
+    sanitization beyond .strip() (api.py's /store/checkout), and the
+    other fields are model output that could echo it back. Before the
+    fix, all of this was interpolated into the email's HTML body with
+    zero escaping -- a customer could submit '<script>...' or
+    '<a href="...">' as their "topic" and have it rendered as live HTML
+    in a real transactional email sent, from this business's verified
+    domain, to whatever customer_email they also supplied (not
+    necessarily their own address). The dashboard already escapes this
+    same data; the email path must too."""
+    db, orch, biz_id = _setup()
+    evil_topic = '<script>alert("xss")</script><a href="https://evil.example/phish">click</a>'
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": evil_topic})
+    orch.complete_task(task_id, result="ok")
+    opp_id = new_id("opp")
+    db.execute(
+        "INSERT INTO opportunities (id, business_id, task_id, topic, market_size, "
+        "confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (opp_id, biz_id, task_id, evil_topic, '<img src=x onerror=alert(1)>',
+         "medium", "Worth trying.", json.dumps([])),
+    )
+    order_id = _make_order(db, biz_id, topic=evil_topic, task_id=task_id)
+
+    with patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "fulfilled")], outcomes
+    html_body = mock_send.call_args[0][2]
+    assert "<script>" not in html_body, "raw <script> tag leaked into the email HTML body"
+    assert "<img" not in html_body, "raw <img onerror=...> leaked into the email HTML body"
+    assert "&lt;script&gt;" in html_body, "the topic should appear HTML-escaped, not stripped"
+    print("PASS: customer-submitted HTML in topic/model fields is escaped, never rendered "
+          "live, in the real report email")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_order_never_marked_fulfilled_if_send_email_raises():
     db, orch, biz_id = _setup()
     task_id = orch.create_task(biz_id, "Research", department="research",
@@ -192,6 +234,7 @@ def test_missing_assessment_row_fails_loudly_not_silently():
 
 if __name__ == "__main__":
     test_completed_order_gets_emailed_and_marked_fulfilled()
+    test_report_email_escapes_html_in_customer_and_model_supplied_fields()
     test_order_never_marked_fulfilled_if_send_email_raises()
     test_failed_task_marks_order_failed()
     test_still_running_order_is_left_alone()
