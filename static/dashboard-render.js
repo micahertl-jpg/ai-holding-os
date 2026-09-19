@@ -585,7 +585,31 @@
   // summed across every business's own arc_summary (GET /overview
   // already includes one arc_summary per business) -- a genuinely new
   // aggregate, not shown anywhere else in the dashboard.
-  function renderSystemCoreSideStats(overview) {
+  // Places `n` items evenly around a circle centered at (50,50) in a
+  // 0-100 percentage coordinate space, starting at the top (12 o'clock)
+  // and going clockwise -- shared math for both the orbital node badges
+  // and the web-lines connecting them back to the hub, so the two can
+  // never drift out of sync with each other.
+  function pointOnRing(index, count, radiusPct) {
+    const angle = (index / count) * 2 * Math.PI - Math.PI / 2;
+    return {
+      x: 50 + Math.cos(angle) * radiusPct,
+      y: 50 + Math.sin(angle) * radiusPct,
+    };
+  }
+
+  const ORBITAL_RING_RADIUS_PCT = 42;
+
+  // The System Core hub's orbiting stat nodes + the animated web-lines
+  // connecting them to the center -- real system-wide figures (same
+  // computeOverviewCounts + per-business arc_summary aggregation the
+  // old flat side-stats list used), just laid out radially instead of
+  // as a list, to match the "web-like, centered on the globe" hub
+  // design. Returns one HTML fragment containing both the <line>s and
+  // the node <div>s, since they're positioned from the exact same data
+  // and always redrawn together.
+  function renderOrbitalRing(overview) {
+    const counts = computeOverviewCounts(overview);
     const businesses = overview.businesses || [];
     const totalEarn = businesses.reduce(
       (sum, b) => sum + Number((b.arc_summary && b.arc_summary.earn) || 0), 0
@@ -596,10 +620,42 @@
     const pendingApprovals = businesses.reduce(
       (sum, b) => sum + Number(b.pending_approval_count || 0), 0
     );
+    const revenue = (overview.real_revenue_usd_cents || 0) / 100;
+
+    const nodes = [
+      { label: "Businesses", value: String(counts.totalBusinesses) },
+      { label: "Agents", value: String(counts.totalAgents) },
+      { label: "Open Tasks", value: String(counts.openTasks) },
+      { label: "Revenue", value: fmtUsd(revenue) },
+      { label: "ARC Earned", value: fmtArc(totalEarn) },
+      { label: "ARC Spent", value: fmtArc(totalSpend) },
+      { label: "Approvals", value: String(pendingApprovals), alert: pendingApprovals > 0 },
+    ];
+
+    const positioned = nodes.map((node, i) => Object.assign({}, node, pointOnRing(i, nodes.length, ORBITAL_RING_RADIUS_PCT)));
+
+    const lines = positioned
+      .map(
+        (p, i) => `
+        <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.15).toFixed(2)}s" />`
+      )
+      .join("");
+
+    const nodeDivs = positioned
+      .map(
+        (p, i) => `
+        <div class="core-node${p.alert ? " core-node-alert" : ""}"
+          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08).toFixed(2)}s">
+          <span class="core-node-value">${escapeHtml(p.value)}</span>
+          <span class="core-node-label">${escapeHtml(p.label)}</span>
+        </div>`
+      )
+      .join("");
+
     return `
-      <div class="arc-stat"><span class="label">ARC Earned (system)</span><span class="value">${fmtArc(totalEarn)}</span></div>
-      <div class="arc-stat"><span class="label">ARC Spent (system)</span><span class="value">${fmtArc(totalSpend)}</span></div>
-      <div class="arc-stat"><span class="label">Approvals Pending</span><span class="value">${escapeHtml(pendingApprovals)}</span></div>`;
+      <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>
+      ${nodeDivs}`;
   }
 
   function renderGlobalStats(overview) {
@@ -675,7 +731,7 @@
     renderSparkline,
     computeOverviewCounts,
     renderSystemCoreCenter,
-    renderSystemCoreSideStats,
+    renderOrbitalRing,
     renderBusinessOptions,
     renderAgentOptions,
     renderBusinessHeader,

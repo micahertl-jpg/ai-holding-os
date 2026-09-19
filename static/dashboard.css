@@ -54,6 +54,20 @@ body {
   overflow-x: hidden;
 }
 
+/* Whole-page ambient "web" -- a sparse, slowly drifting particle
+   network (dashboard-network-bg.js) sitting behind absolutely
+   everything else, including the haze/scan-sweep layers below, so the
+   web-like feel carries across the whole dashboard, not just the
+   System Core hub. */
+#network-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+}
+
 /* Drifting holographic haze + a slow vertical scan sweep, both purely
    decorative, fixed and click-through. This is what gives the page its
    "alive" holographic-projection feel instead of a static HUD skin. */
@@ -62,7 +76,7 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
   background:
     radial-gradient(600px 400px at 15% 20%, rgba(124,107,245,0.06), transparent 60%),
     radial-gradient(700px 450px at 85% 75%, rgba(238,107,208,0.05), transparent 60%);
@@ -76,7 +90,7 @@ body::after {
   height: 140px;
   top: -140px;
   pointer-events: none;
-  z-index: 1;
+  z-index: 2;
   background: linear-gradient(180deg, transparent, rgba(34,211,238,0.05) 45%, rgba(34,211,238,0.08) 50%, rgba(34,211,238,0.05) 55%, transparent);
   animation: scan-sweep 9s linear infinite;
 }
@@ -89,7 +103,7 @@ body::after {
   100% { top: 100%; }
 }
 
-.app-header, .error-banner, .layout { position: relative; z-index: 2; }
+.app-header, .error-banner, .layout { position: relative; z-index: 3; }
 
 /* ---------- Header ---------- */
 
@@ -782,75 +796,32 @@ select:focus, input:focus {
 @keyframes fade-in-slow { from { opacity: 0; } to { opacity: 0.16; } }
 .sparkline-empty { padding: 10px 0 0 0; }
 
-/* ---------- System Core hero panel ----------
-   A real rotating 3D wireframe globe (see dashboard-globe.js — a
-   hand-rolled Canvas 2D + trigonometry renderer, no WebGL/Three.js) as
-   the dashboard's focal centerpiece, spanning the full grid width. The
-   text beneath it is real, not decorative: renderSystemCoreCenter /
-   renderSystemCoreSideStats in dashboard-render.js. */
+/* ---------- System Core hero: a radial hub ----------
+   Everything here is meant to read as a hub-and-spoke web with the
+   rotating 3D globe (dashboard-globe.js — hand-rolled Canvas 2D +
+   trigonometry, no WebGL/Three.js) as the fixed center: real
+   system-wide stats orbit it as connected nodes instead of sitting in
+   a flat list. Positions are computed once in dashboard-render.js's
+   pointOnRing()/renderOrbitalRing() (plain trig, 0-100% coordinate
+   space) so the node badges and the <line>s connecting them back to
+   the hub can never drift out of sync. The panels below (tables,
+   forms) stay in a normal scrollable grid, deliberately NOT forced
+   into a literal circle -- variable-height real content (a task table
+   that can grow to dozens of rows, a trading panel with a full
+   position/trade history) doesn't fit a fixed radial geometry without
+   either huge dead space or overlap, so the web metaphor lives in this
+   hub and in the whole-page ambient network background
+   (dashboard-network-bg.js), not in forcing every panel onto a ring. */
 
 .system-core-panel { grid-column: 1 / -1; }
 
-/* Three-column grid, not a flex row: with the side stats as a flex
-   sibling, the whole (globe + stats) *group* centered as a unit, which
-   visibly pushes the globe itself left of the panel's true center. A
-   center column sized to the globe's own width guarantees the globe
-   is centered on the panel regardless of how wide the flanking stats
-   are, matching a real control-room wall's big-center-screen layout. */
-.system-core-body {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 32px;
-  padding: 12px 12px 4px 12px;
-}
-.core-globe-wrap { grid-column: 2; justify-self: center; }
-.core-side-stats { grid-column: 3; justify-self: start; }
-
-@media (max-width: 860px) {
-  .system-core-body { grid-template-columns: 1fr; justify-items: center; }
-  .core-globe-wrap, .core-side-stats { grid-column: 1; justify-self: center; }
-}
-
-.core-globe-wrap {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-  width: 260px;
-}
-.core-globe-wrap::before {
-  /* A soft ambient glow behind the globe, like the reference photo's
-     halo -- purely atmospheric, sits behind the canvas. */
-  content: "";
-  position: absolute;
-  top: 0; left: 50%;
-  width: 260px; height: 260px;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(34,211,238,0.16), transparent 68%);
-  filter: blur(6px);
-  z-index: 0;
-  animation: badge-breathe-green 4s ease-in-out infinite;
-}
-.core-globe-canvas {
-  position: relative;
-  z-index: 1;
-  width: 260px;
-  height: 260px;
-  display: block;
-}
-
 .core-hud-center {
-  position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 6px;
+  gap: 4px;
+  margin: 4px 0 8px 0;
 }
 .core-hud-status {
   font-family: var(--font-mono);
@@ -873,9 +844,114 @@ select:focus, input:focus {
   color: var(--text);
 }
 
-.core-side-stats {
-  /* .arc-summary already gives this display:flex + flex-wrap + gap for
-     the stat tiles themselves; grid-column/justify-self above place
-     the whole block within .system-core-body. */
-  max-width: 360px;
+/* The orbital ring itself: a square, responsive stage the globe and
+   its node badges are all positioned within (percentage coordinates),
+   so the whole hub scales as one unit instead of individual pieces
+   drifting relative to each other at different viewport sizes. */
+.core-orbital {
+  position: relative;
+  width: min(60vw, 560px);
+  height: min(60vw, 560px);
+  max-width: 100%;
+  margin: 4px auto 12px auto;
+}
+.core-orbital::before {
+  /* Soft ambient glow behind the globe, like the reference photo's
+     halo -- purely atmospheric. */
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 46%; height: 46%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34,211,238,0.18), transparent 70%);
+  filter: blur(8px);
+  z-index: 0;
+  animation: badge-breathe-green 4s ease-in-out infinite;
+}
+.core-globe-canvas {
+  position: absolute;
+  z-index: 1;
+  top: 50%; left: 50%;
+  width: 42%; height: 42%;
+  transform: translate(-50%, -50%);
+  display: block;
+}
+.core-orbital-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.core-web-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.web-line {
+  stroke: var(--accent);
+  stroke-width: 0.3;
+  opacity: 0.4;
+  stroke-dasharray: 3 2;
+  animation: web-line-flow 3s linear infinite;
+}
+@keyframes web-line-flow {
+  0% { stroke-dashoffset: 0; opacity: 0.2; }
+  50% { opacity: 0.5; }
+  100% { stroke-dashoffset: -20; opacity: 0.2; }
+}
+
+.core-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  text-align: center;
+  background: radial-gradient(circle, rgba(13,26,40,0.92), rgba(10,20,32,0.7));
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 0 12px rgba(34,211,238,0.15);
+  animation: node-in 0.5s ease both, node-breathe 3.4s ease-in-out infinite;
+}
+.core-node-alert {
+  border-color: var(--amber);
+  box-shadow: 0 0 14px rgba(245,194,107,0.3);
+  animation: node-in 0.5s ease both, amber-breathe 1.6s ease-in-out infinite;
+}
+.core-node-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  text-shadow: 0 0 6px rgba(34,211,238,0.5);
+}
+.core-node-alert .core-node-value { color: var(--amber); text-shadow: 0 0 6px rgba(245,194,107,0.5); }
+.core-node-label {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@keyframes node-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes node-breathe {
+  0%, 100% { box-shadow: 0 0 12px rgba(34,211,238,0.15); }
+  50% { box-shadow: 0 0 18px rgba(34,211,238,0.3); }
+}
+
+@media (max-width: 640px) {
+  .core-node { width: 62px; height: 62px; }
+  .core-node-value { font-size: 11px; }
+  .core-node-label { font-size: 6px; }
 }

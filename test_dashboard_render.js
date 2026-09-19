@@ -612,22 +612,40 @@ test("renderSystemCoreCenter includes the same business/agent/open-task counts a
   assert.ok(center.includes("2 OPEN TASKS"));
 });
 
-test("renderSystemCoreSideStats sums ARC earn/spend and pending approvals across all businesses", () => {
+test("renderOrbitalRing sums ARC earn/spend and pending approvals across all businesses", () => {
   const overview = {
     businesses: [
       { id: "biz_1", arc_summary: { earn: 10, spend: 4 }, pending_approval_count: 1 },
       { id: "biz_2", arc_summary: { earn: 5, spend: 2.5 }, pending_approval_count: 0 },
     ],
   };
-  const html = R.renderSystemCoreSideStats(overview);
+  const html = R.renderOrbitalRing(overview);
   assert.ok(html.includes("15.0")); // 10 + 5 earned
   assert.ok(html.includes("6.5")); // 4 + 2.5 spent
   assert.ok(html.includes(">1<")); // 1 + 0 pending
+  assert.ok(html.includes("core-node-alert"), "a nonzero pending-approvals node should carry the alert class");
 });
 
-test("renderSystemCoreSideStats handles businesses with no arc_summary yet without throwing", () => {
-  const html = R.renderSystemCoreSideStats({ businesses: [{ id: "biz_1" }] });
+test("renderOrbitalRing handles businesses with no arc_summary yet without throwing", () => {
+  const html = R.renderOrbitalRing({ businesses: [{ id: "biz_1" }] });
   assert.ok(html.includes("0.0"));
+  assert.ok(!html.includes("core-node-alert"), "zero pending approvals should not carry the alert class");
+});
+
+test("renderOrbitalRing places exactly 7 nodes evenly around the hub, each with a matching web-line", () => {
+  const html = R.renderOrbitalRing({ businesses: [] });
+  const nodeCount = (html.match(/<div class="core-node/g) || []).length;
+  const lineCount = (html.match(/<line /g) || []).length;
+  assert.strictEqual(nodeCount, 7);
+  assert.strictEqual(lineCount, 7);
+  // Every line must start at the hub's own center (50,50).
+  assert.strictEqual((html.match(/x1="50" y1="50"/g) || []).length, 7);
+});
+
+test("pointOnRing math: renderOrbitalRing's first node sits directly above the hub center", () => {
+  const html = R.renderOrbitalRing({ businesses: [] });
+  // Node 0 is placed at angle -90deg (straight up): x=50, y=50-radius.
+  assert.ok(html.includes("left:50.00%"), "first node should be horizontally centered on the hub");
 });
 
 test("computeOverviewCounts matches the shape renderGlobalStats relies on", () => {
