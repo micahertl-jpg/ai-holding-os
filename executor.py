@@ -465,13 +465,19 @@ HANDLERS = {
 
 
 def run_once(db, orchestrator, client=None):
-    """One executor pass: first retries any queued tasks that now have
-    an eligible agent (see Orchestrator.retry_queued_tasks — without
-    this, a task created before any agent was free would stay queued
-    forever), then finds every task with status='assigned' and a
-    task_type in HANDLERS, runs its handler, and completes or fails it.
-    Returns the list of (task_id, outcome) tuples processed, so
-    callers/tests can see exactly what happened.
+    """One executor pass: first resets any agent crash-stuck in 'working'
+    with no live task back to 'idle' (see Orchestrator.reconcile_stuck_
+    agents — without this, a process restart at exactly the wrong moment
+    inside complete_task() could strand an agent permanently
+    unassignable), then retries any queued tasks that now have an
+    eligible agent (see Orchestrator.retry_queued_tasks — without this,
+    a task created before any agent was free would stay queued forever;
+    doing this AFTER the reconciliation above means a just-healed agent
+    is actually available for this same pass's retry, not just the next
+    one), then finds every task with status='assigned' and a task_type
+    in HANDLERS, runs its handler, and completes or fails it. Returns
+    the list of (task_id, outcome) tuples processed, so callers/tests
+    can see exactly what happened.
 
     A handler exception fails the task with the real error message —
     never silently retried forever, never papered over with a fake
@@ -486,6 +492,10 @@ def run_once(db, orchestrator, client=None):
     _handle_trading_cycle pausing the agent on a drawdown-halt). Every
     handler that doesn't need this still returns a plain 3-tuple."""
     client = client or get_default_client()
+    # Order matters: heal crash-stuck agents FIRST, so a newly-idle agent
+    # is actually available for retry_queued_tasks()'s assignment attempt
+    # in this same pass, rather than having to wait a full poll interval.
+    orchestrator.reconcile_stuck_agents()
     orchestrator.retry_queued_tasks()
     placeholders = ",".join("?" for _ in HANDLERS)
     # permission_level_required < HUMAN_ONLY_LEVEL excludes level-7
