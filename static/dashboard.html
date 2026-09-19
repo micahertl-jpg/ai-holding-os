@@ -60,6 +60,15 @@
     <section class="panel">
       <h3>ARC (internal virtual economy — never real money)</h3>
       <div id="arc-summary"></div>
+      <form id="allocate-arc-form" class="inline-form">
+        <select name="agent_id" id="allocate-arc-agent-select" required></select>
+        <input name="amount" type="number" min="0.01" step="0.01" placeholder="Amount" required>
+        <input name="reason" placeholder="Reason (optional)">
+        <button type="submit" class="btn-small">Allocate ARC</button>
+      </form>
+      <p class="panel-note">New agents get a starting ARC budget automatically. Use this to
+        top up an existing agent's balance — e.g. if task costs have run it down, or you're
+        funding an agent created before this feature existed.</p>
     </section>
 
     <section class="panel panel-opportunities">

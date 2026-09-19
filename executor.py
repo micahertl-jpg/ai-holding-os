@@ -24,21 +24,84 @@ only really be verified by running the server.
 import json
 import threading
 
-from llm_client import get_default_client
+from llm_client import get_default_client, CostTrackingClient
 from tasks.summarize_urls import summarize_urls
 from tasks.research_opportunity import research_opportunity, OpportunityAssessmentError
 from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssessmentError
 from db import new_id
 
+# ---------------------------------------------------------------------
+# ARC accounting policy for the executor's task handlers.
+#
+# This is a deliberate, adjustable first-pass policy, not a claim of
+# "true" economic value — see banker.py and the project spec Sec. 6/16
+# ("Banker should NOT blindly reward agents for activity. Reward
+# outcomes and meaningful contribution.") Both numbers below are meant
+# to be tuned by the owner over time as real usage data comes in; they
+# are not derived from anything external.
+#
+# cost_arc: charged 1:1 against the LLM call's estimated real USD cost
+# (see llm_client.PRICING_USD_PER_TOKEN), converted to ARC at this
+# fixed internal exchange rate. This makes "cost" in the ARC ledger
+# actually track real spend for the first time, instead of always
+# reading 0.0 regardless of how much a task really used.
+ARC_PER_USD = 1000.0
+
+# reward_arc: research tasks are rewarded more for a higher-confidence
+# (more evidence-backed) assessment, since that's the closest measurable
+# proxy this MVP has for "meaningful contribution" per a research task.
+# This is intentionally a weak, simple proxy — not a claim that a
+# high-confidence assessment is objectively more valuable to the
+# business than a low-confidence one flagging a genuine unknown.
+CONFIDENCE_REWARD_ARC = {"low": 5.0, "medium": 15.0, "high": 30.0}
+
+# summarize_urls has no confidence_level, so it's rewarded flatly per
+# URL that actually got a real summary (fetch+model call both
+# succeeded) — a failed/empty URL earns nothing.
+REWARD_ARC_PER_SUMMARIZED_URL = 3.0
+
+
+def _require_affordable(task_row, db, cost_arc):
+    """Raises loudly if the assigned agent can't cover cost_arc, BEFORE
+    a handler saves any result row. Without this check, a handler that
+    computes cost_arc only after doing (and saving) real work would let
+    an unaffordable task still write its result, then fail later at
+    orchestrator.complete_task()'s own charge() call — leaving a saved
+    opportunities/roblox_trends row attached to a task that ultimately
+    shows 'failed'. Checking first means a task that can't be charged
+    never gets to save anything it can't pay for, matching this
+    codebase's existing rule of never partially/silently succeeding.
+
+    The real LLM cost is still incurred either way (the call already
+    happened by the time cost_arc is known) — this only controls
+    whether the RESULT is kept, not whether money was spent getting it.
+    That's a deliberate simplicity tradeoff for the MVP, not something
+    a real production system should accept long-term."""
+    if cost_arc <= 0:
+        return
+    agent = db.query_one("SELECT arc_balance FROM agents WHERE id=?", (task_row["agent_id"],))
+    balance = agent["arc_balance"] if agent else 0.0
+    if balance < cost_arc:
+        raise RuntimeError(
+            f"agent's ARC balance ({balance:.4f}) is insufficient to cover this task's "
+            f"real estimated cost ({cost_arc:.4f} ARC) — the result is being discarded "
+            f"rather than saved against a task that can't be charged; allocate more ARC "
+            f"to this agent (see the dashboard's 'Allocate ARC' form) and retry"
+        )
+
 
 def _handle_summarize_urls(task_row, client, db):
     task_input = json.loads(task_row["task_input"]) if task_row["task_input"] else {}
     urls = task_input.get("urls", [])
-    results = summarize_urls(urls, client)
+    tracked_client = CostTrackingClient(client)
+    results = summarize_urls(urls, tracked_client)
     result_text = "\n".join(f"- {url}: {summary}" for url, summary in results.items())
-    return result_text, 0.0, 0.0  # cost_arc/reward_arc: MVP leaves ARC accounting
-                                    # for this to a later, deliberate policy decision
-                                    # (see README) rather than an arbitrary number here
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+    successful = sum(1 for summary in results.values() if not summary.startswith("["))
+    reward_arc = successful * REWARD_ARC_PER_SUMMARIZED_URL
+    return result_text, cost_arc, reward_arc
 
 
 def _handle_research_opportunity(task_row, client, db):
@@ -48,7 +111,11 @@ def _handle_research_opportunity(task_row, client, db):
         raise ValueError("research_opportunity task_input missing required 'topic'")
     reference_urls = task_input.get("reference_urls", [])
 
-    assessment = research_opportunity(topic, client, reference_urls=reference_urls)
+    tracked_client = CostTrackingClient(client)
+    assessment = research_opportunity(topic, tracked_client, reference_urls=reference_urls)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
 
     opp_id = new_id("opp")
     db.execute(
@@ -72,7 +139,8 @@ def _handle_research_opportunity(task_row, client, db):
         f"Opportunity assessment saved (id={opp_id}, confidence={assessment['confidence_level']}): "
         f"{assessment['summary']}"
     )
-    return result_text, 0.0, 0.0
+    reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
 
 
 def _handle_research_roblox_trend(task_row, client, db):
@@ -82,7 +150,11 @@ def _handle_research_roblox_trend(task_row, client, db):
         raise ValueError("research_roblox_trend task_input missing required 'concept'")
     reference_urls = task_input.get("reference_urls", [])
 
-    assessment = research_roblox_trend(concept, client, reference_urls=reference_urls)
+    tracked_client = CostTrackingClient(client)
+    assessment = research_roblox_trend(concept, tracked_client, reference_urls=reference_urls)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
 
     trend_id = new_id("rbx")
     db.execute(
@@ -106,7 +178,8 @@ def _handle_research_roblox_trend(task_row, client, db):
         f"Roblox trend assessment saved (id={trend_id}, confidence={assessment['confidence_level']}): "
         f"{assessment['summary']}"
     )
-    return result_text, 0.0, 0.0
+    reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
 
 
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).

@@ -62,6 +62,8 @@
       R.renderOpportunitiesTable(data.opportunities);
     document.getElementById("roblox-trends-list").innerHTML =
       R.renderRobloxTrendsTable(data.roblox_trends);
+    document.getElementById("allocate-arc-agent-select").innerHTML =
+      R.renderAgentOptions(data.agents);
   }
 
   async function refresh() {
@@ -234,6 +236,27 @@
         await refresh();
       } catch (e) {
         showError("Failed to request Roblox trend research: " + e.message);
+      }
+    });
+
+    document.getElementById("allocate-arc-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      if (!f.agent_id.value) { showError("No agent selected to allocate ARC to."); return; }
+      try {
+        await api(`/businesses/${currentBusinessId}/banker/allocate`, {
+          method: "POST",
+          body: JSON.stringify({
+            agent_id: f.agent_id.value,
+            amount: parseFloat(f.amount.value),
+            reason: f.reason.value || "budget allocation",
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to allocate ARC: " + e.message);
       }
     });
 

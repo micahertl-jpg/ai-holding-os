@@ -26,6 +26,20 @@
     return "$" + Number(n).toFixed(2);
   }
 
+  function renderAgentOptions(agents) {
+    if (!agents || agents.length === 0) {
+      return '<option value="">No agents yet — add one above</option>';
+    }
+    return agents
+      .map(
+        (a) =>
+          `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (balance: ${fmtArc(
+            a.arc_balance
+          )})</option>`
+      )
+      .join("");
+  }
+
   function renderBusinessOptions(businesses) {
     if (!businesses || businesses.length === 0) {
       return '<option value="">No businesses yet — create one below</option>';
@@ -262,6 +276,7 @@
     fmtArc,
     fmtUsd,
     renderBusinessOptions,
+    renderAgentOptions,
     renderBusinessHeader,
     renderAgentsTable,
     renderTasksTable,

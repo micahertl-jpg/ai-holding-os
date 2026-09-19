@@ -131,6 +131,13 @@ class CreateAgentRequest(BaseModel):
     manager_id: Optional[str] = None
     model: str = "unassigned"
     permission_level: int = 1
+    # Since executor.py now charges agents real (estimated) ARC cost for
+    # LLM usage instead of always 0.0, a brand-new agent needs some
+    # starting balance or its very first task would fail with
+    # InsufficientArcError before doing anything wrong. 100 ARC is an
+    # arbitrary, easily-overridden starting runway, not a meaningful
+    # number on its own — set to 0 to opt an agent out of auto-funding.
+    starting_budget_arc: float = 100.0
 
 
 class CreateTaskRequest(BaseModel):
@@ -299,6 +306,9 @@ def create_agent(business_id: str, req: CreateAgentRequest):
         req.model, req.permission_level,
     )
     state["agents"].set_status(agent_id, "idle")
+    if req.starting_budget_arc > 0:
+        state["banker"].allocate(business_id, agent_id, req.starting_budget_arc,
+                                  reason="initial agent budget")
     return {"id": agent_id}
 
 
