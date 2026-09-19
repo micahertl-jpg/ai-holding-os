@@ -243,3 +243,24 @@ CREATE TABLE IF NOT EXISTS trading_snapshots (
     open_positions INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- App Development — see schema.sql for the full explanation; this
+-- mirrors it exactly.
+CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    concept TEXT NOT NULL,
+    platform_recommendation TEXT,
+    suggested_tech_stack TEXT,
+    complexity_tier TEXT,
+    estimated_timeline TEXT,
+    estimated_cost_range TEXT,
+    mvp_feature_scope TEXT,
+    key_technical_risks TEXT,
+    similar_existing_apps TEXT,
+    confidence_level TEXT,
+    summary TEXT,
+    reference_urls_used TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

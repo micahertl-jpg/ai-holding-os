@@ -74,6 +74,8 @@
       R.renderOpportunitiesTable(data.opportunities);
     document.getElementById("roblox-trends-list").innerHTML =
       R.renderRobloxTrendsTable(data.roblox_trends);
+    document.getElementById("app-feasibility-list").innerHTML =
+      R.renderAppFeasibilityTable(data.app_feasibility_assessments);
     document.getElementById("allocate-arc-agent-select").innerHTML =
       R.renderAgentOptions(data.agents);
     document.getElementById("trading-portfolio").innerHTML =
@@ -265,6 +267,30 @@
         await refresh();
       } catch (e) {
         showError("Failed to request Roblox trend research: " + e.message);
+      }
+    });
+
+    document.getElementById("research-app-feasibility-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      const urlsRaw = f.reference_urls.value.trim();
+      const reference_urls = urlsRaw
+        ? urlsRaw.split(",").map((u) => u.trim()).filter(Boolean)
+        : [];
+      if (reference_urls.length > 3) {
+        showError("Reference URLs are capped at 3 (comma-separated).");
+        return;
+      }
+      try {
+        await api(`/businesses/${currentBusinessId}/app-feasibility/research`, {
+          method: "POST",
+          body: JSON.stringify({ concept: f.concept.value, reference_urls }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to request app feasibility research: " + e.message);
       }
     });
 

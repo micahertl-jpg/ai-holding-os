@@ -85,6 +85,19 @@ VALID_ROBLOX_ASSESSMENT_JSON = json.dumps({
     "summary": "Worth a small prototype effort.",
 })
 
+VALID_APP_FEASIBILITY_ASSESSMENT_JSON = json.dumps({
+    "platform_recommendation": "Cross-platform mobile via React Native.",
+    "suggested_tech_stack": "React Native, FastAPI, Postgres.",
+    "complexity_tier": "moderate",
+    "estimated_timeline": "8-12 weeks for an MVP",
+    "estimated_cost_range": "Roughly $15k-$40k, a rough estimate.",
+    "mvp_feature_scope": "Account creation and one core interaction loop.",
+    "key_technical_risks": "Push notification reliability.",
+    "similar_existing_apps": "A few comparable apps exist.",
+    "confidence_level": "medium",
+    "summary": "Worth a small MVP validation effort.",
+})
+
 
 def _setup():
     if os.path.exists(TEST_DB_PATH):
@@ -244,6 +257,33 @@ def test_research_roblox_trend_task_gets_executed_and_saved():
     assert trend["confidence_level"] == "medium"
     assert json.loads(trend["reference_urls_used"]) == ["https://example.com/z"]
     print("PASS: a research_roblox_trend task gets executed and saves a real roblox_trends row")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_research_app_feasibility_task_gets_executed_and_saved():
+    db, orch, biz_id, agent_id = _setup()
+    with patch("tasks.research_app_feasibility.fetch_url_text", return_value="Some reference text."):
+        task_id = orch.create_task(
+            biz_id, "Assess app feasibility", department="research",
+            permission_level_required=2, task_type="research_app_feasibility",
+            task_input={"concept": "a habit tracker app", "reference_urls": ["https://example.com/w"]},
+        )
+        client = MockClient(canned_response=VALID_APP_FEASIBILITY_ASSESSMENT_JSON)
+        outcomes = executor.run_once(db, orch, client=client)
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+    assert "App feasibility assessment saved" in task["result"]
+
+    assessment = db.query_one("SELECT * FROM app_feasibility_assessments WHERE task_id=?", (task_id,))
+    assert assessment is not None, "expected a row in app_feasibility_assessments"
+    assert assessment["concept"] == "a habit tracker app"
+    assert assessment["confidence_level"] == "medium"
+    assert assessment["complexity_tier"] == "moderate"
+    assert json.loads(assessment["reference_urls_used"]) == ["https://example.com/w"]
+    print("PASS: a research_app_feasibility task gets executed and saves a real app_feasibility_assessments row")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -591,6 +631,7 @@ if __name__ == "__main__":
     test_research_opportunity_charges_real_cost_and_rewards_by_confidence()
     test_insufficient_arc_balance_fails_the_task_not_silently_skips_the_charge()
     test_research_roblox_trend_task_gets_executed_and_saved()
+    test_research_app_feasibility_task_gets_executed_and_saved()
     test_bad_model_json_fails_the_task_loudly()
     test_manual_tasks_are_never_auto_executed()
     test_queued_typed_tasks_are_not_touched_until_assigned()

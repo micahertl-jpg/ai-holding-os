@@ -515,6 +515,96 @@ confidence and rationale, and (if it decided to buy/sell) a real paper
 trade in the Trade History table. Try **Run Strategy Review Now** too,
 though it's more informative after a handful of real trades exist.
 
+## App Development — status
+
+The fourth business vertical: app-idea feasibility and technical
+planning. Research/planning only (`permission_level` 1-2, same tier as
+Opportunity Discovery and Roblox Game Development) — no code gets
+written, no contracts get signed, nothing here spends real money. Chosen
+over Real Estate (also named in the project spec) specifically because
+it carries no jurisdiction/legal-exposure questions that would need a
+dedicated scoping conversation first.
+
+**What's new:**
+- `tasks/research_app_feasibility.py` — same pattern as
+  `research_opportunity.py`/`research_roblox_trend.py`: strict-JSON
+  output, mandatory `confidence_level`, hard failure (never a fabricated
+  fallback) on invalid or incomplete model output. `complexity_tier`
+  is a second mandatory, validated enum (`simple`/`moderate`/`complex`/
+  `very_complex`). The model is explicitly instructed to *flag* — never
+  resolve — any concept touching a regulated domain (payments, health
+  data, minors, biometric data, government IDs) as a risk requiring
+  dedicated legal/compliance review.
+- Schema: `app_feasibility_assessments` (both `schema.sql` and
+  `schema_postgres.sql`).
+- `executor.py`: `research_app_feasibility` handler, registered in
+  `HANDLERS`, using the same real-cost-charged/confidence-rewarded ARC
+  accounting as every other research task type.
+- New endpoints: `POST /businesses/{id}/app-feasibility/research`
+  (creates the task; returns immediately) and
+  `GET /businesses/{id}/app-feasibility` (lists saved assessments).
+  Wired into `GET /businesses/{id}/dashboard` alongside `opportunities`
+  and `roblox_trends`.
+- A new dashboard panel (concept + reference-URL form, result cards
+  showing platform recommendation, tech stack, complexity tier,
+  timeline/cost estimate, MVP scope, technical risks, and similar
+  existing apps), mirroring the Opportunity Discovery/Roblox panels
+  exactly.
+
+**What was actually verified in this session:**
+- `python3 -m py_compile` on every new/changed `.py` file; `node --check`
+  passed implicitly via the full `node test_dashboard_render.js` run
+  below.
+- Full offline suite: 8 new checks in
+  `test_research_app_feasibility_offline.py` (success with/without
+  reference URLs, a dead reference URL shrinking evidence without
+  failing the task, >3 URLs rejected, invalid JSON rejected, a missing
+  required field rejected, an invalid `confidence_level` rejected, an
+  invalid `complexity_tier` rejected), 1 new `test_executor_offline.py`
+  case (a `research_app_feasibility` task gets picked up, executed, and
+  saves a real row), and 4 new `test_dashboard_render.js` checks
+  (empty state, real-shape rendering, no-references note, malformed-JSON
+  safety). Every pre-existing test in the repo still passes unchanged.
+- Stood up a real local Postgres database (fresh, schema applied from
+  `schema_postgres.sql`), ran `uvicorn api:app` for real against it, and
+  exercised the new endpoints over real HTTP: created a business and an
+  agent, submitted an app-feasibility research request, confirmed the
+  `>3 reference_urls` request is rejected with `400` and an unknown
+  `business_id` returns `404` on both endpoints, and confirmed
+  `GET /businesses/{id}/dashboard` returns the new
+  `app_feasibility_assessments` field correctly (empty list, then
+  reflecting the real task outcome below).
+- With no `ANTHROPIC_API_KEY` set (not available in this build
+  environment), the submitted task correctly **failed loudly** —
+  `"model did not return valid JSON"` — and nothing was written to
+  `app_feasibility_assessments`. This is the intended behavior (no
+  fabricated assessments), not a bug, and it was confirmed as a real
+  outcome via the live task result, the live `GET .../app-feasibility`
+  endpoint (empty list), and the live dashboard JSON — not just by
+  reading the code.
+- Loaded `/dashboard` in a real headless browser (screenshot taken):
+  the new "App Development — Feasibility Assessments" panel renders
+  correctly, in the same visual style as the other research panels, and
+  the failed task is visible in the Tasks table exactly as it should be.
+
+**What was NOT verified** (needs a real `ANTHROPIC_API_KEY`, same as
+every other LLM-driven task type in this project):
+- An actual `research_app_feasibility` task running against the real
+  Anthropic API and producing a real assessment card.
+- The new panel's form clicked through by a human in a real browser.
+
+**To verify it yourself:**
+```
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m uvicorn api:app --reload
+```
+Open the dashboard, use the new "Assess Feasibility" form with a real
+app idea (e.g. "a habit tracker app with social accountability
+features") and optionally 1-3 real URLs, submit, and wait ~10-15
+seconds — a card should appear with a real, model-generated assessment
+and an honest confidence level. Make sure at least one agent in the
+business is idle (not `working` on something else) when you submit.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done on SQLite, verified
@@ -531,6 +621,10 @@ though it's more informative after a handful of real trades exist.
    verified against a real local Postgres + real HTTP in this session;
    still needs a real Anthropic + Alpha Vantage key to see a real
    decision/trade end to end (see above).
+8. ~~App Development Feasibility vertical~~ — built and verified against
+   a real local Postgres + real HTTP in this session, including the
+   task's intended-failure behavior with no API key set; still needs a
+   real Anthropic key to see a real assessment end to end (see above).
 
 ## ACTION REQUIRED FROM OWNER
 - **Now:** read `DEPLOY.md` and, when ready, push this repo to GitHub

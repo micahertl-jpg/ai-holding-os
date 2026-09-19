@@ -271,6 +271,47 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  function renderAppFeasibilityTable(assessments) {
+    if (!assessments || assessments.length === 0) {
+      return '<p class="empty">No app feasibility assessments yet.</p>';
+    }
+    const cards = assessments
+      .map((a) => {
+        const confidence = escapeHtml(a.confidence_level || "unknown");
+        let urls = [];
+        try {
+          urls = a.reference_urls_used ? JSON.parse(a.reference_urls_used) : [];
+        } catch (e) {
+          urls = [];
+        }
+        return `
+        <div class="opportunity-card confidence-${confidence}">
+          <div class="opportunity-head">
+            <strong>${escapeHtml(a.concept)}</strong>
+            <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+              confidence: ${confidence}
+            </span>
+          </div>
+          <p class="opportunity-summary">${escapeHtml(a.summary || "")}</p>
+          <dl class="opportunity-fields">
+            <dt>Platform recommendation</dt><dd>${escapeHtml(a.platform_recommendation || "")}</dd>
+            <dt>Suggested tech stack</dt><dd>${escapeHtml(a.suggested_tech_stack || "")}</dd>
+            <dt>Complexity tier</dt><dd>${escapeHtml(a.complexity_tier || "")}</dd>
+            <dt>Estimated timeline</dt><dd>${escapeHtml(a.estimated_timeline || "")}</dd>
+            <dt>Estimated cost range</dt><dd>${escapeHtml(a.estimated_cost_range || "")}</dd>
+            <dt>MVP feature scope</dt><dd>${escapeHtml(a.mvp_feature_scope || "")}</dd>
+            <dt>Key technical risks</dt><dd>${escapeHtml(a.key_technical_risks || "")}</dd>
+            <dt>Similar existing apps</dt><dd>${escapeHtml(a.similar_existing_apps || "")}</dd>
+          </dl>
+          ${urls.length > 0
+            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
+            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
+        </div>`;
+      })
+      .join("");
+    return `<div class="opportunities-list">${cards}</div>`;
+  }
+
   function renderTradingPortfolio(view) {
     if (!view) {
       return '<p class="empty">No paper trading portfolio yet — create one below, or use ' +
@@ -447,6 +488,7 @@
     renderJobsTable,
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
+    renderAppFeasibilityTable,
     renderGlobalStats,
     renderBusinessesOverviewTable,
     renderTradingPortfolio,

@@ -274,6 +274,52 @@ test("renderRobloxTrendsTable never throws on malformed reference_urls_used JSON
   assert.ok(html.includes("based on general knowledge only"));
 });
 
+test("renderAppFeasibilityTable handles the empty case", () => {
+  assert.ok(R.renderAppFeasibilityTable([]).includes("No app feasibility assessments yet"));
+  assert.ok(R.renderAppFeasibilityTable(null).includes("No app feasibility assessments yet"));
+});
+
+test("renderAppFeasibilityTable renders the real shape from the app_feasibility_assessments table", () => {
+  const assessments = [{
+    id: "app_1", business_id: "biz_1", task_id: "task_1",
+    concept: "a habit tracker with social accountability",
+    platform_recommendation: "Cross-platform mobile via React Native.",
+    suggested_tech_stack: "React Native, FastAPI, Postgres.",
+    complexity_tier: "moderate",
+    estimated_timeline: "8-12 weeks for an MVP",
+    estimated_cost_range: "Roughly $15k-$40k, a rough estimate.",
+    mvp_feature_scope: "Account creation and one core interaction loop.",
+    key_technical_risks: "Push notification reliability.",
+    similar_existing_apps: "A few comparable apps exist.",
+    confidence_level: "medium",
+    summary: "Worth a small MVP validation effort.",
+    reference_urls_used: JSON.stringify(["https://example.com/a"]),
+  }];
+  const html = R.renderAppFeasibilityTable(assessments);
+  assert.ok(html.includes("a habit tracker with social accountability"));
+  assert.ok(html.includes("confidence: medium"));
+  assert.ok(html.includes("Worth a small MVP validation effort."));
+  assert.ok(html.includes("React Native, FastAPI, Postgres."));
+  assert.ok(html.includes("https://example.com/a"));
+  assert.ok(html.includes("confidence-medium"));
+});
+
+test("renderAppFeasibilityTable shows the no-references note when none were used", () => {
+  const assessments = [{
+    id: "app_2", concept: "x", confidence_level: "low", summary: "y",
+    reference_urls_used: JSON.stringify([]),
+  }];
+  const html = R.renderAppFeasibilityTable(assessments);
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
+test("renderAppFeasibilityTable never throws on malformed reference_urls_used JSON", () => {
+  const assessments = [{ id: "app_3", concept: "x", confidence_level: "high", summary: "y",
+                          reference_urls_used: "not valid json" }];
+  const html = R.renderAppFeasibilityTable(assessments); // should not throw
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
 test("renderTradingPortfolio handles the no-portfolio-yet case", () => {
   const html = R.renderTradingPortfolio(null);
   assert.ok(html.includes("No paper trading portfolio yet"));
