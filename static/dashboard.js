@@ -57,8 +57,8 @@
       R.renderBusinessesOverviewTable(data.businesses);
     document.getElementById("system-core-center").innerHTML =
       R.renderSystemCoreCenter(data);
-    document.getElementById("system-core-side-stats").innerHTML =
-      R.renderSystemCoreSideStats(data);
+    document.getElementById("core-orbital-overlay").innerHTML =
+      R.renderOrbitalRing(data);
   }
 
   async function loadDashboard() {

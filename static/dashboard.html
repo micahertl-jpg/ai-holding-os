@@ -6,6 +6,8 @@
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
+  <canvas id="network-bg" aria-hidden="true"></canvas>
+
   <header class="app-header">
     <div class="app-header-inner">
       <div class="header-glyph" aria-hidden="true">
@@ -29,12 +31,10 @@
   <main class="layout">
     <section class="panel system-core-panel no-tilt" id="system-core-section">
       <h3>System Core</h3>
-      <div class="system-core-body">
-        <div class="core-globe-wrap">
-          <canvas id="system-core-globe" class="core-globe-canvas" aria-hidden="true"></canvas>
-          <div class="core-hud-center" id="system-core-center"></div>
-        </div>
-        <div class="core-side-stats arc-summary" id="system-core-side-stats"></div>
+      <div class="core-hud-center" id="system-core-center"></div>
+      <div class="core-orbital">
+        <canvas id="system-core-globe" class="core-globe-canvas" aria-hidden="true"></canvas>
+        <div class="core-orbital-overlay" id="core-orbital-overlay"></div>
       </div>
     </section>
 
@@ -203,6 +203,7 @@
   </main>
 
   <script src="/static/dashboard-render.js"></script>
+  <script src="/static/dashboard-network-bg.js"></script>
   <script src="/static/dashboard-globe.js"></script>
   <script src="/static/dashboard-tilt.js"></script>
   <script src="/static/dashboard.js"></script>
