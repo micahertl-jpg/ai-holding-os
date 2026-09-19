@@ -587,23 +587,31 @@ dedicated scoping conversation first.
   correctly, in the same visual style as the other research panels, and
   the failed task is visible in the Tasks table exactly as it should be.
 
-**What was NOT verified** (needs a real `ANTHROPIC_API_KEY`, same as
-every other LLM-driven task type in this project):
-- An actual `research_app_feasibility` task running against the real
-  Anthropic API and producing a real assessment card.
-- The new panel's form clicked through by a human in a real browser.
+**UPDATE — verified live in production after deploy:** the owner opened
+the real Railway deployment, submitted "ai meal planning app" through
+the new "Assess Feasibility" form with a real `ANTHROPIC_API_KEY` set,
+and got back a complete, well-formed card (`confidence: medium`,
+`complexity_tier: moderate`) with a real platform recommendation, tech
+stack, timeline/cost range, MVP scope, and similar-apps list. It also
+correctly flagged the regulated-domain risk on its own — health/
+biometric data (weight, medical conditions, allergies) — as needing
+dedicated legal/compliance review, exactly as the system prompt
+requires, without attempting to resolve that itself. This closes the
+only gap this vertical had: the full pipeline (task creation → executor
+→ real LLM call → strict JSON validation → saved row → dashboard render)
+is now confirmed working end to end against the real Anthropic API, not
+just against a controlled `MockClient` in tests.
 
 **To verify it yourself:**
 ```
 export ANTHROPIC_API_KEY=sk-ant-...
 python -m uvicorn api:app --reload
 ```
-Open the dashboard, use the new "Assess Feasibility" form with a real
-app idea (e.g. "a habit tracker app with social accountability
-features") and optionally 1-3 real URLs, submit, and wait ~10-15
-seconds — a card should appear with a real, model-generated assessment
-and an honest confidence level. Make sure at least one agent in the
-business is idle (not `working` on something else) when you submit.
+Open the dashboard, use the "Assess Feasibility" form with a real app
+idea and optionally 1-3 real URLs, submit, and wait ~10-15 seconds — a
+card should appear with a real, model-generated assessment and an
+honest confidence level. Make sure at least one agent in the business is
+idle (not `working` on something else) when you submit.
 
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
@@ -621,10 +629,10 @@ business is idle (not `working` on something else) when you submit.
    verified against a real local Postgres + real HTTP in this session;
    still needs a real Anthropic + Alpha Vantage key to see a real
    decision/trade end to end (see above).
-8. ~~App Development Feasibility vertical~~ — built and verified against
-   a real local Postgres + real HTTP in this session, including the
-   task's intended-failure behavior with no API key set; still needs a
-   real Anthropic key to see a real assessment end to end (see above).
+8. ~~App Development Feasibility vertical~~ — built, verified against a
+   real local Postgres + real HTTP, and confirmed end to end in
+   production with a real Anthropic key producing a real assessment
+   (see above).
 
 ## ACTION REQUIRED FROM OWNER
 - **Now:** read `DEPLOY.md` and, when ready, push this repo to GitHub
