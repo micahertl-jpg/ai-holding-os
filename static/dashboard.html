@@ -191,6 +191,15 @@
     </section>
 
     <section class="panel">
+      <h3>Store Orders</h3>
+      <div id="orders-table"></div>
+      <p class="panel-note">Only shows orders for the currently-selected business — this is
+        populated by the storefront (<code>/static/store.html</code>), not from anything
+        submitted here. A <code>failed</code> order was already charged in Stripe and needs a
+        manual refund there — see DEPLOY.md's Storefront section.</p>
+    </section>
+
+    <section class="panel">
       <h3>Create a New Business</h3>
       <form id="create-business-form" class="inline-form">
         <input name="name" placeholder="Business name" required>

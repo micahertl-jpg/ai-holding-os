@@ -544,6 +544,13 @@ def business_dashboard(business_id: str):
     app_feasibility_assessments = [row_to_dict(r) for r in
                                     db.query("SELECT * FROM app_feasibility_assessments WHERE "
                                              "business_id=? ORDER BY created_at DESC", (business_id,))]
+    # Storefront orders -- the only place an owner can see real-money
+    # order activity without going into Stripe or the database
+    # directly. Most businesses will never have any (STORE_BUSINESS_ID
+    # points at exactly one), so this is cheap for everyone else.
+    orders = [row_to_dict(r) for r in
+              db.query("SELECT * FROM orders WHERE business_id=? "
+                       "ORDER BY created_at DESC LIMIT 50", (business_id,))]
     trading_portfolio = _trading_portfolio_view(business_id)
     trading_trades = []
     if trading_portfolio:
@@ -563,6 +570,7 @@ def business_dashboard(business_id: str):
         "opportunities": opportunities,
         "roblox_trends": roblox_trends,
         "app_feasibility_assessments": app_feasibility_assessments,
+        "orders": orders,
         "trading_portfolio": trading_portfolio,
         "trading_trades": trading_trades,
         "trading_strategy_versions": trading_strategy_versions,
