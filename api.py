@@ -44,6 +44,7 @@ import executor as executor_module
 import fulfillment as fulfillment_module
 import stripe_client
 import dashboard_auth
+from rate_limiter import RateLimiter
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
 from db import new_id
 
@@ -99,6 +100,29 @@ PRODUCT_CATALOG = {
         "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "1900")),
     },
 }
+
+# /store/checkout is the only public, unauthenticated endpoint that also
+# does real work on every call (creates a real Stripe Checkout Session,
+# writes a pending_payment order row) -- rate-limited per client IP so
+# spamming it can't flood the orders table or burn through Stripe API
+# calls. Generous enough that a real customer retrying a declined card
+# is never the one who gets blocked. See rate_limiter.py.
+CHECKOUT_RATE_LIMIT_MAX = int(os.environ.get("CHECKOUT_RATE_LIMIT_MAX", "10"))
+CHECKOUT_RATE_LIMIT_WINDOW_SECONDS = float(
+    os.environ.get("CHECKOUT_RATE_LIMIT_WINDOW_SECONDS", "60"))
+_checkout_rate_limiter = RateLimiter(CHECKOUT_RATE_LIMIT_MAX, CHECKOUT_RATE_LIMIT_WINDOW_SECONDS)
+
+
+def _client_ip(request: Request) -> str:
+    """Railway (and any platform fronting this with a reverse proxy)
+    means request.client.host is the proxy's own address, not the real
+    caller's -- X-Forwarded-For (set by the proxy, not the client) is
+    what actually identifies the caller. Falls back to request.client.host
+    for local/direct runs where no proxy sets that header."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 # ---------------------------------------------------------------------
 # Wiring — one shared Database + one instance of each module for the
@@ -1123,7 +1147,12 @@ def list_store_products():
 
 
 @app.post("/store/checkout")
-def create_checkout(req: CheckoutRequest):
+def create_checkout(req: CheckoutRequest, request: Request):
+    if not _checkout_rate_limiter.allow(_client_ip(request)):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many checkout attempts — please wait a minute and try again.",
+        )
     if not STORE_BUSINESS_ID:
         raise HTTPException(
             status_code=503,

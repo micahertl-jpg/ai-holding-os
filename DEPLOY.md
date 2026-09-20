@@ -118,6 +118,15 @@ not a normal outcome) after `FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`
 fulfillment passes (default 5) — that order is then also given up on
 and marked `failed` rather than being retried forever.
 
+Optional: `CHECKOUT_RATE_LIMIT_MAX` / `CHECKOUT_RATE_LIMIT_WINDOW_SECONDS`
+(default 10 requests per 60 seconds, per client IP) — `/store/checkout`
+is the one public, unauthenticated endpoint that does real work on every
+call (creates a real Stripe Checkout Session, writes an order row), so
+it's rate-limited to stop it being spammed. Raise the limit if real
+customers are ever legitimately hitting it (e.g. a payment provider
+integration retrying on your behalf); a normal customer retrying a
+declined card a couple of times will never come close to the default.
+
 **Before accepting real money, verify the whole loop with Stripe's test
 mode** (test-mode keys, and Stripe's published test card
 `4242 4242 4242 4242`, any future expiry/CVC):
