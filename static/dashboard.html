@@ -28,6 +28,7 @@
   </header>
 
   <div id="error-banner" class="error-banner hidden"></div>
+  <div id="chart-tooltip" class="chart-tooltip hidden" aria-hidden="true"></div>
 
   <main class="layout">
     <section class="panel system-core-panel no-tilt" id="system-core-section">
@@ -217,6 +218,21 @@
                title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
         <button type="submit" class="btn-small">Add Scheduled Job</button>
       </form>
+    </section>
+
+    <section class="panel">
+      <h3>Revenue Trend</h3>
+      <div class="chart-range-toggle" role="group" aria-label="Time range">
+        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="7" aria-pressed="true">7D</button>
+        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="30" aria-pressed="false">30D</button>
+        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="90" aria-pressed="false">90D</button>
+      </div>
+      <div id="orders-chart"></div>
+      <p class="chart-selection" id="orders-chart-selection" aria-live="polite"></p>
+      <p class="panel-note">Counts only orders that actually collected payment (<code>paid</code>
+        or <code>fulfilled</code>) — a pending or failed checkout never appears here. Scoped to
+        the currently-selected business, same as Store Orders below. Click a bar for its exact
+        figure.</p>
     </section>
 
     <section class="panel">

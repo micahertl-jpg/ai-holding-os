@@ -13,6 +13,15 @@
   let refreshInFlight = false;
   const AUTO_REFRESH_INTERVAL_MS = 5000;
 
+  // Revenue trend chart state -- purely a display concern over orders
+  // already fetched by loadDashboard(), so switching the range or
+  // selecting a bar never needs a network round-trip.
+  let lastOrders = [];
+  let ordersChartRangeDays = 7;
+  function renderOrdersChartPanel() {
+    setHtmlIfChanged("orders-chart", R.renderOrdersChart(R.computeOrdersRevenueByDay(lastOrders, ordersChartRangeDays)));
+  }
+
   async function api(path, opts) {
     const res = await fetch(path, Object.assign({
       headers: { "Content-Type": "application/json" },
@@ -83,6 +92,8 @@
     setHtmlIfChanged("arc-summary", R.renderArcSummary(data.arc_summary));
     setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
     setHtmlIfChanged("orders-table", R.renderOrdersTable(data.orders));
+    lastOrders = data.orders || [];
+    renderOrdersChartPanel();
     setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
     setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
     setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));
@@ -467,10 +478,70 @@
           if (!currentBusinessId) return;
           await api(`/businesses/${currentBusinessId}/real-estate/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
+        } else if (action === "set-orders-range") {
+          // Pure display state over data already in hand -- no network
+          // call, so this never needs to go through refresh().
+          ordersChartRangeDays = parseInt(t.dataset.range, 10) || 7;
+          document.querySelectorAll('[data-action="set-orders-range"]').forEach((b) => {
+            b.setAttribute("aria-pressed", b === t ? "true" : "false");
+          });
+          document.getElementById("orders-chart-selection").textContent = "";
+          renderOrdersChartPanel();
+        } else if (action === "select-order-bar") {
+          document.querySelectorAll(".orders-chart-bar.selected").forEach((b) => b.classList.remove("selected"));
+          t.classList.add("selected");
+          document.getElementById("orders-chart-selection").textContent =
+            t.dataset.label + ": " + R.fmtUsd(parseFloat(t.dataset.value));
         }
       } catch (e) {
         showError("Action failed: " + e.message);
       }
     });
+
+    // Keyboard activation for the chart bars: role="button" on an SVG
+    // <rect> doesn't get free Enter/Space-triggers-click behavior the
+    // way a real <button> does, so this dispatches one explicitly and
+    // lets the delegated click handler above do the actual work.
+    document.body.addEventListener("keydown", (ev) => {
+      if ((ev.key === "Enter" || ev.key === " ") && ev.target.dataset.action === "select-order-bar") {
+        ev.preventDefault();
+        ev.target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }
+    });
+
+    // Hover/focus tooltip for the revenue chart bars. mouseover/mouseout
+    // (not mouseenter/mouseleave) so this can be delegated on body like
+    // everything else here; focus/blur need the capture phase since
+    // neither of those bubbles.
+    const chartTooltip = document.getElementById("chart-tooltip");
+    document.body.addEventListener("mouseover", (ev) => {
+      const bar = ev.target.closest && ev.target.closest(".orders-chart-bar");
+      if (!bar) return;
+      chartTooltip.textContent = bar.dataset.label + ": " + R.fmtUsd(parseFloat(bar.dataset.value));
+      chartTooltip.classList.remove("hidden");
+    });
+    document.body.addEventListener("mousemove", (ev) => {
+      if (chartTooltip.classList.contains("hidden")) return;
+      chartTooltip.style.left = ev.clientX + "px";
+      chartTooltip.style.top = ev.clientY + "px";
+    });
+    document.body.addEventListener("mouseout", (ev) => {
+      const bar = ev.target.closest && ev.target.closest(".orders-chart-bar");
+      if (!bar || (ev.relatedTarget && bar.contains(ev.relatedTarget))) return;
+      chartTooltip.classList.add("hidden");
+    });
+    document.body.addEventListener("focus", (ev) => {
+      if (!ev.target.classList || !ev.target.classList.contains("orders-chart-bar")) return;
+      const rect = ev.target.getBoundingClientRect();
+      chartTooltip.textContent = ev.target.dataset.label + ": " + R.fmtUsd(parseFloat(ev.target.dataset.value));
+      chartTooltip.style.left = (rect.left + rect.width / 2) + "px";
+      chartTooltip.style.top = rect.top + "px";
+      chartTooltip.classList.remove("hidden");
+    }, true);
+    document.body.addEventListener("blur", (ev) => {
+      if (ev.target.classList && ev.target.classList.contains("orders-chart-bar")) {
+        chartTooltip.classList.add("hidden");
+      }
+    }, true);
   });
 })();
