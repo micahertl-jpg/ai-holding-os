@@ -533,7 +533,11 @@ def health(response: Response):
         state["db"].query_one("SELECT 1 AS ok")
         checks["database"] = "ok"
     except Exception as e:
-        checks["database"] = f"error: {e}"
+        # /health is public/unauthenticated -- the raw exception text can
+        # include internal connection details (host, DSN fragments), so
+        # log it server-side and keep the public response generic.
+        print(f"[health] database check failed: {e}", flush=True)
+        checks["database"] = "error"
 
     sched = state.get("scheduler_thread")
     checks["scheduler_thread"] = "ok" if (sched and sched.is_alive()) else "not running"
@@ -1428,7 +1432,11 @@ def create_checkout(req: CheckoutRequest, request: Request):
         )
     except stripe_client.StripeError as e:
         db.execute("UPDATE orders SET status='failed' WHERE id=?", (order_id,))
-        raise HTTPException(status_code=502, detail=f"Could not start checkout: {e}")
+        # Stripe's own error text can echo back request details (e.g. a
+        # malformed/invalid API key fragment) -- log it server-side only,
+        # never hand raw Stripe error text to an unauthenticated customer.
+        print(f"[store] Stripe checkout failed for order {order_id}: {e}", flush=True)
+        raise HTTPException(status_code=502, detail="Could not start checkout — please try again shortly.")
 
     db.execute("UPDATE orders SET stripe_session_id=? WHERE id=?", (session["id"], order_id))
     return {"order_id": order_id, "checkout_url": session["url"]}
