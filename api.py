@@ -111,7 +111,7 @@ PRODUCT_CATALOG = {
             "appraiser, or attorney, not resolved here. Delivered by email, usually "
             "within a minute of payment."
         ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "1900")),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "500")),
     },
 }
 
