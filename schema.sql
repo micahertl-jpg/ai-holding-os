@@ -319,3 +319,24 @@ CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Ops/Maintenance — the sixth business vertical, and the only one with
+-- no customer/storefront product: it watches this system's OWN
+-- infrastructure (stuck tasks/approvals/orders, silent scheduled jobs,
+-- database growth, recent errors, missing optional config) and
+-- produces a recommend-only report for the owner. See
+-- tasks/ops_maintenance_review.py. metrics_snapshot is the real,
+-- code-computed data the model was actually given — kept alongside the
+-- model's synthesis so a report can always be checked against the raw
+-- numbers behind it, never just trusted blind.
+CREATE TABLE IF NOT EXISTS ops_maintenance_reports (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    overall_severity TEXT,            -- ok|info|warning|critical
+    findings TEXT,                    -- JSON array of {category, severity, description, recommendation}
+    confidence_level TEXT,            -- low|medium|high
+    summary TEXT,
+    metrics_snapshot TEXT,            -- JSON: the real metrics collect_system_metrics() computed
+    created_at TEXT DEFAULT (datetime('now'))
+);

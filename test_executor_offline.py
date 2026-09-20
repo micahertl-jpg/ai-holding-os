@@ -98,6 +98,24 @@ VALID_APP_FEASIBILITY_ASSESSMENT_JSON = json.dumps({
     "summary": "Worth a small MVP validation effort.",
 })
 
+VALID_OPS_REPORT_OK_JSON = json.dumps({
+    "overall_severity": "ok",
+    "findings": [],
+    "confidence_level": "high",
+    "summary": "Nothing unusual -- system looks healthy.",
+})
+
+VALID_OPS_REPORT_WARNING_JSON = json.dumps({
+    "overall_severity": "warning",
+    "findings": [{
+        "category": "stuck tasks", "severity": "warning",
+        "description": "One task has been queued for over 2 hours.",
+        "recommendation": "Check whether an eligible agent is idle for its department.",
+    }],
+    "confidence_level": "medium",
+    "summary": "A task looks stuck; worth a look.",
+})
+
 
 def _setup():
     if os.path.exists(TEST_DB_PATH):
@@ -625,6 +643,73 @@ def test_trading_strategy_review_rejects_an_out_of_bounds_proposal():
     os.remove(TEST_DB_PATH)
 
 
+def test_ops_maintenance_review_task_gets_executed_and_saved():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(biz_id, "Review this system's own infrastructure health",
+                                permission_level_required=2, task_type="ops_maintenance_review")
+
+    with patch.object(executor, "OWNER_EMAIL", None), \
+         patch("executor.send_email") as mock_send:
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=VALID_OPS_REPORT_OK_JSON))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+    assert "Ops/Maintenance review saved" in task["result"]
+
+    report = db.query_one("SELECT * FROM ops_maintenance_reports WHERE task_id=?", (task_id,))
+    assert report is not None, "expected a row in ops_maintenance_reports"
+    assert report["overall_severity"] == "ok"
+    assert json.loads(report["findings"]) == []
+    assert json.loads(report["metrics_snapshot"]).get("stuck_tasks") == []
+    assert mock_send.call_count == 0, "a healthy 'ok' report must never alert the owner"
+    print("PASS: an ops_maintenance_review task gets executed and saves a real report row")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_ops_maintenance_review_alerts_owner_on_warning_severity():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(biz_id, "Review this system's own infrastructure health",
+                                permission_level_required=2, task_type="ops_maintenance_review")
+
+    with patch.object(executor, "OWNER_EMAIL", "owner@example.com"), \
+         patch("executor.send_email") as mock_send:
+        outcomes = executor.run_once(
+            db, orch, client=MockClient(canned_response=VALID_OPS_REPORT_WARNING_JSON))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    report = db.query_one("SELECT * FROM ops_maintenance_reports WHERE task_id=?", (task_id,))
+    assert report["overall_severity"] == "warning"
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "owner@example.com"
+    assert "WARNING" in call_args[1]  # subject
+    print("PASS: a warning-severity ops report alerts the configured OWNER_EMAIL")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_ops_maintenance_review_broken_owner_alert_does_not_fail_the_task():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(biz_id, "Review this system's own infrastructure health",
+                                permission_level_required=2, task_type="ops_maintenance_review")
+
+    from emailer import EmailError
+    with patch.object(executor, "OWNER_EMAIL", "owner@example.com"), \
+         patch("executor.send_email", side_effect=EmailError("Resend is down")):
+        outcomes = executor.run_once(
+            db, orch, client=MockClient(canned_response=VALID_OPS_REPORT_WARNING_JSON))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed", \
+        "a broken owner-alert email must never fail an otherwise-successful ops review"
+    print("PASS: a broken owner-alert email never fails the ops review task itself")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_summarize_urls_task_gets_executed_and_completed()
     test_research_opportunity_task_gets_executed_and_saved()
@@ -644,4 +729,7 @@ if __name__ == "__main__":
     test_trading_cycle_without_a_portfolio_fails_loudly()
     test_trading_strategy_review_task_promotes_a_new_validated_version()
     test_trading_strategy_review_rejects_an_out_of_bounds_proposal()
+    test_ops_maintenance_review_task_gets_executed_and_saved()
+    test_ops_maintenance_review_alerts_owner_on_warning_severity()
+    test_ops_maintenance_review_broken_owner_alert_does_not_fail_the_task()
     print("\nAll executor.py offline tests passed.")

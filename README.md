@@ -8,23 +8,25 @@ internal virtual economy, never real money), the Human Approval Queue,
 and a full audit trail. Deployed 24/7 on Railway with real Postgres —
 see `DEPLOY.md`.
 
-Four of the project spec's six planned business verticals are built on
+Five of the project spec's six planned business verticals are built on
 that core: **Opportunity Discovery**, **Roblox Game Development**,
-**Automated Stock Trading** (paper trading only — see below), and **App
-Development Feasibility**. **Real Estate** and **Ops/Maintenance**
-remain unbuilt — see "Next real steps."
+**Automated Stock Trading** (paper trading only — see below), **App
+Development Feasibility**, and **Ops/Maintenance** (watches this
+system's own health — see below). **Real Estate** remains unbuilt —
+see "Next real steps."
 
-Three of those four verticals (everything except trading) are also
-**monetized for real**: a public storefront takes real Stripe payments
-and emails a real, AI-generated report to the customer. This is the
-only place in the whole system real money changes hands — see
-"Storefront — real payments" below.
+Three of those five verticals (everything except trading and
+Ops/Maintenance, which has no customer at all) are also **monetized
+for real**: a public storefront takes real Stripe payments and emails
+a real, AI-generated report to the customer. This is the only place in
+the whole system real money changes hands — see "Storefront — real
+payments" below.
 
 ## What's real vs. simulated
 - **REAL:** the data model, permission gating, ARC accounting, the
   approval-queue gate, the audit log, every LLM call (real Anthropic
   API), the FastAPI backend + dashboard (deployed 24/7, real Postgres),
-  the scheduler/executor background threads, all four verticals'
+  the scheduler/executor background threads, all five verticals'
   research/assessment logic, and the storefront's real Stripe payments
   + Resend emails for three of those verticals — all personally
   verified live by the owner with real purchases.
@@ -33,9 +35,10 @@ only place in the whole system real money changes hands — see
   is no brokerage integration anywhere in this codebase, structurally,
   not as a config flag someone could flip. ARC (the internal agent
   economy) never represents real money, even where agents "earn" or
-  "spend" it.
-- **NOT YET BUILT:** two of the project spec's six planned verticals
-  (Real Estate, Ops/Maintenance) — see "Next real steps."
+  "spend" it. Ops/Maintenance only ever recommends — it never acts on
+  its own findings.
+- **NOT YET BUILT:** one of the project spec's six planned verticals
+  (Real Estate) — see "Next real steps."
 
 ## Why SQLite + stdlib-only Python
 Built inside a sandboxed environment with no internet access, so no
@@ -797,6 +800,97 @@ storefront:
   `rate_limiter.py` — no new dependency, since this runs as a single
   `uvicorn` process with no distributed state to coordinate.
 
+## Ops/Maintenance — status (fifth business vertical, no customer)
+
+The project spec's sixth planned vertical, scoped after clarifying with
+the owner what it was actually meant to do: not a customer-facing
+product, but an agent that watches THIS system's own infrastructure and
+produces maintenance recommendations for the owner. Same safety posture
+as every other vertical: it only ever recommends — it never restarts
+anything, deletes stale data, or changes configuration on its own.
+
+**What's new:**
+- `tasks/ops_maintenance_review.py` — `collect_system_metrics()`
+  computes REAL numbers from the database (stuck tasks/approvals/
+  orders past a configurable age threshold, scheduled jobs overdue past
+  their own next_run_at by more than their own grace multiplier,
+  row counts for the tables most worth watching for growth, a tally of
+  recent `*_failed`/`*_error` audit log entries, and which known
+  optional env vars are unset) — never asked of the model, never
+  invented by it. `analyze_system_health()` sends those real numbers to
+  the model and asks it to synthesize a prioritized, severity-ranked
+  report (`ok`/`info`/`warning`/`critical`) from them — same
+  hard-failure-never-fabricate posture as every other research task
+  type: invalid or incomplete JSON is a hard failure.
+- Schema: `ops_maintenance_reports` (both `schema.sql` and
+  `schema_postgres.sql`), storing the model's synthesis alongside the
+  real `metrics_snapshot` it was given, so a report can always be
+  checked against the raw numbers behind it.
+- `executor.py`'s `ops_maintenance_review` handler saves the report and,
+  for a `warning`/`critical` severity, sends the same kind of
+  best-effort `OWNER_EMAIL` alert as a failed storefront order — a
+  broken/missing alert never affects the saved report or fails the task.
+- **No owner setup step**, unlike every other vertical: a "System
+  Operations" business, an Ops Monitor agent (permission_level 2), and
+  a recurring `ops_maintenance_review` scheduled job (default every 24h,
+  `OPS_REVIEW_INTERVAL_SECONDS`) are created automatically the first
+  time the app starts — idempotent, so every later restart/redeploy is
+  a no-op. Watching the system's own health needs nothing beyond the
+  `ANTHROPIC_API_KEY` every other vertical already requires.
+- New endpoints: `GET /ops/reports` (recent reports) and
+  `POST /ops/review` (trigger one now). Wired into `GET /overview` as
+  `latest_ops_report` — system-wide, not tied to whichever business the
+  owner has selected, same as the approvals rollup above it.
+- A new dashboard panel ("System Health — Ops/Maintenance"), with a
+  severity badge, the model's summary, each finding with its own
+  severity/description/recommendation, and a "Run Ops Review Now"
+  button — placed next to the Owner Approvals panel since both are
+  global, business-independent panels.
+
+**What was actually verified in this session:**
+- 15 new checks in `test_ops_maintenance_review_offline.py`:
+  `collect_system_metrics()` against a real SQLite database with
+  hand-seeded fixtures (a genuinely stuck task is flagged, a fresh one
+  isn't; a stale approval; a scheduled job overdue past its own grace
+  threshold, but not a disabled one; a stuck order; recent errors
+  counted only within the window; a configured optional var not
+  flagged, an unset one is; real table row counts), plus
+  `analyze_system_health()`'s full validation surface (invalid JSON,
+  missing fields, invalid severity/confidence values, findings that
+  isn't a list, a malformed finding, and that an empty findings list is
+  valid, not an error).
+- 3 new `test_executor_offline.py` checks: an `ops_maintenance_review`
+  task gets executed and saves a real report row; a `warning`-severity
+  report alerts the configured `OWNER_EMAIL`; a broken owner-alert email
+  never fails the review task itself.
+- 5 new `test_dashboard_render.js` checks: the no-report-yet empty
+  state, real-shape rendering with findings, the "everything healthy"
+  empty-findings case, malformed findings JSON never throwing, and
+  XSS-escaping of model-generated finding text.
+- Live-verified against a real local Postgres + `uvicorn`: confirmed
+  the "System Operations" business/Ops Monitor agent/scheduled job are
+  created automatically on first startup, confirmed a restart doesn't
+  create duplicates (idempotency), confirmed the scheduled job fires
+  immediately (its `next_run_at` is set to "now" at creation) and the
+  executor picks it up, and — with no real `ANTHROPIC_API_KEY` in this
+  sandbox (same as every other vertical under identical conditions) —
+  confirmed the task **correctly fails loudly** on the mock client's
+  non-JSON response rather than fabricating a report. Also verified
+  `POST /ops/review`'s manual trigger, and loaded `/dashboard` in a
+  real browser (screenshot taken, zero console errors) in both the
+  empty state and — after seeding one real report row directly — the
+  populated state with a warning-severity finding.
+
+**What was NOT verified** (needs a real `ANTHROPIC_API_KEY`, same as
+every other LLM-driven task type in this project):
+- An actual `ops_maintenance_review` task running against the real
+  Anthropic API and producing a real, model-synthesized report.
+
+**To verify it yourself:** nothing to configure — open `/dashboard`
+with a real `ANTHROPIC_API_KEY` set, and within `OPS_REVIEW_INTERVAL_SECONDS`
+of the app's first startup (or immediately, by clicking "Run Ops Review
+Now") a real report should appear in the System Health panel.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done, verified live against
@@ -831,18 +925,15 @@ storefront:
     done, live-verified (see above).
 14. ~~Storefront traffic/discoverability basics~~ (root URL, meta tags,
     favicon, robots.txt) — done, live-verified (see above).
-15. **Real Estate vertical** — named in the project spec, not yet
-    started. Needs a dedicated scoping conversation first: unlike the
-    other four verticals, it carries jurisdiction/legal-exposure
-    questions (property law varies by state/country, licensing
-    requirements for anything resembling brokerage activity) that
-    shouldn't be resolved unilaterally by an agent.
-16. **Ops/Maintenance vertical** — named in the project spec, not yet
-    started, and not yet even scoped: what this vertical is actually
-    meant to do (system self-maintenance automation? a literal
-    ops/maintenance service business? something else?) hasn't been
-    defined. Needs the owner to clarify intent before any design work
-    starts.
+15. ~~Ops/Maintenance vertical~~ (scoped with the owner as
+    self-maintenance for this system, not a customer product) — built,
+    live-verified, no owner setup step (see above).
+16. **Real Estate vertical** — named in the project spec, not yet
+    started. Needs a dedicated scoping conversation first: unlike every
+    other vertical, it carries jurisdiction/legal-exposure questions
+    (property law varies by state/country, licensing requirements for
+    anything resembling brokerage activity) that shouldn't be resolved
+    unilaterally by an agent.
 
 ## ACTION REQUIRED FROM OWNER
 - **Already done:** deployed on Railway with a managed Postgres add-on,
@@ -866,7 +957,10 @@ storefront:
   `DEPLOY.md`'s Storefront section for the full checklist. Already done
   and confirmed working if you've made a real purchase; also consider
   setting the optional `OWNER_EMAIL` so a failed order (needs a manual
-  Stripe refund) reaches you by email, not just the dashboard.
-- **Decide on Real Estate and Ops/Maintenance** (see "Next real steps"
-  #15-16 above) whenever you're ready to scope either one — neither
-  should be started without your input first.
+  Stripe refund) — and now a warning/critical Ops/Maintenance finding —
+  reaches you by email, not just the dashboard.
+- **Nothing needed for Ops/Maintenance** — it provisions and starts
+  reviewing this system's own health automatically on first deploy.
+- **Decide on Real Estate** (see "Next real steps" #16 above) whenever
+  you're ready to scope it — it shouldn't be started without your input
+  first.

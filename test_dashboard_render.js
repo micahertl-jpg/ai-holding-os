@@ -637,6 +637,69 @@ test("renderGlobalStats handles an empty system without throwing", () => {
   assert.ok(html.includes("$0.00"));
 });
 
+test("opsSeverityClass maps every real severity to the shared status vocabulary", () => {
+  assert.strictEqual(R.opsSeverityClass("ok"), "status-completed");
+  assert.strictEqual(R.opsSeverityClass("info"), "status-completed");
+  assert.strictEqual(R.opsSeverityClass("warning"), "status-awaiting_approval");
+  assert.strictEqual(R.opsSeverityClass("critical"), "status-failed");
+});
+
+test("renderOpsReport handles the no-report-yet case", () => {
+  assert.ok(R.renderOpsReport(null).includes("No ops review has run yet"));
+});
+
+test("renderOpsReport renders the real shape with findings", () => {
+  const report = {
+    overall_severity: "warning",
+    confidence_level: "medium",
+    summary: "A task looks stuck; worth a look.",
+    created_at: "2026-09-20 12:00:00",
+    findings: JSON.stringify([{
+      category: "stuck tasks", severity: "warning",
+      description: "One task has been queued for over 2 hours.",
+      recommendation: "Check whether an eligible agent is idle for its department.",
+    }]),
+  };
+  const html = R.renderOpsReport(report);
+  assert.ok(html.includes("status-awaiting_approval"));
+  assert.ok(html.includes("A task looks stuck"));
+  assert.ok(html.includes("stuck tasks"));
+  assert.ok(html.includes("Check whether an eligible agent"));
+  assert.ok(html.includes("medium"));
+});
+
+test("renderOpsReport shows a healthy message when findings is an empty array", () => {
+  const report = {
+    overall_severity: "ok", confidence_level: "high", summary: "All clear.",
+    created_at: "2026-09-20 12:00:00", findings: "[]",
+  };
+  const html = R.renderOpsReport(report);
+  assert.ok(html.includes("No findings"));
+  assert.ok(html.includes("status-completed"));
+});
+
+test("renderOpsReport never throws on malformed findings JSON", () => {
+  const report = {
+    overall_severity: "ok", confidence_level: "high", summary: "All clear.",
+    created_at: "2026-09-20 12:00:00", findings: "not json",
+  };
+  assert.doesNotThrow(() => R.renderOpsReport(report));
+});
+
+test("renderOpsReport escapes model-generated finding text to prevent HTML injection", () => {
+  const report = {
+    overall_severity: "warning", confidence_level: "medium",
+    summary: '<script>alert("xss")</script>', created_at: "2026-09-20 12:00:00",
+    findings: JSON.stringify([{
+      category: "x", severity: "warning",
+      description: '<img src=x onerror=alert(1)>', recommendation: "y",
+    }]),
+  };
+  const html = R.renderOpsReport(report);
+  assert.ok(!html.includes("<script>"));
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderBusinessesOverviewTable handles the empty case", () => {
   const html = R.renderBusinessesOverviewTable([]);
   assert.ok(html.includes("No businesses yet"));
