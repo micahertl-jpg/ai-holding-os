@@ -26,9 +26,15 @@ class FakeResponse:
         return False
 
 
+def _addrinfo_for(ip):
+    import socket
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))]
+
+
 def test_success_path():
     fake_html = "<html><body><h1>Hello</h1><p>This is a test page about widgets.</p></body></html>"
-    with patch("tasks.webfetch.urllib.request.urlopen",
+    with patch("tasks.webfetch.socket.getaddrinfo", return_value=_addrinfo_for("93.184.216.34")), \
+         patch("tasks.webfetch._opener.open",
                return_value=FakeResponse(fake_html)):
         client = MockClient(canned_response="This page discusses widgets briefly.")
         results = summarize_urls(["https://example.com/fake"], client)
@@ -47,7 +53,8 @@ def test_over_limit_rejected():
 
 
 def test_fetch_failure_is_recorded_not_hidden():
-    with patch("tasks.webfetch.urllib.request.urlopen",
+    with patch("tasks.webfetch.socket.getaddrinfo", return_value=_addrinfo_for("93.184.216.34")), \
+         patch("tasks.webfetch._opener.open",
                side_effect=urllib.error.URLError("connection refused")):
         results = summarize_urls(["https://example.com/down"], MockClient())
     assert "FETCH FAILED" in results["https://example.com/down"]
