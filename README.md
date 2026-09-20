@@ -1,32 +1,50 @@
-# AI Holding Company OS — Core MVP (Phase 1)
+# AI Holding Company OS
 
 ## What this is
-The foundation layer described in the project spec: Business registry,
-Agent registry, Task orchestrator with permission gating, the Banker
-(ARC ledger), the Human Approval Queue, and a full audit trail. It is
-**not** any of the six future businesses (trading, real estate, Roblox,
-apps, opportunity discovery, ops/maintenance) — those plug into this
-core later, as designed.
+An AI-native autonomous holding company, built around the core
+described in the project spec: a Business registry, Agent registry,
+Task orchestrator with permission gating, the Banker (ARC ledger — an
+internal virtual economy, never real money), the Human Approval Queue,
+and a full audit trail. Deployed 24/7 on Railway with real Postgres —
+see `DEPLOY.md`.
+
+Four of the project spec's six planned business verticals are built on
+that core: **Opportunity Discovery**, **Roblox Game Development**,
+**Automated Stock Trading** (paper trading only — see below), and **App
+Development Feasibility**. **Real Estate** and **Ops/Maintenance**
+remain unbuilt — see "Next real steps."
+
+Three of those four verticals (everything except trading) are also
+**monetized for real**: a public storefront takes real Stripe payments
+and emails a real, AI-generated report to the customer. This is the
+only place in the whole system real money changes hands — see
+"Storefront — real payments" below.
 
 ## What's real vs. simulated
-- REAL: the data model, the permission gating logic, the ARC accounting
-  math, the approval-queue gate, the audit log. Run `demo.py` and inspect
-  `holding_os.db` yourself — nothing is hardcoded output.
-- SIMULATION: agent "work" (`orchestrator.complete_task` is called with
-  a hand-written result string in the demo — no LLM call happens yet).
-  Real-world USD amounts are recorded as *authorized ceilings and
-  requests*, never moved.
-- NOT IMPLEMENTED: any real AI model call, any live tool/API integration,
-  any actual payment/trading/contract execution, any web dashboard,
-  multi-user auth, cloud deployment, scheduling/cron, or model-cost
-  routing. All of these are explicitly out of scope for this step.
+- **REAL:** the data model, permission gating, ARC accounting, the
+  approval-queue gate, the audit log, every LLM call (real Anthropic
+  API), the FastAPI backend + dashboard (deployed 24/7, real Postgres),
+  the scheduler/executor background threads, all four verticals'
+  research/assessment logic, and the storefront's real Stripe payments
+  + Resend emails for three of those verticals — all personally
+  verified live by the owner with real purchases.
+- **SIMULATION, deliberately** (per the project spec's safety
+  requirements): Automated Stock Trading is paper trading only — there
+  is no brokerage integration anywhere in this codebase, structurally,
+  not as a config flag someone could flip. ARC (the internal agent
+  economy) never represents real money, even where agents "earn" or
+  "spend" it.
+- **NOT YET BUILT:** two of the project spec's six planned verticals
+  (Real Estate, Ops/Maintenance) — see "Next real steps."
 
 ## Why SQLite + stdlib-only Python
 Built inside a sandboxed environment with no internet access, so no
 `pip install` was possible. The schema and module boundaries
 (`Database` class in `db.py`) are written so swapping SQLite for
 Postgres later is a driver change, not a rewrite — every other module
-talks to `Database`, never to `sqlite3` directly.
+talks to `Database`, never to `sqlite3` directly. Production now runs
+on real Postgres (Railway); SQLite remains the zero-setup default for
+local development and every offline test.
 
 ## Run it
 ```
@@ -37,9 +55,17 @@ task → approval-gated task → owner approval cycle, and prints a
 dashboard-style summary plus the audit trail.
 
 ## File map
-- `schema.sql` — the six core tables (businesses, agents, tasks,
-  arc_ledger, approvals, audit_log)
-- `db.py` — connection + audit-log helper
+This is the original core, from before any business vertical or the
+storefront existed — `schema.sql`/`schema_postgres.sql` now hold many
+more tables (`opportunities`, `roblox_trends`,
+`app_feasibility_assessments`, the `paper_*`/`trading_*` trading
+tables, `orders`, `real_transactions`, `scheduled_jobs`, ...) than just
+the six listed below. See each feature's own section above for its
+specific files; this list is the foundation everything else sits on.
+- `schema.sql` — the six original core tables (businesses, agents,
+  tasks, arc_ledger, approvals, audit_log)
+- `db.py` — connection + audit-log helper; also the `Database`/
+  `PostgresDatabase` abstraction every other module talks through
 - `registry.py` — BusinessRegistry, AgentRegistry (create/list/pause/retire)
 - `banker.py` — Banker: allocate / reward / charge / penalize ARC, with
   a hard floor against negative balances
@@ -47,7 +73,17 @@ dashboard-style summary plus the audit trail.
   permission_level >= 6 action can proceed
 - `orchestrator.py` — Task lifecycle + naive assignment + automatic
   routing to approval for consequential tasks
-- `demo.py` — proves it all works together
+- `api.py` — the real FastAPI app; every HTTP endpoint, the dashboard-
+  auth middleware, and the storefront's checkout/webhook routes live here
+- `scheduler.py` / `executor.py` / `fulfillment.py` — the three
+  background threads (recurring jobs, running research/trading tasks,
+  emailing finished storefront orders), all started in `api.py`'s lifespan
+- `dashboard_auth.py` / `rate_limiter.py` — HTTP Basic Auth for the
+  internal dashboard/API, and the in-memory rate limiter backing both
+  it and `/store/checkout`
+- `stripe_client.py` / `emailer.py` — real Stripe Checkout + webhook
+  verification, real transactional email via Resend
+- `demo.py` — proves the original core works together end to end
 
 ## Real LLM call — status
 `llm_client.py` + `tasks/summarize_urls.py` + `demo_real_llm.py` wire an
@@ -386,6 +422,36 @@ assessment and an honest confidence level. Make sure at least one agent
 in the business is `idle` (not `working` on something else) when you
 submit, or give it ~10s for the retry to kick in once one frees up.
 
+## Roblox Game Development — status (second business vertical)
+
+The second real business vertical, same pattern as Opportunity
+Discovery: `tasks/research_roblox_trend.py` takes a game genre/mechanic/
+concept and up to 3 optional reference URLs, and asks the model for a
+structured JSON assessment — player demand signals, competition level,
+build complexity, target audience, monetization fit, estimated dev
+time, similar successful games, risk factors, and a mandatory
+`confidence_level`. The model is explicitly instructed to never suggest
+fake engagement, bots, or any other tactic that violates Roblox's Terms
+of Service — asked to flag that plainly in `risk_factors` instead of
+working around it.
+
+- `test_research_roblox_trend_offline.py` — 7 passing checks covering
+  the same success/validation-failure shape as Opportunity Discovery's
+  tests (invalid JSON, missing fields, an invalid `confidence_level`,
+  the reference-URL cap, all hard failures rather than fabricated
+  results).
+- Schema: `roblox_trends` (both `schema.sql` and `schema_postgres.sql`).
+  `executor.py`'s `research_roblox_trend` handler follows the same
+  real-cost-charged/confidence-rewarded ARC accounting as every other
+  research task type.
+- Endpoints and a dashboard panel mirror Opportunity Discovery's
+  exactly: `POST /businesses/{id}/roblox-trends/research`,
+  `GET /businesses/{id}/roblox-trends`, result cards on `/dashboard`.
+- **Confirmed live by the owner** as one of the storefront's two
+  originally-launched products (see "Storefront — real payments"
+  below) — a real customer purchase, real Stripe payment, and a real
+  emailed report were personally verified working end to end.
+
 ## Automated Stock Trading — status (PAPER TRADING ONLY)
 
 Per the project spec's Trading Safety section: this is simulation only.
@@ -613,10 +679,128 @@ card should appear with a real, model-generated assessment and an
 honest confidence level. Make sure at least one agent in the business is
 idle (not `working` on something else) when you submit.
 
+## Dashboard — visual redesign
+
+The dashboard went from a plain functional page to a "futuristic
+holographic command center" look (owner request), in several rounds,
+each verified live via a real local Postgres + `uvicorn` + a headless
+browser (screenshots + DOM/animation assertions), never just by reading
+the code:
+
+- A holographic gradient theme, radial gauge/status-bar/sparkline
+  visualizations, and a "System Core" hero panel.
+- A hand-rolled Canvas 2D 3D wireframe globe centerpiece
+  (`static/dashboard-globe.js`) and a whole-page ambient particle-network
+  background (`static/dashboard-network-bg.js`) — deliberately **not**
+  WebGL/Three.js/any CDN library, consistent with this project's
+  zero-external-JS-dependency convention. A hover-tilt effect on panels
+  (`static/dashboard-tilt.js`).
+- The System Core panel rebuilt as a hub-and-spoke radial layout:
+  system-wide stats arranged around the globe, connected by animated
+  SVG lines (`renderOrbitalRing()` in `dashboard-render.js`).
+- **Real bugs found and fixed via live testing, not inspection:** the
+  globe appeared frozen under `prefers-reduced-motion: reduce` (it was
+  drawing one static frame and never starting its rotation loop — fixed
+  to just rotate slower, not stop); the globe was visibly off-center
+  (a flex layout centered the *group*, not the globe itself — fixed
+  with a proper 3-column CSS grid); panel hover-lift effects had
+  silently stopped working project-wide since the original holographic
+  theme shipped (`animation-fill-mode: both` permanently pins
+  `transform` after the animation ends, overriding `:hover` — fixed by
+  changing to `backwards` everywhere); and the entire dashboard
+  flickered on every 5-second auto-refresh because `innerHTML` was
+  reassigned unconditionally even when the data hadn't changed,
+  destroying and recreating every DOM node and replaying every entrance
+  animation (fixed with a `setHtmlIfChanged()` helper that skips the
+  write when the rendered HTML is byte-identical).
+- Remove buttons (with new `DELETE` endpoints, audit-logged) on the
+  Opportunity/Roblox/App-Feasibility research cards, so old research
+  doesn't accumulate forever with no way to clear it.
+
+## Storefront — real payments (three of the four verticals)
+
+The system's first path to real-world revenue: `static/store.html` (a
+public, unauthenticated page, deliberately separate in look from the
+owner's internal `/dashboard`) lets a customer pay **$19** via a real
+Stripe Checkout Session for one of three products — a research report
+from Opportunity Discovery, Roblox Game Development, or App Development
+Feasibility — and get it emailed to them, usually within a minute.
+
+- An order is only ever marked `paid`, and only a real
+  `real_transactions` row is only ever written, in direct response to a
+  Stripe webhook (`/store/webhook`) that `stripe_client.py` has
+  cryptographically signature-verified — nothing here ever trusts a
+  client redirect alone. Idempotent via a unique constraint on the
+  Stripe event id, so a Stripe webhook retry can never double-fulfill
+  an order.
+- `fulfillment.py` — a background thread (same pattern as the scheduler/
+  executor) polls for paid orders whose linked task has finished, and
+  either emails the customer their real report (task completed — the
+  email is built from the actual saved assessment row, never
+  re-derived, and every customer-submitted/model-generated field is
+  HTML-escaped before going into the email) or marks the order `failed`
+  (task failed). A completed task whose expected result row never
+  actually shows up (a data bug, not a normal outcome) is retried for a
+  bounded number of passes (`FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`,
+  default 5) and then also marked `failed`, rather than being retried
+  and re-logged identically forever with no terminal state.
+- **Refunds are never automated, on purpose** — per the project spec's
+  bias toward human judgment on consequential/irreversible actions, a
+  `failed` order (already charged in Stripe) needs a manual refund via
+  the Stripe dashboard. Since that step can't be automated, an optional
+  `OWNER_EMAIL` env var gets a real-time alert email the moment an
+  order needs one, and the dashboard's new **Store Orders** panel
+  (`GET /businesses/{id}/dashboard`'s `orders` field) shows the
+  selected business's most recent orders and their status at a glance,
+  so this is never something the owner has to go find in Stripe or the
+  database to notice.
+- All 6 required env vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `STORE_BUSINESS_ID`, `PUBLIC_BASE_URL`, `RESEND_API_KEY`,
+  `RESEND_FROM_EMAIL`) plus the optional ones (`OWNER_EMAIL`,
+  per-product price overrides) are documented in `DEPLOY.md`'s
+  Storefront section — they previously weren't documented anywhere,
+  meaning the store was very likely live-but-silently-broken until that
+  gap was found and closed.
+- **Confirmed live by the owner** with real purchases, real Stripe
+  payments, and real emailed reports for all three products (Opportunity
+  Discovery and Roblox Game Development originally; App Development
+  Feasibility added later and verified the same way).
+- The storefront also got basic customer-facing/traffic infrastructure:
+  the bare deployed URL (`GET /`) now serves the store directly instead
+  of 404ing, `<meta description>`/Open Graph/Twitter Card tags so a
+  shared link actually shows a title and description, a favicon
+  (`static/favicon.svg`), and a `robots.txt` pointing crawlers at the
+  store and away from the internal dashboard/API.
+
+## Security hardening
+
+Two gaps found and closed after real money started flowing through the
+storefront:
+
+- **`/store/checkout` rate limiting** — the one public, unauthenticated
+  endpoint that does real work on every call (creates a real Stripe
+  Checkout Session, writes an order row) had no protection against
+  being spammed. Now capped per client IP (`CHECKOUT_RATE_LIMIT_MAX` /
+  `CHECKOUT_RATE_LIMIT_WINDOW_SECONDS`, default 10 per 60s).
+- **Dashboard login brute-force protection** — the entire internal
+  dashboard/API (every business's data, the ARC ledger, agent controls)
+  sits behind one static HTTP Basic Auth password
+  (`DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD`, previously undocumented
+  anywhere — now covered in `DEPLOY.md`) with no other protection.
+  Failed login attempts are now rate-limited per client IP
+  (`DASHBOARD_LOGIN_RATE_LIMIT_MAX` /
+  `DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS`, default 10 per 5
+  minutes) — live-verified that legitimate, repeated *correct*-password
+  traffic (the dashboard's own polling) is never affected, only
+  repeated *wrong* passwords trip it.
+- Both built on a small stdlib-only in-memory sliding-window
+  `rate_limiter.py` — no new dependency, since this runs as a single
+  `uvicorn` process with no distributed state to coordinate.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
-2. ~~Stand up Postgres + a thin REST API~~ — done on SQLite, verified
-   live; real Postgres itself still untested (no instance set up yet).
+2. ~~Stand up Postgres + a thin REST API~~ — done, verified live against
+   real Postgres.
 3. ~~Build the dashboard~~ — verified live, including finding and fixing
    several real bugs through actual use.
 4. ~~Add a scheduler~~ — verified live, including firing over real wall-clock time.
@@ -625,26 +809,64 @@ idle (not `working` on something else) when you submit.
    and fixed via actual use.
 6. ~~24/7 hosting~~ — deployed to Railway with a managed Postgres add-on;
    confirmed live (`/health`, `/dashboard`, real Postgres persistence).
-7. ~~Automated Stock Trading vertical (paper trading only)~~ — built and
-   verified against a real local Postgres + real HTTP in this session;
-   still needs a real Anthropic + Alpha Vantage key to see a real
-   decision/trade end to end (see above).
-8. ~~App Development Feasibility vertical~~ — built, verified against a
+7. ~~Roblox Game Development vertical~~ — built, and confirmed live by
+   the owner as one of the storefront's original two products.
+8. ~~Automated Stock Trading vertical (paper trading only)~~ — built and
+   verified against a real local Postgres + real HTTP; still needs a
+   real Anthropic + Alpha Vantage key to see a real decision/trade end
+   to end (see above).
+9. ~~App Development Feasibility vertical~~ — built, verified against a
    real local Postgres + real HTTP, and confirmed end to end in
    production with a real Anthropic key producing a real assessment
    (see above).
+10. ~~Dashboard visual redesign~~ (holographic theme, 3D globe, radial
+    layout) — done, verified live via headless browser at every step
+    (see above).
+11. ~~Storefront — real Stripe payments for three of the four
+    verticals~~ — done, confirmed live by the owner with real purchases
+    for all three products (see above).
+12. ~~Store Orders dashboard panel + owner failed-order email alerts +
+    bounded fulfillment retries~~ — done, live-verified (see above).
+13. ~~Security hardening — checkout + dashboard-login rate limiting~~ —
+    done, live-verified (see above).
+14. ~~Storefront traffic/discoverability basics~~ (root URL, meta tags,
+    favicon, robots.txt) — done, live-verified (see above).
+15. **Real Estate vertical** — named in the project spec, not yet
+    started. Needs a dedicated scoping conversation first: unlike the
+    other four verticals, it carries jurisdiction/legal-exposure
+    questions (property law varies by state/country, licensing
+    requirements for anything resembling brokerage activity) that
+    shouldn't be resolved unilaterally by an agent.
+16. **Ops/Maintenance vertical** — named in the project spec, not yet
+    started, and not yet even scoped: what this vertical is actually
+    meant to do (system self-maintenance automation? a literal
+    ops/maintenance service business? something else?) hasn't been
+    defined. Needs the owner to clarify intent before any design work
+    starts.
 
 ## ACTION REQUIRED FROM OWNER
-- **Now:** read `DEPLOY.md` and, when ready, push this repo to GitHub
-  and deploy it on Railway (or Render/Fly — see the alternatives
-  section). Report back exactly what happens, including any error —
-  first deployments to a new platform almost always surface something.
-- **Important:** SQLite will NOT survive a redeploy on any of these
-  platforms (ephemeral filesystem) — set up the Postgres add-on as
-  part of this same step, not as an afterthought.
+- **Already done:** deployed on Railway with a managed Postgres add-on,
+  confirmed live. `DEPLOY.md` still has the full steps/alternatives
+  (Render/Fly) if you ever need to redeploy elsewhere or stand up a
+  second environment.
 - **For the Automated Stock Trading vertical:** set `ALPHAVANTAGE_API_KEY`
   as a Railway variable (free key at alphavantage.co) alongside the
   existing `ANTHROPIC_API_KEY`. Without it, `trading_cycle` tasks fail
   loudly with a clear error instead of trading on fabricated prices —
   this is intentional, not a bug, but it means the feature does nothing
   visible until the key is set.
+- **For dashboard access:** set `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD`
+  as Railway variables — without both set, every internal route
+  (including `/dashboard` itself) fails closed with a 503, on purpose
+  (never silently open). Pick a real random password, not something
+  guessable — see `DEPLOY.md` and "Security hardening" above.
+- **For the storefront (real payments):** set all 6 required env vars
+  (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STORE_BUSINESS_ID`,
+  `PUBLIC_BASE_URL`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`) — see
+  `DEPLOY.md`'s Storefront section for the full checklist. Already done
+  and confirmed working if you've made a real purchase; also consider
+  setting the optional `OWNER_EMAIL` so a failed order (needs a manual
+  Stripe refund) reaches you by email, not just the dashboard.
+- **Decide on Real Estate and Ops/Maintenance** (see "Next real steps"
+  #15-16 above) whenever you're ready to scope either one — neither
+  should be started without your input first.
