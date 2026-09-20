@@ -131,8 +131,11 @@ that's only visible by opening the dashboard's Store Orders panel; with
 it set, you also get an email the moment it happens. This same alert
 also fires if a completed task's report data never shows up (a bug,
 not a normal outcome) after `FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`
-fulfillment passes (default 5) — that order is then also given up on
-and marked `failed` rather than being retried forever.
+fulfillment passes (default 5), or if the report email itself never
+sends (e.g. Resend outage, or `RESEND_API_KEY`/`RESEND_FROM_EMAIL` never
+configured at all) after `FULFILLMENT_EMAIL_FAILURE_RETRY_LIMIT` passes
+(default 20) — either way, that order is then also given up on and
+marked `failed` rather than being retried forever.
 
 Optional: `CHECKOUT_RATE_LIMIT_MAX` / `CHECKOUT_RATE_LIMIT_WINDOW_SECONDS`
 (default 10 requests per 60 seconds, per client IP) — `/store/checkout`

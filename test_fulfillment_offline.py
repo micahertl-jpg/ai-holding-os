@@ -477,6 +477,64 @@ def test_build_failure_exhausts_retries_and_marks_order_failed():
     os.remove(TEST_DB_PATH)
 
 
+def test_email_failure_exhausts_retries_and_marks_order_failed():
+    """Regression test for a real bug found live via an ops_maintenance_review
+    report flagging an implausibly high error count: a permanently-failing
+    send_email() (e.g. RESEND_API_KEY never configured, which emailer.py
+    raises EmailError for immediately and deterministically every call)
+    used to leave the order 'paid' forever, re-logging order_email_failed
+    on every single fulfillment pass with no terminal state and no owner
+    alert, ever."""
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research", department="research",
+                                permission_level_required=2, task_type="research_opportunity",
+                                task_input={"topic": "x"})
+    orch.complete_task(task_id, result="ok")
+    opp_id = new_id("opp")
+    db.execute(
+        "INSERT INTO opportunities (id, business_id, task_id, topic, confidence_level, "
+        "summary, reference_urls_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (opp_id, biz_id, task_id, "x", "low", "Meh.", json.dumps([])),
+    )
+    order_id = _make_order(db, biz_id, task_id=task_id)
+
+    # The customer's report keeps failing to send (the permanent
+    # condition being tested); a separately-addressed owner alert must
+    # still go through once the retry limit is finally hit.
+    def _send_email_side_effect(to_email, subject, body, *args, **kwargs):
+        if to_email == "owner@example.com":
+            return {"id": "mock-owner-alert"}
+        raise EmailError("No RESEND_API_KEY found.")
+
+    with patch.object(fulfillment, "EMAIL_FAILURE_RETRY_LIMIT", 3), \
+         patch.object(fulfillment, "OWNER_EMAIL", "owner@example.com"), \
+         patch("fulfillment.send_email", side_effect=_send_email_side_effect) as mock_send:
+        for _ in range(2):
+            outcomes = fulfillment.run_once(db)
+            assert outcomes[0][1].startswith("email_failed:"), outcomes
+            order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+            assert order["status"] == "paid"
+        assert mock_send.call_count == 2, "no owner alert until the retry limit is actually hit"
+
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes[0][0] == order_id
+    assert outcomes[0][1].startswith("failed: email_failed_permanently:"), outcomes
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "failed"
+    # 3 failed customer-report attempts (one per pass) + 1 owner alert once
+    # the limit is finally hit -- unlike the build-failure path, send_email
+    # genuinely gets called (and fails) on every retry here, not skipped.
+    assert mock_send.call_count == 4
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "owner@example.com"
+    assert "3 attempts" in call_args[2]
+    print("PASS: an order whose report email never sends is eventually marked failed "
+          "and the owner alerted, not retried forever with no terminal state")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_build_failure_retry_count_is_scoped_to_its_own_order():
     """The retry-limit query counts audit_log rows by target_id -- a
     second order that starts failing must get its own fresh count, not
@@ -525,6 +583,7 @@ if __name__ == "__main__":
     test_unpaid_orders_are_never_touched()
     test_missing_assessment_row_fails_loudly_not_silently()
     test_build_failure_exhausts_retries_and_marks_order_failed()
+    test_email_failure_exhausts_retries_and_marks_order_failed()
     test_build_failure_retry_count_is_scoped_to_its_own_order()
     test_app_feasibility_order_gets_emailed_and_marked_fulfilled()
     test_app_feasibility_missing_assessment_row_fails_loudly_not_silently()
