@@ -747,11 +747,14 @@ Feasibility — and get it emailed to them, usually within a minute.
   email is built from the actual saved assessment row, never
   re-derived, and every customer-submitted/model-generated field is
   HTML-escaped before going into the email) or marks the order `failed`
-  (task failed). A completed task whose expected result row never
-  actually shows up (a data bug, not a normal outcome) is retried for a
-  bounded number of passes (`FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`,
-  default 5) and then also marked `failed`, rather than being retried
-  and re-logged identically forever with no terminal state.
+  (task failed). Two failure modes are retried for a bounded number of
+  passes and then also marked `failed`, rather than being retried and
+  re-logged identically forever with no terminal state: a completed
+  task whose expected result row never actually shows up (a data bug,
+  not a normal outcome) — `FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT`,
+  default 5 — and a report email that never sends (Resend outage, or
+  `RESEND_API_KEY`/`RESEND_FROM_EMAIL` never configured) —
+  `FULFILLMENT_EMAIL_FAILURE_RETRY_LIMIT`, default 20.
 - **Refunds are never automated, on purpose** — per the project spec's
   bias toward human judgment on consequential/irreversible actions, a
   `failed` order (already charged in Stripe) needs a manual refund via

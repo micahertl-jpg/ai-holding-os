@@ -6,11 +6,13 @@ executor's, in api.py's lifespan) polls for orders with status='paid'
 whose linked task has reached a terminal state, and either emails the
 customer their report (task completed) or marks the order failed
 (task failed) — never silently retrying forever, never emailing a
-fabricated result. A completed task whose expected result row never
-shows up (a data bug elsewhere, not a normal outcome) is retried for
-up to BUILD_FAILURE_RETRY_LIMIT passes and then also given up on and
-marked 'failed', rather than being logged identically forever with no
-terminal state.
+fabricated result. Two failure modes are retried with a hard cap and
+then given up on (marked 'failed' + the owner alerted), rather than
+being logged identically forever with no terminal state: a completed
+task whose expected result row never shows up (a data bug elsewhere,
+not a normal outcome) gets up to BUILD_FAILURE_RETRY_LIMIT passes; a
+report that fails to send (e.g. Resend outage, or RESEND_API_KEY never
+configured at all) gets up to EMAIL_FAILURE_RETRY_LIMIT passes.
 
 Split the same way as scheduler.py/executor.py: `run_once()` is a
 pure-enough, directly-testable pass; `run_forever()` is the thin
@@ -53,6 +55,21 @@ OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
 # this many passes the order is given up on and marked 'failed' like any
 # other unfulfillable order.
 BUILD_FAILURE_RETRY_LIMIT = int(os.environ.get("FULFILLMENT_BUILD_FAILURE_RETRY_LIMIT", "5"))
+
+# Same reasoning as BUILD_FAILURE_RETRY_LIMIT above, for the OTHER way an
+# order used to retry identically forever: a send_email() failure that
+# isn't actually transient (most commonly RESEND_API_KEY/RESEND_FROM_EMAIL
+# never configured on the deployment, which emailer.py raises EmailError
+# for immediately and deterministically, every single call). Higher than
+# the build-failure limit because a real transient cause (a Resend
+# outage, a network blip) deserves more patience than a permanently
+# missing data row does -- but "no retry limit at all" is never correct
+# either way: without one, that single order re-logs order_email_failed
+# on every fulfillment pass (every FULFILLMENT_POLL_INTERVAL_SECONDS)
+# with no terminal state and no owner alert, forever -- found live via
+# an ops_maintenance_review report flagging an implausibly high error
+# count on a system with very little real order activity.
+EMAIL_FAILURE_RETRY_LIMIT = int(os.environ.get("FULFILLMENT_EMAIL_FAILURE_RETRY_LIMIT", "20"))
 
 
 def _build_report_email(order, task, db):
@@ -263,12 +280,26 @@ def run_once(db, client=None):
         try:
             send_email(order["customer_email"], subject, html_body)
         except EmailError as e:
-            # Leave status='paid' so the next pass retries — a failed
-            # SEND (network blip, Resend outage) shouldn't permanently
-            # strand a customer who already paid.
             db.audit("fulfillment", "order_email_failed", "order", order["id"],
                       {"error": str(e)})
-            outcomes.append((order["id"], f"email_failed: {e}"))
+            prior_failures = db.query_one(
+                "SELECT COUNT(*) as c FROM audit_log WHERE action='order_email_failed' "
+                "AND target_id=?", (order["id"],),
+            )["c"]
+            if prior_failures >= EMAIL_FAILURE_RETRY_LIMIT:
+                db.execute("UPDATE orders SET status='failed' WHERE id=?", (order["id"],))
+                db.audit("fulfillment", "order_fulfillment_failed", "order", order["id"],
+                          {"reason": f"report email could not be sent after "
+                                     f"{prior_failures} attempts: {e}"})
+                _notify_owner_of_failed_order(
+                    order, f"its report email could not be sent after {prior_failures} "
+                           f"attempts ({e})", db)
+                outcomes.append((order["id"], f"failed: email_failed_permanently: {e}"))
+            else:
+                # Leave status='paid' so the next pass retries — a failed
+                # SEND (network blip, Resend outage) shouldn't permanently
+                # strand a customer who already paid on the first try.
+                outcomes.append((order["id"], f"email_failed: {e}"))
             continue
 
         db.execute(
