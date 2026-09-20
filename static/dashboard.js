@@ -22,6 +22,25 @@
     setHtmlIfChanged("orders-chart", R.renderOrdersChart(R.computeOrdersRevenueByDay(lastOrders, ordersChartRangeDays)));
   }
 
+  // Shared tactile click feedback for every button on the page (see the
+  // single delegated listener wired near the bottom of this file).
+  const reduceMotion =
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function addRipple(el, evt) {
+    if (reduceMotion) return;
+    const rect = el.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 1.5;
+    const span = document.createElement("span");
+    span.className = "ripple";
+    span.style.width = span.style.height = size + "px";
+    const cx = evt && typeof evt.clientX === "number" ? evt.clientX : rect.left + rect.width / 2;
+    const cy = evt && typeof evt.clientY === "number" ? evt.clientY : rect.top + rect.height / 2;
+    span.style.left = (cx - rect.left - size / 2) + "px";
+    span.style.top = (cy - rect.top - size / 2) + "px";
+    el.appendChild(span);
+    span.addEventListener("animationend", () => span.remove());
+  }
+
   async function api(path, opts) {
     const res = await fetch(path, Object.assign({
       headers: { "Content-Type": "application/json" },
@@ -543,5 +562,13 @@
         chartTooltip.classList.add("hidden");
       }
     }, true);
+
+    // Click-ripple on every button on the page, uniformly -- one
+    // delegated listener rather than wiring it into each of the many
+    // individual button handlers above and elsewhere in this file.
+    document.body.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button");
+      if (btn) addRipple(btn, ev);
+    });
   });
 })();
