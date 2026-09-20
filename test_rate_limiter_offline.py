@@ -48,6 +48,53 @@ def test_different_keys_are_tracked_independently():
     print("PASS: rate limits are tracked per key, not globally")
 
 
+def test_blocked_is_read_only_and_matches_allow():
+    """blocked() must never itself count as a hit -- a caller that
+    checks blocked() many times before ever calling allow() (e.g. a
+    successful, non-counted request) must see the same answer every
+    time, not get rate-limited by its own polling."""
+    limiter = RateLimiter(max_requests=2, window_seconds=60)
+    assert limiter.blocked("1.2.3.4", now=0) is False
+    assert limiter.blocked("1.2.3.4", now=0) is False
+    assert limiter.blocked("1.2.3.4", now=0) is False, "blocked() must not record a hit itself"
+
+    assert limiter.allow("1.2.3.4", now=1) is True
+    assert limiter.allow("1.2.3.4", now=2) is True
+    assert limiter.blocked("1.2.3.4", now=3) is True
+    assert limiter.allow("1.2.3.4", now=3) is False
+    print("PASS: blocked() reads the current state without recording a hit itself")
+
+
+def test_blocked_lets_only_failures_count_toward_the_limit():
+    """Models the real dashboard-login use: a caller should check
+    blocked() before doing work, then call allow() explicitly only on
+    the outcome that should count (a failed login) -- so a client that
+    keeps succeeding never trips the limiter no matter how many
+    requests it makes, only one that keeps failing does."""
+    limiter = RateLimiter(max_requests=3, window_seconds=60)
+
+    def attempt(now, succeeds):
+        if limiter.blocked("1.2.3.4", now=now):
+            return "blocked"
+        if succeeds:
+            return "ok"  # a real caller would never call allow() here
+        limiter.allow("1.2.3.4", now=now)
+        return "failed"
+
+    # Many successful requests in a row never count against the limit.
+    for t in range(20):
+        assert attempt(t, succeeds=True) == "ok"
+
+    assert attempt(20, succeeds=False) == "failed"
+    assert attempt(21, succeeds=False) == "failed"
+    assert attempt(22, succeeds=False) == "failed"
+    assert attempt(23, succeeds=False) == "blocked", "the 4th failure within the window should be blocked"
+    assert attempt(24, succeeds=True) == "blocked", \
+        "even a correct login must be blocked once the failure limit is hit"
+    print("PASS: only the tracked outcome (failures) counts toward the limit, "
+          "successful requests never do")
+
+
 def test_reset_clears_all_state():
     limiter = RateLimiter(max_requests=1, window_seconds=60)
     assert limiter.allow("1.2.3.4", now=0) is True
@@ -99,6 +146,8 @@ if __name__ == "__main__":
     test_blocked_requests_are_not_recorded_as_new_hits()
     test_old_hits_age_out_of_the_window()
     test_different_keys_are_tracked_independently()
+    test_blocked_is_read_only_and_matches_allow()
+    test_blocked_lets_only_failures_count_toward_the_limit()
     test_reset_clears_all_state()
     test_thread_safety_never_admits_more_than_the_limit()
     test_rejects_invalid_construction()
