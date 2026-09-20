@@ -256,6 +256,39 @@ async def require_dashboard_auth(request: Request, call_next):
     return await call_next(request)
 
 
+@app.get("/")
+def storefront_landing():
+    """The public storefront's real entry point. This is the only
+    customer-facing surface in the whole system, so it gets the clean
+    root URL -- "https://your-app.up.railway.app/" -- rather than
+    making anyone sharing/visiting the link append /static/store.html."""
+    return FileResponse(str(STATIC_DIR / "store.html"))
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    """Points crawlers at the one page actually worth indexing and away
+    from the internal dashboard/API (which 401s for an anonymous crawler
+    anyway -- this is a courtesy/hint, not the security boundary)."""
+    return Response(
+        content=(
+            "User-agent: *\n"
+            "Allow: /\n"
+            "Allow: /static/store.html\n"
+            "Allow: /static/store-legal.html\n"
+            "Disallow: /dashboard\n"
+            "Disallow: /businesses\n"
+            "Disallow: /agents\n"
+            "Disallow: /tasks\n"
+            "Disallow: /approvals\n"
+            "Disallow: /banker\n"
+            "Disallow: /scheduled-jobs\n"
+            "Disallow: /static/store-success.html\n"
+        ),
+        media_type="text/plain",
+    )
+
+
 @app.get("/dashboard")
 def dashboard_ui():
     """The owner-facing single-page dashboard. Plain HTML/CSS/JS, no

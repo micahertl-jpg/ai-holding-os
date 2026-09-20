@@ -21,17 +21,18 @@ def _basic_header(username, password):
 
 
 def test_public_paths_are_recognized():
-    for path in ("/health", "/store", "/store/products", "/store/checkout",
-                 "/store/webhook", "/store/orders/ord_123", "/store/terms",
-                 "/static/store.html", "/static/store.css", "/static/store.js",
-                 "/static/store-success.html", "/static/store-success.js",
-                 "/static/store-legal.html"):
+    for path in ("/", "/health", "/robots.txt", "/store", "/store/products",
+                 "/store/checkout", "/store/webhook", "/store/orders/ord_123",
+                 "/store/terms", "/static/store.html", "/static/store.css",
+                 "/static/store.js", "/static/store-success.html",
+                 "/static/store-success.js", "/static/store-legal.html",
+                 "/static/favicon.svg"):
         assert is_public_path(path), f"{path} should be public"
-    print("PASS: the public storefront/health paths are all recognized as public")
+    print("PASS: the public storefront/health/root paths are all recognized as public")
 
 
 def test_internal_paths_are_not_public():
-    for path in ("/", "/dashboard", "/businesses", "/agents", "/tasks",
+    for path in ("/dashboard", "/businesses", "/agents", "/tasks",
                  "/approvals", "/banker/allocate", "/scheduled-jobs",
                  "/static/dashboard.html", "/static/dashboard.js",
                  "/static/dashboard-render.js", "/businesses/biz_1/banker/allocate"):
@@ -45,6 +46,22 @@ def test_path_prefix_matching_is_not_fooled_by_lookalikes():
     assert not is_public_path("/healthy-check")
     assert not is_public_path("/storefronts")
     print("PASS: prefix matching respects path boundaries, no lookalike bypass")
+
+
+def test_root_prefix_matches_only_the_exact_root_path():
+    """Regression-style test: "/" was added to PUBLIC_PATH_PREFIXES for
+    the storefront's landing page. Since every real path starts with
+    "/", a naive implementation could accidentally make everything
+    public -- this proves is_public_path's `path == prefix or
+    path.startswith(prefix + "/")` check requires "//" for the prefix
+    match, which no real single-leading-slash path has, so "/" only
+    ever matches the exact root."""
+    assert is_public_path("/")
+    for path in ("/dashboard", "/businesses", "/anything-else",
+                 "/static/dashboard.html"):
+        assert not is_public_path(path), \
+            f"{path} must not become public just because '/' is a public prefix"
+    print("PASS: the '/' public prefix matches only the exact root path, not everything")
 
 
 def test_credentials_configured_reflects_env():
@@ -122,6 +139,7 @@ if __name__ == "__main__":
     test_public_paths_are_recognized()
     test_internal_paths_are_not_public()
     test_path_prefix_matching_is_not_fooled_by_lookalikes()
+    test_root_prefix_matches_only_the_exact_root_path()
     test_credentials_configured_reflects_env()
     test_parse_basic_auth_header_valid()
     test_parse_basic_auth_header_rejects_missing_or_malformed()

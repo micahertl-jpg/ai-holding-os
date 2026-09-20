@@ -61,7 +61,9 @@ as a separate later task.
    fails, try forcing Docker build in Railway's settings.
 8. Once deployed, Railway gives you a public URL
    (`something.up.railway.app`). Open `https://that-url/dashboard` and
-   log in with the username/password from step 6.
+   log in with the username/password from step 6. The bare URL
+   (`https://that-url/`) is the public storefront's landing page —
+   that's the link to actually share with customers.
 
 ## If you'd rather use Render or Fly.io instead
 The Dockerfile is portable — the app itself doesn't change.
