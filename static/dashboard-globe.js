@@ -1,167 +1,149 @@
 /*
- * dashboard-globe.js — a real rotating 3D wireframe globe for the
- * System Core hero panel, hand-rolled on a single <canvas> with plain
- * trigonometry (Fibonacci-sphere point distribution, nearest-neighbor
- * mesh edges, a Y/X rotation matrix, and a simple orthographic
- * projection with depth-based opacity/size). No WebGL, no Three.js, no
- * external assets — consistent with this project's zero-dependency
- * convention (dashboard-render.js's tests run under plain Node with no
- * npm packages at all).
+ * dashboard-globe.js — the System Core hero's centerpiece, now the
+ * same real Three.js "AI core" object designed in the Command Core
+ * concept (wireframe icosahedron, an inner glow, two counter-rotating
+ * rings, an orbiting particle shell, and a flattened "projector base"
+ * ring underneath so it reads as a projection rather than a free-
+ * floating object) rather than the previous hand-rolled Canvas 2D
+ * globe.
  *
- * Browser-only, like dashboard.js: guarded so requiring this file
- * under plain Node (as the test suite does for dashboard-render.js) is
- * a harmless no-op rather than a ReferenceError on `document`.
+ * This is a deliberate, explicit exception to this project's usual
+ * zero-external-dependency rule (confirmed with the owner) — Three.js
+ * loads from cdnjs via a plain <script> tag in dashboard.html, before
+ * this file. Everything else in this codebase stays dependency-free;
+ * this one visual centerpiece does not.
+ *
+ * Browser-only, like the other dashboard-*.js files — guarded so
+ * requiring this file under plain Node (as the test suite does for
+ * dashboard-render.js) is a harmless no-op, and also guarded against
+ * THREE failing to load (a network hiccup fetching the CDN script)
+ * rather than throwing an uncaught ReferenceError into the page.
  */
 (function () {
   if (typeof document === "undefined") return;
 
-  function fibonacciSpherePoints(n) {
-    const points = [];
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < n; i++) {
-      const y = 1 - (i / (n - 1)) * 2;
-      const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = goldenAngle * i;
-      points.push([Math.cos(theta) * radiusAtY, y, Math.sin(theta) * radiusAtY]);
-    }
-    return points;
-  }
+  function initCore(canvas) {
+    if (typeof THREE === "undefined") return;
 
-  // Connects each point to its `k` nearest neighbors (by straight-line
-  // 3D distance) to build the triangulated mesh look, de-duplicating
-  // shared edges. O(n^2) but n is small (a couple hundred points at
-  // most) and this only ever runs once at setup.
-  function buildNearestNeighborEdges(points, k) {
-    const n = points.length;
-    const seen = new Set();
-    const edges = [];
-    for (let i = 0; i < n; i++) {
-      const dists = [];
-      for (let j = 0; j < n; j++) {
-        if (i === j) continue;
-        const dx = points[i][0] - points[j][0];
-        const dy = points[i][1] - points[j][1];
-        const dz = points[i][2] - points[j][2];
-        dists.push([dx * dx + dy * dy + dz * dz, j]);
-      }
-      dists.sort((a, b) => a[0] - b[0]);
-      for (let m = 0; m < k && m < dists.length; m++) {
-        const j = dists[m][1];
-        const key = i < j ? i + "," + j : j + "," + i;
-        if (!seen.has(key)) {
-          seen.add(key);
-          edges.push([i, j]);
-        }
-      }
-    }
-    return edges;
-  }
-
-  function lerp(t, a, b) {
-    return a + (b - a) * t;
-  }
-
-  function initGlobe(canvas) {
-    const ctx = canvas.getContext("2d");
-    const reduceMotion =
+    var reduceMotion =
       window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // Slow way down rather than fully freeze under prefers-reduced-motion:
-    // a gentle constant rotation isn't the kind of motion that
-    // accessibility guidance is aimed at (no parallax, no flashing, no
-    // sudden movement), and a fully static globe reads as broken rather
-    // than intentional.
-    const rotationSpeed = reduceMotion ? 0.0006 : 0.0028;
 
-    const POINT_COUNT = 190;
-    const NEIGHBORS_PER_POINT = 3;
-    const points = fibonacciSpherePoints(POINT_COUNT);
-    const edges = buildNearestNeighborEdges(points, NEIGHBORS_PER_POINT);
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(0, 0, 6);
 
-    const TILT_X = 0.4; // fixed slight downward look, like the reference photo
-    let angleY = 0.6;
-    let size = 0;
-    let dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-    function resize() {
-      const cssSize = canvas.clientWidth || canvas.parentElement.clientWidth || 260;
-      size = cssSize;
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = size * dpr;
-      canvas.height = size * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    function size() {
+      var wrap = canvas.parentElement;
+      var s = Math.max(1, Math.round((canvas.clientWidth || (wrap && wrap.clientWidth) || 220)));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(s, s, false);
+      camera.aspect = 1;
+      camera.updateProjectionMatrix();
     }
 
-    function project(p) {
-      const cosY = Math.cos(angleY);
-      const sinY = Math.sin(angleY);
-      const x1 = p[0] * cosY - p[2] * sinY;
-      const z1 = p[0] * sinY + p[2] * cosY;
-      const y1 = p[1];
+    var core = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.15, 1),
+      new THREE.MeshBasicMaterial({ color: 0x4fd6ff, wireframe: true, transparent: true, opacity: 0.9 })
+    );
+    scene.add(core);
 
-      const cosX = Math.cos(TILT_X);
-      const sinX = Math.sin(TILT_X);
-      const y2 = y1 * cosX - z1 * sinX;
-      const z2 = y1 * sinX + z1 * cosX;
+    var innerGlow = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.55, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0xbdf2ff, transparent: true, opacity: 0.2,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    scene.add(innerGlow);
 
-      const scale = size * 0.42;
-      const cx = size / 2;
-      const cy = size / 2;
-      return { x: cx + x1 * scale, y: cy + y2 * scale, z: z2 };
+    var ring = new THREE.Mesh(
+      new THREE.TorusGeometry(1.85, 0.012, 8, 120),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb15e, transparent: true, opacity: 0.6,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    ring.rotation.x = Math.PI / 2.4;
+    scene.add(ring);
+
+    var ring2 = new THREE.Mesh(
+      new THREE.TorusGeometry(1.85, 0.012, 8, 120),
+      new THREE.MeshBasicMaterial({
+        color: 0x4fd6ff, transparent: true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    ring2.rotation.x = -Math.PI / 2.6;
+    ring2.rotation.z = Math.PI / 5;
+    scene.add(ring2);
+
+    // Projector base — a flattened glow disc under the core, so it
+    // reads as a holographic projection rather than a floating object.
+    var baseRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.2, 1.5, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x4fd6ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    baseRing.rotation.x = -Math.PI / 2.05;
+    baseRing.position.y = -1.3;
+    scene.add(baseRing);
+
+    var particleCount = 170;
+    var positions = new Float32Array(particleCount * 3);
+    for (var i = 0; i < particleCount; i++) {
+      var r = 2.25 + Math.random() * 0.45;
+      var theta = Math.random() * Math.PI * 2;
+      var phi = Math.acos((Math.random() * 2) - 1);
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    var points = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({
+        color: 0x9fe8ff, size: 0.035, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    scene.add(points);
+
+    // A gentle constant rotation isn't the kind of motion accessibility
+    // guidance is aimed at (no parallax, no flashing, no sudden
+    // movement) -- reduced motion slows this way down rather than
+    // fully freezing it, same choice the previous Canvas 2D globe made.
+    var speedFactor = reduceMotion ? 0.08 : 1;
+
+    function animate(t) {
+      core.rotation.y += 0.0032 * speedFactor;
+      core.rotation.x += 0.0011 * speedFactor;
+      ring.rotation.z += 0.0018 * speedFactor;
+      ring2.rotation.z -= 0.0013 * speedFactor;
+      baseRing.rotation.z += 0.0008 * speedFactor;
+      points.rotation.y -= 0.0009 * speedFactor;
+      var pulse = 1 + Math.sin(t * 0.0016) * 0.06;
+      innerGlow.scale.setScalar(pulse);
+      core.material.opacity = 0.78 + Math.sin(t * 0.0011) * 0.12;
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
     }
 
-    function drawFrame() {
-      ctx.clearRect(0, 0, size, size);
-      const projected = points.map(project);
+    size();
+    requestAnimationFrame(animate);
 
-      ctx.lineWidth = 1;
-      for (const [i, j] of edges) {
-        const a = projected[i];
-        const b = projected[j];
-        const avgZ = (a.z + b.z) / 2; // -1 (far side) .. 1 (near side)
-        const alpha = lerp((avgZ + 1) / 2, 0.04, 0.5);
-        ctx.strokeStyle = `rgba(34,211,238,${alpha.toFixed(3)})`;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-
-      // Back-to-front so near-side nodes correctly draw over far-side
-      // mesh lines, matching how a real translucent wireframe sphere reads.
-      const order = projected.map((_, i) => i).sort((a, b) => projected[a].z - projected[b].z);
-      for (const i of order) {
-        const p = projected[i];
-        const t = (p.z + 1) / 2;
-        const r = lerp(t, 0.9, 2.6);
-        const alpha = lerp(t, 0.3, 1);
-        ctx.beginPath();
-        ctx.fillStyle = `rgba(148,244,255,${alpha.toFixed(3)})`;
-        ctx.shadowColor = "rgba(34,211,238,0.9)";
-        ctx.shadowBlur = t > 0.55 ? 5 : 0;
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.shadowBlur = 0;
-    }
-
-    function loop() {
-      angleY += rotationSpeed;
-      drawFrame();
-      requestAnimationFrame(loop);
-    }
-
-    resize();
-    loop();
-
-    let resizeTimer = null;
-    window.addEventListener("resize", () => {
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(resize, 150);
+      resizeTimer = setTimeout(size, 150);
     });
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
-    const canvas = document.getElementById("system-core-globe");
-    if (canvas) initGlobe(canvas);
+  document.addEventListener("DOMContentLoaded", function () {
+    var canvas = document.getElementById("system-core-globe");
+    if (canvas) initCore(canvas);
   });
 })();

@@ -724,6 +724,23 @@ the code:
 - Remove buttons (with new `DELETE` endpoints, audit-logged) on the
   Opportunity/Roblox/App-Feasibility research cards, so old research
   doesn't accumulate forever with no way to clear it.
+- **Full palette/typography/shape match to a separately-designed
+  "Command Core" concept (owner request).** Every panel switched from
+  rounded corners + L-shaped corner brackets to an angular cut-corner
+  glass bezel (`clip-path` + `backdrop-filter`, with a thin animated
+  cyan/iris sheen along the top edge in place of the old shifting
+  4-color holographic border gradient); every color token updated to
+  Command Core's exact hex values; Orbitron (headers)/Inter (body)/
+  JetBrains Mono (all numeric/data readouts) loaded from Google Fonts;
+  a uniform click-ripple added to every button on the page via one
+  delegated listener in `dashboard.js`, rather than wiring it into each
+  handler individually. **The System Core globe is now real Three.js**
+  (`static/dashboard-globe.js`), not the hand-rolled Canvas 2D globe
+  described two bullets up — a deliberate, explicit exception to this
+  project's usual zero-external-JS-dependency convention, made only
+  for this one visual centerpiece, loaded from a CDN `<script>` tag in
+  `dashboard.html`. Every other dashboard script (network background,
+  tilt, the render layer, `dashboard.js` itself) stays dependency-free.
 
 ## Storefront — real payments (three of the four verticals)
 

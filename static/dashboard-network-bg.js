@@ -68,7 +68,7 @@
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < LINK_DISTANCE) {
             const alpha = (1 - dist / LINK_DISTANCE) * 0.12;
-            ctx.strokeStyle = `rgba(34,211,238,${alpha.toFixed(3)})`;
+            ctx.strokeStyle = `rgba(79,214,255,${alpha.toFixed(3)})`;
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
@@ -79,7 +79,7 @@
       }
       for (const p of particles) {
         ctx.beginPath();
-        ctx.fillStyle = "rgba(148,244,255,0.35)";
+        ctx.fillStyle = "rgba(159,232,255,0.35)";
         ctx.arc(p.x, p.y, 1.3, 0, Math.PI * 2);
         ctx.fill();
       }
