@@ -406,6 +406,62 @@ test("renderAppFeasibilityTable never throws on malformed reference_urls_used JS
   assert.ok(html.includes("based on general knowledge only"));
 });
 
+test("renderRealEstateTable handles the empty case", () => {
+  assert.ok(R.renderRealEstateTable([]).includes("No real estate assessments yet"));
+  assert.ok(R.renderRealEstateTable(null).includes("No real estate assessments yet"));
+});
+
+test("renderRealEstateTable renders the real shape from the real_estate_assessments table", () => {
+  const assessments = [{
+    id: "re_1", business_id: "biz_1", task_id: "task_1",
+    property_or_market: "123 Main St, Springfield",
+    market_trend: "Prices have risen modestly over the past two years.",
+    comparable_properties: "A few similar properties nearby sold recently.",
+    estimated_rental_yield: "Roughly 4-6% gross, a rough estimate.",
+    price_trend_assessment: "Gradual appreciation.",
+    risk_factors: "Local zoning rules should be confirmed with a licensed agent.",
+    confidence_level: "medium",
+    summary: "A reasonably stable market.",
+    reference_urls_used: JSON.stringify(["https://example.com/a"]),
+  }];
+  const html = R.renderRealEstateTable(assessments);
+  assert.ok(html.includes("123 Main St, Springfield"));
+  assert.ok(html.includes("confidence: medium"));
+  assert.ok(html.includes("A reasonably stable market."));
+  assert.ok(html.includes("Roughly 4-6% gross"));
+  assert.ok(html.includes("https://example.com/a"));
+  assert.ok(html.includes("confidence-medium"));
+  assert.ok(html.includes('data-action="delete-real-estate"'));
+  assert.ok(html.includes('data-id="re_1"'));
+});
+
+test("renderRealEstateTable shows the no-references note when none were used", () => {
+  const assessments = [{
+    id: "re_2", property_or_market: "x", confidence_level: "low", summary: "y",
+    reference_urls_used: JSON.stringify([]),
+  }];
+  const html = R.renderRealEstateTable(assessments);
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
+test("renderRealEstateTable never throws on malformed reference_urls_used JSON", () => {
+  const assessments = [{ id: "re_3", property_or_market: "x", confidence_level: "high", summary: "y",
+                          reference_urls_used: "not valid json" }];
+  const html = R.renderRealEstateTable(assessments); // should not throw
+  assert.ok(html.includes("based on general knowledge only"));
+});
+
+test("renderRealEstateTable escapes property/market and model output to prevent HTML injection", () => {
+  const assessments = [{
+    id: "re_4", property_or_market: '<script>alert("xss")</script>',
+    confidence_level: "medium", summary: '<img src=x onerror=alert(1)>',
+    reference_urls_used: JSON.stringify([]),
+  }];
+  const html = R.renderRealEstateTable(assessments);
+  assert.ok(!html.includes("<script>"));
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderRadialGauge computes the correct dasharray ratio for a partial value", () => {
   // size=88, stroke=7 (defaults) -> r=40.5, circumference = 2*PI*40.5 ~= 254.47
   // value=25, max=100 -> 25% -> dash ~= 63.6

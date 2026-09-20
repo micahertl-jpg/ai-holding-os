@@ -37,7 +37,7 @@
         <div class="product-price">${fmtPrice(p.price_usd_cents)}</div>
         <p class="product-description">${escapeHtml(p.description)}</p>
         <form class="order-form" data-product-type="${escapeHtml(p.product_type)}">
-          <input name="topic" placeholder="What should we research? (e.g. a topic, niche, game concept, or app idea)" required>
+          <input name="topic" placeholder="What should we research? (e.g. a topic, niche, game concept, app idea, or property/market)" required>
           <input name="customer_email" type="email" placeholder="Your email (report is sent here)" required>
           <label class="terms-agree">
             <input type="checkbox" name="agree_terms" required>

@@ -137,6 +137,24 @@ def _build_report_email(order, task, db):
         confidence = row["confidence_level"]
         summary = row["summary"]
         topic = row["concept"]
+    elif order["product_type"] == "research_real_estate":
+        row = db.query_one("SELECT * FROM real_estate_assessments WHERE task_id=?", (task["id"],))
+        if not row:
+            raise RuntimeError(
+                f"task {task['id']} is completed but no real_estate_assessments row "
+                f"exists for it — cannot build a real report from nothing"
+            )
+        subject = f"Your Real Estate Investment Research Report: {row['property_or_market']}"
+        fields = [
+            ("Market trend", row["market_trend"]),
+            ("Comparable properties", row["comparable_properties"]),
+            ("Estimated rental yield", row["estimated_rental_yield"]),
+            ("Price trend assessment", row["price_trend_assessment"]),
+            ("Risk factors", row["risk_factors"]),
+        ]
+        confidence = row["confidence_level"]
+        summary = row["summary"]
+        topic = row["property_or_market"]
     else:
         raise ValueError(f"unknown product_type: {order['product_type']!r}")
 

@@ -98,6 +98,16 @@ VALID_APP_FEASIBILITY_ASSESSMENT_JSON = json.dumps({
     "summary": "Worth a small MVP validation effort.",
 })
 
+VALID_REAL_ESTATE_ASSESSMENT_JSON = json.dumps({
+    "market_trend": "Prices have risen modestly over the past two years.",
+    "comparable_properties": "A few similar properties nearby sold recently at comparable prices.",
+    "estimated_rental_yield": "Roughly 4-6% gross, a rough estimate only.",
+    "price_trend_assessment": "Gradual appreciation, consistent with the broader market.",
+    "risk_factors": "Local zoning and HOA rules should be confirmed with a licensed agent.",
+    "confidence_level": "medium",
+    "summary": "A reasonably stable market; worth a closer look with a local professional.",
+})
+
 VALID_OPS_REPORT_OK_JSON = json.dumps({
     "overall_severity": "ok",
     "findings": [],
@@ -302,6 +312,33 @@ def test_research_app_feasibility_task_gets_executed_and_saved():
     assert assessment["complexity_tier"] == "moderate"
     assert json.loads(assessment["reference_urls_used"]) == ["https://example.com/w"]
     print("PASS: a research_app_feasibility task gets executed and saves a real app_feasibility_assessments row")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_research_real_estate_task_gets_executed_and_saved():
+    db, orch, biz_id, agent_id = _setup()
+    with patch("tasks.research_real_estate.fetch_url_text", return_value="Some reference text."):
+        task_id = orch.create_task(
+            biz_id, "Research real estate investment", department="research",
+            permission_level_required=2, task_type="research_real_estate",
+            task_input={"property_or_market": "123 Main St, Springfield",
+                        "reference_urls": ["https://example.com/w"]},
+        )
+        client = MockClient(canned_response=VALID_REAL_ESTATE_ASSESSMENT_JSON)
+        outcomes = executor.run_once(db, orch, client=client)
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+    assert "Real estate research assessment saved" in task["result"]
+
+    assessment = db.query_one("SELECT * FROM real_estate_assessments WHERE task_id=?", (task_id,))
+    assert assessment is not None, "expected a row in real_estate_assessments"
+    assert assessment["property_or_market"] == "123 Main St, Springfield"
+    assert assessment["confidence_level"] == "medium"
+    assert json.loads(assessment["reference_urls_used"]) == ["https://example.com/w"]
+    print("PASS: a research_real_estate task gets executed and saves a real real_estate_assessments row")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -717,6 +754,7 @@ if __name__ == "__main__":
     test_insufficient_arc_balance_fails_the_task_not_silently_skips_the_charge()
     test_research_roblox_trend_task_gets_executed_and_saved()
     test_research_app_feasibility_task_gets_executed_and_saved()
+    test_research_real_estate_task_gets_executed_and_saved()
     test_bad_model_json_fails_the_task_loudly()
     test_manual_tasks_are_never_auto_executed()
     test_queued_typed_tasks_are_not_touched_until_assigned()

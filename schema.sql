@@ -340,3 +340,27 @@ CREATE TABLE IF NOT EXISTS ops_maintenance_reports (
     metrics_snapshot TEXT,            -- JSON: the real metrics collect_system_metrics() computed
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Real Estate — investment research assessments produced by the
+-- research_real_estate task type. Research only: never an appraisal,
+-- never a brokered transaction. Every field is the model's ESTIMATE —
+-- see tasks/research_real_estate.py's system prompt, which requires
+-- any jurisdiction-specific issue (zoning, disclosure law, rent
+-- control, licensing) to be flagged for a licensed real estate agent/
+-- appraiser/attorney, never resolved here. confidence_level is
+-- mandatory.
+CREATE TABLE IF NOT EXISTS real_estate_assessments (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    property_or_market TEXT NOT NULL,
+    market_trend TEXT,
+    comparable_properties TEXT,
+    estimated_rental_yield TEXT,
+    price_trend_assessment TEXT,
+    risk_factors TEXT,
+    confidence_level TEXT,            -- low|medium|high — see research_real_estate.py
+    summary TEXT,
+    reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    created_at TEXT DEFAULT (datetime('now'))
+);

@@ -84,9 +84,10 @@ The Dockerfile is portable — the app itself doesn't change.
 ## Storefront — turning on real payments (currently OFF)
 
 The storefront (`/static/store.html`, `/store/checkout`, `/store/webhook`,
-`fulfillment.py`) is fully built and offline-tested for three products —
-Opportunity Discovery, Roblox Trend Research, and App Feasibility reports —
-but it is very likely **not actually live** on your deployment right now:
+`fulfillment.py`) is fully built and offline-tested for four products —
+Opportunity Discovery, Roblox Trend Research, App Feasibility, and Real
+Estate Investment Research reports — but it is very likely **not
+actually live** on your deployment right now:
 none of the six environment variables it needs are set anywhere in this
 repo or its deploy docs, and every one of them is required (there is no
 "demo mode" — `/store/checkout` returns a clear 503 until they're set,
@@ -118,8 +119,9 @@ and `send_email()` raises rather than pretending an email went out).
    domain before accepting real orders).
 
 Optional: `STORE_PRICE_OPPORTUNITY_CENTS` / `STORE_PRICE_ROBLOX_CENTS` /
-`STORE_PRICE_APP_FEASIBILITY_CENTS` override the default $19.00 price
-per report (each is a number of cents, e.g. `2900` for $29.00).
+`STORE_PRICE_APP_FEASIBILITY_CENTS` / `STORE_PRICE_REAL_ESTATE_CENTS`
+override the default $19.00 price per report (each is a number of
+cents, e.g. `2900` for $29.00).
 
 Optional: **`OWNER_EMAIL`** — your own address. Refunds are never
 automated (see `fulfillment.py`'s module docstring) — if a paid order's

@@ -99,6 +99,20 @@ PRODUCT_CATALOG = {
         ),
         "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "1900")),
     },
+    "research_real_estate": {
+        "name": "Real Estate Investment Research Report",
+        "description": (
+            "A structured investment research assessment for a property or market — "
+            "market trend, comparable properties, estimated rental yield, price trend "
+            "assessment, and risk factors, each framed as an estimate with an explicit "
+            "confidence level. This is research only, never a licensed appraisal or a "
+            "brokered transaction; any jurisdiction-specific issue (zoning, disclosure "
+            "law, rent control, licensing) is flagged for a licensed real estate agent, "
+            "appraiser, or attorney, not resolved here. Delivered by email, usually "
+            "within a minute of payment."
+        ),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "1900")),
+    },
 }
 
 # /store/checkout is the only public, unauthenticated endpoint that also
@@ -466,6 +480,15 @@ class ResearchAppFeasibilityRequest(BaseModel):
     budget_arc: float = 0.0
 
 
+class ResearchRealEstateRequest(BaseModel):
+    property_or_market: str
+    reference_urls: List[str] = []
+    department: Optional[str] = None
+    permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
+    priority: int = 3
+    budget_arc: float = 0.0
+
+
 class CheckoutRequest(BaseModel):
     product_type: str
     topic: str
@@ -715,6 +738,9 @@ def business_dashboard(business_id: str):
     app_feasibility_assessments = [row_to_dict(r) for r in
                                     db.query("SELECT * FROM app_feasibility_assessments WHERE "
                                              "business_id=? ORDER BY created_at DESC", (business_id,))]
+    real_estate_assessments = [row_to_dict(r) for r in
+                                db.query("SELECT * FROM real_estate_assessments WHERE "
+                                         "business_id=? ORDER BY created_at DESC", (business_id,))]
     # Storefront orders -- the only place an owner can see real-money
     # order activity without going into Stripe or the database
     # directly. Most businesses will never have any (STORE_BUSINESS_ID
@@ -741,6 +767,7 @@ def business_dashboard(business_id: str):
         "opportunities": opportunities,
         "roblox_trends": roblox_trends,
         "app_feasibility_assessments": app_feasibility_assessments,
+        "real_estate_assessments": real_estate_assessments,
         "orders": orders,
         "trading_portfolio": trading_portfolio,
         "trading_trades": trading_trades,
@@ -1040,6 +1067,60 @@ def delete_app_feasibility_assessment(business_id: str, assessment_id: str):
         raise HTTPException(status_code=404, detail="app feasibility assessment not found")
     db.execute("DELETE FROM app_feasibility_assessments WHERE id=?", (assessment_id,))
     db.audit("owner", "delete_app_feasibility_assessment", "app_feasibility_assessment", assessment_id,
+              {"business_id": business_id})
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------
+# Real Estate — the fifth business vertical. Same pattern as the other
+# storefront-monetized verticals above: creates a
+# task_type='research_real_estate' task, the executor thread picks it
+# up and runs the real LLM assessment, saving a row to
+# `real_estate_assessments`. This endpoint does no LLM work itself and
+# returns immediately. Investment research only -- see
+# tasks/research_real_estate.py: it is never an appraisal, never
+# brokers/facilitates an actual transaction, and explicitly flags
+# (never resolves) any jurisdiction-specific issue (zoning, disclosure
+# law, rent control, licensing) for a licensed real estate agent,
+# appraiser, or attorney.
+# ---------------------------------------------------------------------
+
+@app.post("/businesses/{business_id}/real-estate/research")
+def request_real_estate_research(business_id: str, req: ResearchRealEstateRequest):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if len(req.reference_urls) > 3:
+        raise HTTPException(status_code=400, detail="reference_urls is capped at 3")
+    task_id = state["orchestrator"].create_task(
+        business_id, f"Research real estate investment: {req.property_or_market}",
+        department=req.department, priority=req.priority, budget_arc=req.budget_arc,
+        permission_level_required=req.permission_level_required,
+        task_type="research_real_estate",
+        task_input={"property_or_market": req.property_or_market,
+                    "reference_urls": req.reference_urls},
+    )
+    return {"task_id": task_id}
+
+
+@app.get("/businesses/{business_id}/real-estate")
+def list_real_estate_assessments(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    return [row_to_dict(r) for r in
+            state["db"].query("SELECT * FROM real_estate_assessments WHERE business_id=? "
+                               "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.delete("/businesses/{business_id}/real-estate/{assessment_id}")
+def delete_real_estate_assessment(business_id: str, assessment_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    if not db.query_one("SELECT id FROM real_estate_assessments WHERE id=? AND business_id=?",
+                         (assessment_id, business_id)):
+        raise HTTPException(status_code=404, detail="real estate assessment not found")
+    db.execute("DELETE FROM real_estate_assessments WHERE id=?", (assessment_id,))
+    db.audit("owner", "delete_real_estate_assessment", "real_estate_assessment", assessment_id,
               {"business_id": business_id})
     return {"status": "deleted"}
 
@@ -1440,9 +1521,21 @@ async def stripe_webhook(request: Request):
             (payment_intent_id, order_id),
         )
         task_type = order["product_type"]
-        task_input = ({"topic": order["topic"], "reference_urls": []}
-                      if task_type == "research_opportunity"
-                      else {"concept": order["topic"], "reference_urls": []})
+        # Each research task type expects its "what to research" value
+        # under a different task_input key (see each tasks/research_*.py
+        # module) -- orders.topic holds the customer's raw input
+        # regardless of product, so it's remapped to the right key here.
+        # A product_type missing from this map would otherwise silently
+        # create a task with the wrong input key, which the executor's
+        # handler would reject as missing its required field, failing an
+        # already-paid order's fulfillment with no report ever produced.
+        input_key = {
+            "research_opportunity": "topic",
+            "research_roblox_trend": "concept",
+            "research_app_feasibility": "concept",
+            "research_real_estate": "property_or_market",
+        }.get(task_type, "topic")
+        task_input = {input_key: order["topic"], "reference_urls": []}
         task_id = state["orchestrator"].create_task(
             order["business_id"], f"[Paid order {order_id}] {order['topic']}",
             department="research", priority=2, permission_level_required=2,

@@ -343,6 +343,75 @@ def test_app_feasibility_missing_assessment_row_fails_loudly_not_silently():
     os.remove(TEST_DB_PATH)
 
 
+def test_real_estate_order_gets_emailed_and_marked_fulfilled():
+    """Same success path as test_completed_order_gets_emailed_and_marked_fulfilled,
+    but for the fourth storefront product (added alongside the Real
+    Estate vertical) -- proves fulfillment.py's real_estate branch
+    actually works, not just that it compiles."""
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research real estate investment", department="research",
+                                permission_level_required=2, task_type="research_real_estate",
+                                task_input={"property_or_market": "123 Main St, Springfield"})
+    orch.complete_task(task_id, result="ok")
+    assessment_id = new_id("re")
+    db.execute(
+        "INSERT INTO real_estate_assessments (id, business_id, task_id, property_or_market, "
+        "market_trend, comparable_properties, estimated_rental_yield, price_trend_assessment, "
+        "risk_factors, confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (assessment_id, biz_id, task_id, "123 Main St, Springfield",
+         "Prices have risen modestly over the past two years.",
+         "A few similar properties nearby sold recently at comparable prices.",
+         "Roughly 4-6% gross, a rough estimate only.",
+         "Gradual appreciation, consistent with the broader market.",
+         "Local zoning and HOA rules should be confirmed with a licensed agent.",
+         "medium", "A reasonably stable market; worth a closer look.", json.dumps([])),
+    )
+    order_id = _make_order(db, biz_id, product_type="research_real_estate",
+                            topic="123 Main St, Springfield", task_id=task_id)
+
+    with patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes == [(order_id, "fulfilled")], outcomes
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "customer@example.com"
+    assert "123 Main St, Springfield" in call_args[1]  # subject
+    html_body = call_args[2]
+    assert "Roughly 4-6% gross" in html_body
+
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "fulfilled"
+    print("PASS: a completed research_real_estate order gets emailed and marked fulfilled")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_real_estate_missing_assessment_row_fails_loudly_not_silently():
+    db, orch, biz_id = _setup()
+    task_id = orch.create_task(biz_id, "Research real estate investment", department="research",
+                                permission_level_required=2, task_type="research_real_estate",
+                                task_input={"property_or_market": "x"})
+    orch.complete_task(task_id, result="ok")
+    # deliberately do NOT insert a real_estate_assessments row
+    order_id = _make_order(db, biz_id, product_type="research_real_estate",
+                            topic="x", task_id=task_id)
+
+    with patch("fulfillment.send_email") as mock_send:
+        outcomes = fulfillment.run_once(db)
+
+    assert outcomes[0][0] == order_id
+    assert outcomes[0][1].startswith("build_failed:")
+    assert mock_send.call_count == 0
+    order = db.query_one("SELECT * FROM orders WHERE id=?", (order_id,))
+    assert order["status"] == "paid"
+    print("PASS: a completed research_real_estate task with no real assessment row "
+          "fails loudly, never fabricates an email")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_missing_assessment_row_fails_loudly_not_silently():
     """A completed task with NO opportunities row (shouldn't normally
     happen, but must never be papered over) must never be emailed as
@@ -459,4 +528,6 @@ if __name__ == "__main__":
     test_build_failure_retry_count_is_scoped_to_its_own_order()
     test_app_feasibility_order_gets_emailed_and_marked_fulfilled()
     test_app_feasibility_missing_assessment_row_fails_loudly_not_silently()
+    test_real_estate_order_gets_emailed_and_marked_fulfilled()
+    test_real_estate_missing_assessment_row_fails_loudly_not_silently()
     print("\nAll fulfillment.py offline tests passed.")
