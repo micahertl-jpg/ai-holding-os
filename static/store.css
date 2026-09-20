@@ -44,6 +44,44 @@ body {
   margin: 0;
 }
 
+.how-it-works {
+  max-width: 720px;
+  margin: 20px auto 0;
+  padding: 0 24px;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.how-it-works li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.step-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .how-it-works {
+    grid-template-columns: 1fr;
+  }
+}
+
 .store-disclaimer {
   max-width: 720px;
   margin: 16px auto 0;
@@ -178,3 +216,17 @@ body {
 .status-fulfilled { color: var(--success); }
 .status-failed { color: var(--error); }
 .status-pending { color: var(--text-muted); }
+
+.cross-sell {
+  margin-top: 20px;
+}
+
+.cross-sell a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cross-sell a:hover {
+  text-decoration: underline;
+}

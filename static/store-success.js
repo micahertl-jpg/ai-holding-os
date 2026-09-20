@@ -35,7 +35,8 @@
         <h1>Your report is on its way!</h1>
         <p>We've emailed your <strong>${escapeHtml(order.product_type)}</strong> report on
         "<strong>${escapeHtml(order.topic)}</strong>" — check your inbox (and spam folder,
-        just in case).</p>`;
+        just in case).</p>
+        <p class="cross-sell"><a href="/static/store.html">Order another report &rarr;</a></p>`;
       return;
     }
     if (order.status === "failed") {

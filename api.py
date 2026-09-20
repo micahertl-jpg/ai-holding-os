@@ -65,7 +65,25 @@ FULFILLMENT_POLL_INTERVAL_SECONDS = float(os.environ.get("FULFILLMENT_POLL_INTER
 STORE_BUSINESS_ID = os.environ.get("STORE_BUSINESS_ID")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
+# Ordering here is the ordering the storefront displays products in
+# (see /store/products and store.js) — leads with the lowest price so a
+# cold, skeptical visitor has an easy, low-risk first "yes" before
+# seeing the pricier reports.
 PRODUCT_CATALOG = {
+    "research_real_estate": {
+        "name": "Real Estate Investment Research Report",
+        "description": (
+            "A structured investment research assessment for a property or market — "
+            "market trend, comparable properties, estimated rental yield, price trend "
+            "assessment, and risk factors, each framed as an estimate with an explicit "
+            "confidence level. This is research only, never a licensed appraisal or a "
+            "brokered transaction; any jurisdiction-specific issue (zoning, disclosure "
+            "law, rent control, licensing) is flagged for a licensed real estate agent, "
+            "appraiser, or attorney, not resolved here. Delivered by email, usually "
+            "within a minute of payment."
+        ),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "500")),
+    },
     "research_opportunity": {
         "name": "Business Opportunity Research Report",
         "description": (
@@ -98,20 +116,6 @@ PRODUCT_CATALOG = {
             "email, usually within a minute of payment."
         ),
         "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "1900")),
-    },
-    "research_real_estate": {
-        "name": "Real Estate Investment Research Report",
-        "description": (
-            "A structured investment research assessment for a property or market — "
-            "market trend, comparable properties, estimated rental yield, price trend "
-            "assessment, and risk factors, each framed as an estimate with an explicit "
-            "confidence level. This is research only, never a licensed appraisal or a "
-            "brokered transaction; any jurisdiction-specific issue (zoning, disclosure "
-            "law, rent control, licensing) is flagged for a licensed real estate agent, "
-            "appraiser, or attorney, not resolved here. Delivered by email, usually "
-            "within a minute of payment."
-        ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "500")),
     },
 }
 
