@@ -86,6 +86,7 @@
     setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
     setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
     setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));
+    setHtmlIfChanged("real-estate-list", R.renderRealEstateTable(data.real_estate_assessments));
     setHtmlIfChanged("allocate-arc-agent-select", R.renderAgentOptions(data.agents));
     setHtmlIfChanged("trading-portfolio", R.renderTradingPortfolio(data.trading_portfolio));
     setHtmlIfChanged("trading-positions",
@@ -301,6 +302,30 @@
       }
     });
 
+    document.getElementById("research-real-estate-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      const urlsRaw = f.reference_urls.value.trim();
+      const reference_urls = urlsRaw
+        ? urlsRaw.split(",").map((u) => u.trim()).filter(Boolean)
+        : [];
+      if (reference_urls.length > 3) {
+        showError("Reference URLs are capped at 3 (comma-separated).");
+        return;
+      }
+      try {
+        await api(`/businesses/${currentBusinessId}/real-estate/research`, {
+          method: "POST",
+          body: JSON.stringify({ property_or_market: f.property_or_market.value, reference_urls }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to request real estate research: " + e.message);
+      }
+    });
+
     document.getElementById("create-trading-portfolio-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       if (!currentBusinessId) { showError("Select a business first."); return; }
@@ -437,6 +462,10 @@
         } else if (action === "delete-app-feasibility") {
           if (!currentBusinessId) return;
           await api(`/businesses/${currentBusinessId}/app-feasibility/${t.dataset.id}`, { method: "DELETE" });
+          await refresh();
+        } else if (action === "delete-real-estate") {
+          if (!currentBusinessId) return;
+          await api(`/businesses/${currentBusinessId}/real-estate/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         }
       } catch (e) {

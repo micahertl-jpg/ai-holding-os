@@ -278,3 +278,21 @@ CREATE TABLE IF NOT EXISTS ops_maintenance_reports (
     metrics_snapshot TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Real Estate — see schema.sql for the full explanation; this mirrors
+-- it exactly.
+CREATE TABLE IF NOT EXISTS real_estate_assessments (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    property_or_market TEXT NOT NULL,
+    market_trend TEXT,
+    comparable_properties TEXT,
+    estimated_rental_yield TEXT,
+    price_trend_assessment TEXT,
+    risk_factors TEXT,
+    confidence_level TEXT,
+    summary TEXT,
+    reference_urls_used TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

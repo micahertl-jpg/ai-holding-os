@@ -33,6 +33,7 @@ from tasks.research_roblox_trend import research_roblox_trend, RobloxTrendAssess
 from tasks.research_app_feasibility import (
     research_app_feasibility, AppFeasibilityAssessmentError,
 )
+from tasks.research_real_estate import research_real_estate, RealEstateAssessmentError
 from tasks.trading_cycle import run_trading_cycle, TradingCycleError
 from tasks.trading_strategy_review import (
     compute_stats, propose_strategy_update, TradingStrategyReviewError,
@@ -250,6 +251,44 @@ def _handle_research_app_feasibility(task_row, client, db):
         f"App feasibility assessment saved (id={assessment_id}, "
         f"confidence={assessment['confidence_level']}, complexity={assessment['complexity_tier']}): "
         f"{assessment['summary']}"
+    )
+    reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
+
+
+def _handle_research_real_estate(task_row, client, db):
+    task_input = json.loads(task_row["task_input"]) if task_row["task_input"] else {}
+    property_or_market = task_input.get("property_or_market")
+    if not property_or_market:
+        raise ValueError("research_real_estate task_input missing required 'property_or_market'")
+    reference_urls = task_input.get("reference_urls", [])
+
+    tracked_client = CostTrackingClient(client)
+    assessment = research_real_estate(property_or_market, tracked_client,
+                                       reference_urls=reference_urls)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    assessment_id = new_id("re")
+    db.execute(
+        "INSERT INTO real_estate_assessments (id, business_id, task_id, property_or_market, "
+        "market_trend, comparable_properties, estimated_rental_yield, price_trend_assessment, "
+        "risk_factors, confidence_level, summary, reference_urls_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (assessment_id, task_row["business_id"], task_row["id"], assessment["property_or_market"],
+         assessment["market_trend"], assessment["comparable_properties"],
+         assessment["estimated_rental_yield"], assessment["price_trend_assessment"],
+         assessment["risk_factors"], assessment["confidence_level"], assessment["summary"],
+         json.dumps(assessment["reference_urls_used"])),
+    )
+    db.audit("executor", "real_estate_assessed", "real_estate_assessment", assessment_id,
+              {"property_or_market": property_or_market,
+               "confidence_level": assessment["confidence_level"]})
+
+    result_text = (
+        f"Real estate research assessment saved (id={assessment_id}, "
+        f"confidence={assessment['confidence_level']}): {assessment['summary']}"
     )
     reward_arc = CONFIDENCE_REWARD_ARC.get(assessment["confidence_level"], 0.0)
     return result_text, cost_arc, reward_arc
@@ -581,6 +620,7 @@ HANDLERS = {
     "research_opportunity": _handle_research_opportunity,
     "research_roblox_trend": _handle_research_roblox_trend,
     "research_app_feasibility": _handle_research_app_feasibility,
+    "research_real_estate": _handle_research_real_estate,
     "trading_cycle": _handle_trading_cycle,
     "trading_strategy_review": _handle_trading_strategy_review,
     "ops_maintenance_review": _handle_ops_maintenance_review,

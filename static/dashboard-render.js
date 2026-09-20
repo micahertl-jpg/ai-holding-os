@@ -465,6 +465,48 @@
     return `<div class="opportunities-list">${cards}</div>`;
   }
 
+  function renderRealEstateTable(assessments) {
+    if (!assessments || assessments.length === 0) {
+      return '<p class="empty">No real estate assessments yet.</p>';
+    }
+    const cards = assessments
+      .map((a) => {
+        const confidence = escapeHtml(a.confidence_level || "unknown");
+        let urls = [];
+        try {
+          urls = a.reference_urls_used ? JSON.parse(a.reference_urls_used) : [];
+        } catch (e) {
+          urls = [];
+        }
+        return `
+        <div class="opportunity-card confidence-${confidence}">
+          <div class="opportunity-head">
+            <strong>${escapeHtml(a.property_or_market)}</strong>
+            <span class="opportunity-head-right">
+              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
+                confidence: ${confidence}
+              </span>
+              <button class="btn-remove-card" data-action="delete-real-estate" data-id="${escapeHtml(a.id)}"
+                title="Remove this assessment">Remove</button>
+            </span>
+          </div>
+          <p class="opportunity-summary">${escapeHtml(a.summary || "")}</p>
+          <dl class="opportunity-fields">
+            <dt>Market trend</dt><dd>${escapeHtml(a.market_trend || "")}</dd>
+            <dt>Comparable properties</dt><dd>${escapeHtml(a.comparable_properties || "")}</dd>
+            <dt>Estimated rental yield</dt><dd>${escapeHtml(a.estimated_rental_yield || "")}</dd>
+            <dt>Price trend assessment</dt><dd>${escapeHtml(a.price_trend_assessment || "")}</dd>
+            <dt>Risk factors</dt><dd>${escapeHtml(a.risk_factors || "")}</dd>
+          </dl>
+          ${urls.length > 0
+            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
+            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
+        </div>`;
+      })
+      .join("");
+    return `<div class="opportunities-list">${cards}</div>`;
+  }
+
   // A minimal line+area sparkline instrument, e.g. for an equity curve.
   // `points` is [{value}, ...] in chronological (oldest-first) order —
   // exactly the shape GET .../trading/portfolio's equity_history
@@ -867,6 +909,7 @@
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
     renderAppFeasibilityTable,
+    renderRealEstateTable,
     opsSeverityClass,
     renderOpsReport,
     renderGlobalStats,

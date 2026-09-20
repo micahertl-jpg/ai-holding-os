@@ -8,14 +8,14 @@ internal virtual economy, never real money), the Human Approval Queue,
 and a full audit trail. Deployed 24/7 on Railway with real Postgres —
 see `DEPLOY.md`.
 
-Five of the project spec's six planned business verticals are built on
+All six of the project spec's planned business verticals are built on
 that core: **Opportunity Discovery**, **Roblox Game Development**,
 **Automated Stock Trading** (paper trading only — see below), **App
-Development Feasibility**, and **Ops/Maintenance** (watches this
-system's own health — see below). **Real Estate** remains unbuilt —
-see "Next real steps."
+Development Feasibility**, **Ops/Maintenance** (watches this system's
+own health — see below), and **Real Estate** (investment research
+only — see below).
 
-Three of those five verticals (everything except trading and
+Four of those six verticals (everything except trading and
 Ops/Maintenance, which has no customer at all) are also **monetized
 for real**: a public storefront takes real Stripe payments and emails
 a real, AI-generated report to the customer. This is the only place in
@@ -26,19 +26,24 @@ payments" below.
 - **REAL:** the data model, permission gating, ARC accounting, the
   approval-queue gate, the audit log, every LLM call (real Anthropic
   API), the FastAPI backend + dashboard (deployed 24/7, real Postgres),
-  the scheduler/executor background threads, all five verticals'
+  the scheduler/executor background threads, all six verticals'
   research/assessment logic, and the storefront's real Stripe payments
-  + Resend emails for three of those verticals — all personally
-  verified live by the owner with real purchases.
+  + Resend emails for three of those four monetized verticals —
+  personally verified live by the owner with real purchases (Real
+  Estate's storefront integration is built and offline/live-verified
+  the same way, but not yet purchased for real — see its section below).
 - **SIMULATION, deliberately** (per the project spec's safety
   requirements): Automated Stock Trading is paper trading only — there
   is no brokerage integration anywhere in this codebase, structurally,
   not as a config flag someone could flip. ARC (the internal agent
   economy) never represents real money, even where agents "earn" or
   "spend" it. Ops/Maintenance only ever recommends — it never acts on
-  its own findings.
-- **NOT YET BUILT:** one of the project spec's six planned verticals
-  (Real Estate) — see "Next real steps."
+  its own findings. Real Estate is investment research only — never an
+  appraisal, never a brokered transaction, structurally incapable of
+  either (no code path exists that lists, offers, or negotiates a
+  property).
+- **NOT YET BUILT:** none — all six of the project spec's planned
+  verticals are built. See "Next real steps" for what's left overall.
 
 ## Why SQLite + stdlib-only Python
 Built inside a sandboxed environment with no internet access, so no
@@ -891,6 +896,127 @@ with a real `ANTHROPIC_API_KEY` set, and within `OPS_REVIEW_INTERVAL_SECONDS`
 of the app's first startup (or immediately, by clicking "Run Ops Review
 Now") a real report should appear in the System Health panel.
 
+## Real Estate — status (sixth business vertical, investment research only)
+
+The project spec's last remaining vertical, scoped in a dedicated
+conversation with the owner before any code was written: unlike a
+literal brokerage/listing product (which would need real broker/agent
+licensing and a legal review before any of this could be built),
+this is investment RESEARCH only — same permission tier (1-2) and same
+safety posture as Opportunity Discovery/Roblox Game Development/App
+Development Feasibility. No listing, no offer, no contract, nothing
+resembling acting as a real estate agent or broker; never a licensed
+appraisal.
+
+**What's new:**
+- `tasks/research_real_estate.py` — same pattern as the other three
+  research verticals: strict-JSON output, mandatory `confidence_level`,
+  hard failure (never a fabricated fallback) on invalid or incomplete
+  model output. Because real estate is uniquely jurisdiction-sensitive
+  (zoning, disclosure law, rent control, broker/appraiser licensing all
+  vary by state/country) and a $19 report here could plausibly
+  influence a much larger financial decision than any other vertical's
+  report, the model is explicitly instructed to flag — never resolve —
+  anything jurisdiction-specific as needing a licensed real estate
+  agent, appraiser, or attorney, and to never state a specific dollar
+  valuation as a guaranteed figure.
+- Schema: `real_estate_assessments` (both `schema.sql` and
+  `schema_postgres.sql`).
+- `executor.py`: `research_real_estate` handler, registered in
+  `HANDLERS`, using the same real-cost-charged/confidence-rewarded ARC
+  accounting as every other research task type.
+- New endpoints: `POST /businesses/{id}/real-estate/research` (creates
+  the task; returns immediately), `GET /businesses/{id}/real-estate`
+  (lists saved assessments), and `DELETE .../real-estate/{id}`. Wired
+  into `GET /businesses/{id}/dashboard` alongside the other verticals'
+  assessment lists.
+- A new dashboard panel (property/market + reference-URL form, result
+  cards showing market trend, comparable properties, estimated rental
+  yield, price trend assessment, and risk factors, with a Remove
+  button), mirroring the other research panels exactly.
+- **Storefront**: a fourth product, "Real Estate Investment Research
+  Report" ($19, `STORE_PRICE_REAL_ESTATE_CENTS` to override), added to
+  `PRODUCT_CATALOG`, `fulfillment.py`'s report-email builder, and
+  `store-legal.html`'s disclaimer (a dedicated paragraph stating this
+  is not an appraisal and not the advice of a licensed professional).
+- **A real, separate bug found and fixed while wiring this up**: the
+  Stripe webhook's task-creation code (`/store/webhook` in `api.py`)
+  used to pick the task's input field with a binary check — `"topic"`
+  for Opportunity Discovery, `"concept"` for everything else. Real
+  Estate needed a third key, `"property_or_market"`, so that binary
+  check would have silently created every real estate order's task
+  with the wrong input key, causing `research_real_estate`'s handler to
+  correctly reject it as missing a required field — a real customer
+  charged real money for a report that could never be produced,
+  discovered here before any real order could hit it. Fixed with an
+  explicit per-product_type mapping instead of a binary guess; the
+  fix is purely additive for the three existing products (verified by
+  reading through the old vs. new logic side by side — same result for
+  `research_opportunity`/`research_roblox_trend`/`research_app_feasibility`,
+  a new correct branch for `research_real_estate`).
+
+**What was actually verified in this session:**
+- 7 new checks in `test_research_real_estate_offline.py` (success
+  with/without reference URLs, a dead reference URL shrinking evidence
+  without failing the task, >3 URLs rejected, invalid JSON rejected, a
+  missing required field rejected, an invalid `confidence_level`
+  rejected), 1 new `test_executor_offline.py` case (a
+  `research_real_estate` task gets picked up, executed, and saves a
+  real row), 2 new `test_fulfillment_offline.py` cases (a completed
+  order gets emailed and marked fulfilled; a missing assessment row
+  fails loudly rather than fabricating an email), and 5 new
+  `test_dashboard_render.js` checks (empty state, real-shape rendering,
+  no-references note, malformed-JSON safety, XSS-escaping). Every
+  pre-existing test in the repo still passes unchanged.
+- Stood up a real local Postgres database (fresh, schema applied from
+  `schema_postgres.sql`), ran `uvicorn api:app` for real against it,
+  and exercised the new endpoints over real HTTP: created a business
+  and an agent, submitted a real-estate research request (auto-assigned
+  and executed by the real background threads, not simulated), listed
+  and deleted a directly-seeded assessment row over real HTTP, and
+  confirmed `GET /businesses/{id}/dashboard` returns the new
+  `real_estate_assessments` field correctly. Confirmed the new product
+  appears correctly in `GET /store/products`.
+- With no `ANTHROPIC_API_KEY` set (not available in this build
+  environment), the submitted task correctly **failed loudly** —
+  `"model did not return valid JSON"` — and nothing was written to
+  `real_estate_assessments`. This is the intended behavior (no
+  fabricated assessments), not a bug, confirmed via the live task
+  result, not just by reading the code.
+- Loaded `/dashboard` in a real headless browser (screenshot taken):
+  the new "Real Estate — Investment Research" panel renders correctly,
+  in the same visual style as the other research panels. Also
+  interactively clicked the Remove button in the real browser and
+  confirmed the card actually disappears and the underlying row is
+  actually deleted, not just visually hidden.
+
+**What was NOT verified** (needs a real `ANTHROPIC_API_KEY` and, for
+the storefront path specifically, the owner's own real Stripe test
+purchase — same as App Feasibility before the owner personally
+verified it):
+- An actual `research_real_estate` task running against the real
+  Anthropic API and producing a real assessment.
+- A real Stripe test-mode (or live) purchase of the Real Estate product
+  through the actual storefront checkout → webhook → fulfillment →
+  email path. The webhook `task_input`-mapping bug above was caught and
+  fixed by reading the code, not by an actual test purchase — a real
+  purchase is the one verification step only the owner can perform
+  (same limitation as every other storefront product originally).
+
+**To verify it yourself:**
+```
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m uvicorn api:app --reload
+```
+Open the dashboard, use the "Research This Property/Market" form with
+a real address or market and optionally 1-3 real URLs, submit, and
+wait ~10-15 seconds — a card should appear with a real, model-generated
+assessment and an honest confidence level. Make sure at least one agent
+in the business is idle when you submit. To verify the storefront path,
+buy the "Real Estate Investment Research Report" through
+`/static/store.html` with a real (or Stripe test-mode) card and confirm
+the emailed report arrives with real content.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done, verified live against
@@ -928,12 +1054,22 @@ Now") a real report should appear in the System Health panel.
 15. ~~Ops/Maintenance vertical~~ (scoped with the owner as
     self-maintenance for this system, not a customer product) — built,
     live-verified, no owner setup step (see above).
-16. **Real Estate vertical** — named in the project spec, not yet
-    started. Needs a dedicated scoping conversation first: unlike every
-    other vertical, it carries jurisdiction/legal-exposure questions
-    (property law varies by state/country, licensing requirements for
-    anything resembling brokerage activity) that shouldn't be resolved
-    unilaterally by an agent.
+16. ~~Real Estate vertical~~ (scoped with the owner as investment
+    research only, never a brokered transaction or appraisal, after a
+    dedicated conversation about its jurisdiction/legal-exposure
+    questions) — built, verified against a real local Postgres + real
+    HTTP + a real browser; a genuine storefront webhook bug for this
+    product was found and fixed before any real order could hit it
+    (see above). Still needs a real Anthropic key to see a real
+    assessment end to end, and the owner's own real (or Stripe
+    test-mode) purchase to confirm the storefront path — same as every
+    other vertical's first real verification.
+
+All six of the project spec's planned business verticals are now
+built. What's left is verification the owner has to do personally
+(real API keys, real purchases — see each vertical's "What was NOT
+verified" above) and whatever new direction the owner wants to take
+next.
 
 ## ACTION REQUIRED FROM OWNER
 - **Already done:** deployed on Railway with a managed Postgres add-on,
@@ -961,6 +1097,7 @@ Now") a real report should appear in the System Health panel.
   reaches you by email, not just the dashboard.
 - **Nothing needed for Ops/Maintenance** — it provisions and starts
   reviewing this system's own health automatically on first deploy.
-- **Decide on Real Estate** (see "Next real steps" #16 above) whenever
-  you're ready to scope it — it shouldn't be started without your input
-  first.
+- **For the Real Estate product specifically:** once you've made a real
+  (or Stripe test-mode) purchase of it through the storefront and
+  confirmed the emailed report arrives with real content, it's fully
+  verified end to end, same as the other three products already are.
