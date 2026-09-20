@@ -207,6 +207,35 @@
         cycles fail loudly rather than trading on fabricated prices.</p>
     </section>
 
+    <section class="panel panel-live-trading">
+      <h3>Live Trading — REAL MONEY, real brokerage orders</h3>
+      <div id="live-trading-status"></div>
+      <form id="enable-live-trading-form" class="inline-form">
+        <label class="confirm-checkbox">
+          <input name="confirm_real_money" type="checkbox" required>
+          I understand this places real orders with real cash
+        </label>
+        <input name="cycle_interval_seconds" type="number" min="30" value="14400"
+               title="Seconds between live trading cycles (default 14400 = 4 hours)">
+        <button type="submit" class="btn-small btn-danger">Enable Live Trading</button>
+      </form>
+      <div class="inline-form">
+        <button id="disable-live-trading-btn" type="button" class="btn-small">Disable Live Trading</button>
+        <button id="trigger-live-cycle-btn" type="button" class="btn-small">Run Live Cycle Now</button>
+      </div>
+      <h4>Real Trade History</h4>
+      <div id="live-trading-trades"></div>
+      <p class="panel-note">Reuses the SAME strategy (watchlist, position/trade/exposure limits)
+        as paper trading above — only execution differs. Every trade also passes a second,
+        independent absolute-dollar safety layer (per-trade cap, daily-loss circuit breaker) before
+        it ever reaches the broker; see <code>tasks/live_trading_safety.py</code>. Requires
+        <code>ALPACA_API_KEY</code>/<code>ALPACA_API_SECRET</code>/<code>ALPACA_BASE_URL</code> to
+        be configured — without an explicit live <code>ALPACA_BASE_URL</code>, orders can only ever
+        reach Alpaca's own paper simulator, never real money. Set
+        <code>LIVE_TRADING_KILL_SWITCH=1</code> to halt all live trading instantly, no deploy
+        required.</p>
+    </section>
+
     <section class="panel">
       <h3>Scheduled Jobs (recurring tasks)</h3>
       <div id="jobs-table"></div>

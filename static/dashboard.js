@@ -124,6 +124,9 @@
     setHtmlIfChanged("trading-trades", R.renderTradingTrades(data.trading_trades));
     setHtmlIfChanged("trading-strategy-versions",
       R.renderTradingStrategyVersions(data.trading_strategy_versions));
+    setHtmlIfChanged("live-trading-status", R.renderLiveTrading(data.live_trading));
+    setHtmlIfChanged("live-trading-trades",
+      R.renderLiveTradingTrades(data.live_trading ? data.live_trading.trades : []));
   }
 
   async function refresh() {
@@ -415,6 +418,55 @@
         await refresh();
       } catch (e) {
         showError("Failed to trigger strategy review: " + e.message);
+      }
+    });
+
+    document.getElementById("enable-live-trading-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      if (!f.confirm_real_money.checked) {
+        showError("Check the confirmation box to enable real-money trading.");
+        return;
+      }
+      if (!window.confirm(
+        "This enables LIVE trading with REAL cash through your connected Alpaca account. " +
+        "Are you sure?"
+      )) {
+        return;
+      }
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/live/enable`, {
+          method: "POST",
+          body: JSON.stringify({
+            confirm_real_money: true,
+            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 14400,
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to enable live trading: " + e.message);
+      }
+    });
+
+    document.getElementById("disable-live-trading-btn").addEventListener("click", async () => {
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/live/disable`, { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to disable live trading: " + e.message);
+      }
+    });
+
+    document.getElementById("trigger-live-cycle-btn").addEventListener("click", async () => {
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/live/cycle`, { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger live trading cycle: " + e.message);
       }
     });
 

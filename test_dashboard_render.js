@@ -744,6 +744,62 @@ test("renderTradingStrategyVersions never throws on malformed parameters JSON", 
   assert.ok(html.includes("Version 1"));
 });
 
+test("renderLiveTrading handles the no-portfolio-yet case", () => {
+  const html = R.renderLiveTrading(null);
+  assert.ok(html.includes("No trading portfolio yet"));
+});
+
+test("renderLiveTrading shows the disabled badge when live_trading_enabled is false", () => {
+  const view = { live_trading_enabled: false, portfolio_id: "port_1", trades: [],
+                 latest_snapshot: null, equity_history: [] };
+  const html = R.renderLiveTrading(view);
+  assert.ok(html.includes("disabled"));
+  assert.ok(!html.includes("LIVE — real money"));
+});
+
+test("renderLiveTrading shows the LIVE badge and real cash/equity from a snapshot", () => {
+  const view = {
+    live_trading_enabled: true, portfolio_id: "port_1", trades: [],
+    latest_snapshot: { cash_usd: 82.50, equity_usd: 97.10, open_positions: 1,
+                        strategy_version: 1, created_at: "2026-01-02 00:00:00" },
+    equity_history: [{ equity_usd: 100 }, { equity_usd: 97.10 }],
+  };
+  const html = R.renderLiveTrading(view);
+  assert.ok(html.includes("LIVE — real money"));
+  assert.ok(html.includes("$82.50") || html.includes("$82.5"));
+  assert.ok(html.includes("$97.10") || html.includes("$97.1"));
+  assert.ok(html.includes("strategy v1"));
+});
+
+test("renderLiveTradingTrades handles the empty case", () => {
+  const html = R.renderLiveTradingTrades([]);
+  assert.ok(html.includes("No live (real-money) trades yet"));
+});
+
+test("renderLiveTradingTrades shows real fill data and whether the live cap was applied", () => {
+  const trades = [
+    { created_at: "t1", side: "buy", symbol: "AAPL", quantity: 0.05, price_usd: 100,
+      realized_pnl_usd: null, confidence_level: "high", rationale: "Real order test.",
+      live_cap_applied: 0 },
+    { created_at: "t2", side: "sell", symbol: "AAPL", quantity: 0.05, price_usd: 110,
+      realized_pnl_usd: 0.50, confidence_level: "high", rationale: "Real order test 2.",
+      live_cap_applied: 1 },
+  ];
+  const html = R.renderLiveTradingTrades(trades);
+  assert.ok(html.includes("Real order test."));
+  assert.ok(html.includes("$0.50"));
+  assert.ok(html.includes("yes")); // the cap-applied row
+  assert.ok(html.includes("no"));  // the not-cap-applied row
+});
+
+test("renderLiveTradingTrades escapes rationale to prevent HTML injection", () => {
+  const trades = [{ created_at: "t1", side: "buy", symbol: "AAPL", quantity: 1, price_usd: 1,
+                     realized_pnl_usd: null, confidence_level: "low", live_cap_applied: 0,
+                     rationale: "<img src=x onerror=alert(1)>" }];
+  const html = R.renderLiveTradingTrades(trades);
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderGlobalStats sums agents/tasks across all businesses and formats real revenue", () => {
   const overview = {
     businesses: [{ id: "biz_1" }, { id: "biz_2" }],

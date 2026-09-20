@@ -177,6 +177,77 @@ button to trigger one immediately instead of waiting. A handful of
 tune exactly how overdue something needs to be before it's flagged, if
 the defaults don't fit your usage patterns.
 
+## Live Trading — REAL MONEY (currently OFF, opt-in per business)
+
+Everything under "Automated Stock Trading" above is paper (simulated)
+trading — safe by construction, since there's no brokerage integration
+anywhere in that path. Live trading is a *separate*, deliberately
+harder-to-reach feature that places real orders with real cash through
+[Alpaca](https://alpaca.markets) (a free brokerage API with its own
+built-in paper-trading endpoint, which this codebase also uses for
+testing). It stays fully OFF — structurally, not just by a flag not
+being set — until every one of the following is true:
+
+1. **`ALPACA_API_KEY`** / **`ALPACA_API_SECRET`** — from your Alpaca
+   dashboard. Without both set, any `live_trading_cycle` task refuses
+   to run at all (`alpaca_client.get_default_client()` raises rather
+   than silently falling back to a mock — see `alpaca_client.py`).
+2. **`ALPACA_BASE_URL`** — set this explicitly to
+   `https://api.alpaca.markets` to actually reach Alpaca's LIVE
+   endpoint. **This is the single most important line in this section.**
+   Leave it unset (or point it at Alpaca's own paper endpoint,
+   `https://paper-api.alpaca.markets`) and `AlpacaClient` defaults to
+   paper — real credentials alone are never enough to place a real
+   order. `_handle_live_trading_cycle` in `executor.py` also checks
+   this itself at runtime and refuses to proceed if it's still pointed
+   at paper, so a forgotten `ALPACA_BASE_URL` fails loudly instead of
+   quietly trading Alpaca's own paper simulator under a "live" label.
+3. **The owner enables it per business**, explicitly, from the
+   dashboard's "Live Trading" panel (`POST
+   /businesses/{id}/trading/live/enable` with
+   `confirm_real_money: true`) — there is no default or bulk-enable
+   path. This requires a paper trading portfolio (and its active
+   strategy — watchlist, position/trade/exposure limits) to already
+   exist for that business; live trading reuses it as-is rather than
+   having a separate "live strategy."
+
+Two independent safety layers apply to every trade, in order, before
+it ever reaches the broker:
+- The existing percentage-based limits in `tasks/trading_common.py` /
+  `tasks/trading_cycle.py` (same code paper trading already uses,
+  completely unchanged).
+- Absolute-dollar hard caps in `tasks/live_trading_safety.py`:
+  **`LIVE_TRADING_MAX_TRADE_USD`** (default `15.0`) caps any single
+  trade; **`LIVE_TRADING_MAX_DAILY_LOSS_USD`** (default `7.0`) halts
+  all further live trades — and pauses the live trading agent — once
+  today's *realized* losses reach it. These defaults are sized for a
+  small ~$100 starting live account; raise them deliberately as real
+  capital is added (see that file's own comments for the reasoning).
+
+**`LIVE_TRADING_KILL_SWITCH`** — set to `1`/`true`/`yes`/`on` to
+instantly halt all live trading across every business, checked fresh
+on every cycle. No redeploy, no dashboard access needed — this is the
+fastest possible emergency stop, meant for exactly that use.
+
+Real fills are recorded into `live_trades`/`live_snapshots` — tables
+kept deliberately separate from `paper_trades`/`trading_snapshots`, so
+a report or query that forgets a `WHERE` clause fails loudly (wrong or
+empty table) instead of silently blending real and simulated activity.
+
+**Before enabling this with real capital**: start with Alpaca's own
+paper endpoint (the default) to confirm the whole loop — order
+placement, fill polling, `live_trades` recording — behaves as expected
+using Alpaca's simulator, exactly the same way you'd test Stripe in
+test mode before going live above. Only then set `ALPACA_BASE_URL` to
+the real live endpoint. This sandbox has no route to Alpaca's API at
+all (no general internet access), so the actual network calls in
+`alpaca_client.py` have only ever been tested with a mock broker
+client (`MockAlpacaClient`) — see `test_alpaca_client_offline.py` and
+`test_executor_offline.py`'s `live_trading_cycle` tests for exactly
+what is and isn't covered. Treat the real Alpaca connection as
+unverified until you've watched it place and fill one small order
+yourself.
+
 ## After deploying, verify for real (don't just assume it works)
 1. Open `https://your-url/dashboard` — does it load?
 2. Create a business, an agent, a task — does the same flow that

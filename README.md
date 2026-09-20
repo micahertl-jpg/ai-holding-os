@@ -10,7 +10,8 @@ see `DEPLOY.md`.
 
 All six of the project spec's planned business verticals are built on
 that core: **Opportunity Discovery**, **Roblox Game Development**,
-**Automated Stock Trading** (paper trading only — see below), **App
+**Automated Stock Trading** (paper trading by default, with an
+explicitly opt-in real-money Live Trading mode — see below), **App
 Development Feasibility**, **Ops/Maintenance** (watches this system's
 own health — see below), and **Real Estate** (investment research
 only — see below).
@@ -32,15 +33,16 @@ payments" below.
   personally verified live by the owner with real purchases (Real
   Estate's storefront integration is built and offline/live-verified
   the same way, but not yet purchased for real — see its section below).
-- **SIMULATION, deliberately** (per the project spec's safety
-  requirements): Automated Stock Trading is paper trading only — there
-  is no brokerage integration anywhere in this codebase, structurally,
-  not as a config flag someone could flip. ARC (the internal agent
-  economy) never represents real money, even where agents "earn" or
-  "spend" it. Ops/Maintenance only ever recommends — it never acts on
-  its own findings. Real Estate is investment research only — never an
-  appraisal, never a brokered transaction, structurally incapable of
-  either (no code path exists that lists, offers, or negotiates a
+- **SIMULATION BY DEFAULT** (per the project spec's safety
+  requirements): Automated Stock Trading defaults to paper trading —
+  no brokerage integration is reachable unless the owner deliberately
+  opts a business into **Live Trading** (real money, real orders via
+  Alpaca — see "Live Trading — REAL MONEY" below). ARC (the internal
+  agent economy) never represents real money, even where agents "earn"
+  or "spend" it. Ops/Maintenance only ever recommends — it never acts
+  on its own findings. Real Estate is investment research only — never
+  an appraisal, never a brokered transaction, structurally incapable
+  of either (no code path exists that lists, offers, or negotiates a
   property).
 - **NOT YET BUILT:** none — all six of the project spec's planned
   verticals are built. See "Next real steps" for what's left overall.
@@ -460,7 +462,7 @@ working around it.
   below) — a real customer purchase, real Stripe payment, and a real
   emailed report were personally verified working end to end.
 
-## Automated Stock Trading — status (PAPER TRADING ONLY)
+## Automated Stock Trading — status (paper by default; Live Trading is separate, see below)
 
 Per the project spec's Trading Safety section: this is simulation only.
 There is no brokerage integration anywhere in this codebase — that's a
@@ -588,6 +590,106 @@ within a few seconds you should see a real decision with a stated
 confidence and rationale, and (if it decided to buy/sell) a real paper
 trade in the Trade History table. Try **Run Strategy Review Now** too,
 though it's more informative after a handful of real trades exist.
+
+## Live Trading — status (REAL MONEY, opt-in per business — see DEPLOY.md)
+
+A separate, deliberately harder-to-reach feature on top of everything
+above: it places real orders with real cash through
+[Alpaca](https://alpaca.markets), reusing the paper system's strategy
+(watchlist, position/trade/exposure limits) and its two safety
+guarantees ("model proposes, code disposes"; every limit is enforced in
+plain deterministic code, never trusted to the model) completely
+unchanged. See **DEPLOY.md's "Live Trading — REAL MONEY" section** for
+the full env var / enable checklist — this section only covers what was
+built and what was and wasn't verified.
+
+**What's new:**
+- `alpaca_client.py` — a real Alpaca brokerage client, stdlib-only
+  (`urllib`, same pattern as `market_data.py`). The core safety
+  property: `AlpacaClient` defaults to Alpaca's own PAPER endpoint even
+  when real credentials are configured — reaching the live endpoint
+  requires a separate, explicit `ALPACA_BASE_URL` env var, so
+  credentials alone can never place a real order. `MockAlpacaClient`
+  (always `is_paper=True`) is the explicit offline-test stand-in;
+  `get_default_client()` raises rather than silently falling back to
+  it when credentials are missing — unlike `market_data.py`'s mock
+  fallback, a live-trading task must fail loudly, never quietly no-op.
+- `tasks/live_trading_safety.py` — a SECOND, independent safety layer,
+  applied on top of (never instead of) the existing percentage-based
+  limits: `LIVE_TRADING_MAX_TRADE_USD` (absolute per-trade dollar cap,
+  default $15), `LIVE_TRADING_MAX_DAILY_LOSS_USD` (realized-loss
+  circuit breaker, default $7), and `LIVE_TRADING_KILL_SWITCH` (an env
+  var checked fresh every cycle — an instant, redeploy-free emergency
+  halt). Defaults are sized for a small ~$100 starting live account.
+- Schema: `paper_portfolios.live_trading_enabled` (owner-only switch,
+  off by default) plus two new tables, `live_trades`/`live_snapshots` —
+  deliberately separate from `paper_trades`/`trading_snapshots` so a
+  report that forgets a `WHERE` clause fails loudly instead of silently
+  blending real and simulated activity (both `schema.sql` and
+  `schema_postgres.sql`).
+- `executor.py`: `_handle_live_trading_cycle`, registered under task
+  type `live_trading_cycle` (`permission_level_required=4`, one tier
+  above paper's 3 — see `permission_levels.py`). Fetches cash/positions
+  fresh from Alpaca every cycle (never a locally-summed ledger), runs
+  the *exact same* `decide_trades()`/`apply_risk_limits()` from
+  `tasks/trading_cycle.py`, applies `apply_live_safety_caps()`, places
+  real orders, polls for a real fill (never assumes a placed order
+  filled), and records the REAL fill price/quantity — never the
+  pre-trade quoted price. A drawdown or daily-loss breach pauses the
+  live trading agent, same pattern as paper's circuit breaker.
+- New endpoints under `/businesses/{id}/trading/live/...`: `enable`
+  (requires `confirm_real_money: true` and an existing paper
+  portfolio/strategy; creates a Live Trading Agent and a recurring
+  scheduled job), `disable` (always safe, no confirmation needed — also
+  disables the scheduled job), a status/history read, and a manual
+  "run one cycle now" trigger.
+- A new dashboard panel, visually distinct (red accent) from the paper
+  panel: enable/disable controls (enabling requires an explicit
+  confirmation checkbox plus a JS `confirm()` prompt), real cash/
+  equity/open-positions, a real equity sparkline, and real trade
+  history (fill price/quantity, realized P&L, and whether the per-trade
+  cap was applied to each row).
+
+**What was actually verified in THIS build:**
+- `python3 -m py_compile` on every new/changed `.py` file; `node -e
+  "require(...)"` on the changed dashboard JS files.
+- The full offline suite: `test_alpaca_client_offline.py` (15 checks —
+  including the paper-by-default safety property, that a rejected
+  order never returns a fabricated success, and that `get_default_
+  client()` never silently falls back to a mock), `test_live_trading_
+  safety_offline.py` (14 checks — every clamp boundary, the daily-loss
+  halt, the kill switch, pinning the exact $15/$7/$2 default values),
+  7 new `test_executor_offline.py` cases (DB-integration level: a real
+  order executed through a fake broker client and recorded with its
+  REAL fill data, refusing to run when live trading isn't enabled,
+  respecting the kill switch, refusing when the broker client is still
+  pointed at paper even with live trading enabled, a broker-rejected
+  order never being recorded as a trade, a realized daily loss pausing
+  the live agent, and a missing-portfolio task failing loudly), and 8
+  new `test_dashboard_render.js` checks. Every pre-existing test in
+  this repo still passes unchanged.
+- Schema changes applied cleanly and verified on both SQLite (direct
+  `Database()` instantiation) and a real local Postgres database
+  (`psql -f schema_postgres.sql`, confirmed table structure).
+
+**What was NOT verified** (this sandbox has no general internet access
+at all, so there is no route to Alpaca's real API from here, unlike
+Anthropic/Stripe/Resend which at least had network access attempted
+elsewhere in this project):
+- Any actual network call to Alpaca — order placement, fill polling,
+  account/position fetching — has only ever been exercised against
+  `MockAlpacaClient` (or a thin same-shaped test double reporting
+  `is_paper=False`), never a real Alpaca account, not even their own
+  paper-trading endpoint.
+- The new dashboard panel's forms (Enable/Disable Live Trading, Run
+  Live Cycle Now) clicked through in a real browser by a human.
+- A real `live_trading_cycle` task running against real market prices,
+  a real model decision, and an order actually filling at Alpaca.
+
+**Before risking real capital**, follow DEPLOY.md's checklist: verify
+the whole loop against Alpaca's own paper endpoint first (the default —
+real network behavior, zero real-money risk), and only then set
+`ALPACA_BASE_URL` to the live one.
 
 ## App Development — status
 
@@ -1103,6 +1205,13 @@ next.
   loudly with a clear error instead of trading on fabricated prices —
   this is intentional, not a bug, but it means the feature does nothing
   visible until the key is set.
+- **For Live Trading (REAL MONEY, optional, off by default):** nothing
+  to do unless you want this — paper trading above needs none of it.
+  See `DEPLOY.md`'s "Live Trading — REAL MONEY" section for the full
+  checklist: `ALPACA_API_KEY`/`ALPACA_API_SECRET`/`ALPACA_BASE_URL`
+  (the live endpoint is never the default — see that section), then an
+  explicit per-business opt-in from the dashboard's Live Trading panel.
+  `LIVE_TRADING_KILL_SWITCH` halts it instantly if you ever need to.
 - **For dashboard access:** set `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD`
   as Railway variables — without both set, every internal route
   (including `/dashboard` itself) fails closed with a 503, on purpose

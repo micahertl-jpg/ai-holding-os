@@ -612,6 +612,28 @@ button { position: relative; overflow: hidden; }
   line-height: 1.5;
 }
 
+/* ---------- Live Trading (real money) ---------- */
+
+.panel-live-trading::before {
+  background: linear-gradient(90deg, var(--red) 0%, transparent 65%);
+}
+.panel-live-trading {
+  animation: risk-high-breathe 3s ease-in-out infinite;
+}
+.confirm-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.confirm-checkbox input { width: auto; }
+.btn-danger {
+  color: var(--red);
+  border-color: var(--red);
+}
+.btn-danger:hover { background: rgba(255,107,107,0.12); box-shadow: 0 0 10px rgba(255,107,107,0.3); }
+
 .opportunities-list { display: flex; flex-direction: column; gap: 14px; }
 
 .opportunity-card {
