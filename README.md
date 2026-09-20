@@ -935,7 +935,8 @@ appraisal.
   yield, price trend assessment, and risk factors, with a Remove
   button), mirroring the other research panels exactly.
 - **Storefront**: a fourth product, "Real Estate Investment Research
-  Report" ($19, `STORE_PRICE_REAL_ESTATE_CENTS` to override), added to
+  Report" ($5 — priced lower than the other three's $19 default,
+  `STORE_PRICE_REAL_ESTATE_CENTS` to override either way), added to
   `PRODUCT_CATALOG`, `fulfillment.py`'s report-email builder, and
   `store-legal.html`'s disclaimer (a dedicated paragraph stating this
   is not an appraisal and not the advice of a licensed professional).
