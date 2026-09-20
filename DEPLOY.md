@@ -44,12 +44,24 @@ as a separate later task.
    it, `trading_cycle` tasks fail loudly instead of trading on fabricated
    prices, which is correct behavior but means the feature is otherwise
    invisible.
-6. Railway should detect the `Dockerfile` and build/deploy from it. If
+6. Set **`DASHBOARD_USERNAME`** and **`DASHBOARD_PASSWORD`** — this is
+   what actually protects `/dashboard` and everything under it (every
+   business's data, the ARC ledger, agent controls) with HTTP Basic
+   Auth (see `dashboard_auth.py`). It fails CLOSED: without both set,
+   every internal route returns 503 rather than silently staying open,
+   so skipping this step doesn't leave you exposed — it just means the
+   dashboard itself won't load until you set them. Pick a real random
+   password, not something guessable; failed attempts are rate-limited
+   (`DASHBOARD_LOGIN_RATE_LIMIT_MAX` / `DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS`,
+   default 10 per 5 minutes per IP) but that's a backstop, not a
+   substitute for a strong password.
+7. Railway should detect the `Dockerfile` and build/deploy from it. If
    it instead tries to auto-detect Python directly, that's fine too —
    it'll pick up `requirements.txt`. Either path should work; if one
    fails, try forcing Docker build in Railway's settings.
-7. Once deployed, Railway gives you a public URL
-   (`something.up.railway.app`). Open `https://that-url/dashboard`.
+8. Once deployed, Railway gives you a public URL
+   (`something.up.railway.app`). Open `https://that-url/dashboard` and
+   log in with the username/password from step 6.
 
 ## If you'd rather use Render or Fly.io instead
 The Dockerfile is portable — the app itself doesn't change.

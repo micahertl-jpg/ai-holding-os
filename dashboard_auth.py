@@ -23,6 +23,12 @@ Fails CLOSED, not open: if DASHBOARD_USERNAME/DASHBOARD_PASSWORD aren't
 configured, every protected route refuses access (503) rather than
 silently staying open. Consistent with how this codebase treats every
 other missing credential (ANTHROPIC_API_KEY, STRIPE_SECRET_KEY, etc.).
+
+This module only checks whether a given set of credentials is correct
+-- it has no concept of a client IP or a request, on purpose, to stay
+stdlib-only and directly testable. Rate-limiting failed login attempts
+(so this one static password can't be brute-forced) is api.py's
+require_dashboard_auth() middleware's job, using rate_limiter.py.
 """
 
 import base64

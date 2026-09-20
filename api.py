@@ -124,6 +124,21 @@ def _client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
+
+# The entire internal dashboard/API sits behind one static HTTP Basic
+# Auth password (dashboard_auth.py) with no other protection -- without
+# this, it could be brute-forced indefinitely. Only FAILED attempts
+# count toward the limit (via blocked()/allow(), not the simpler
+# allow()-gates-everything pattern used for checkout above): the
+# dashboard's own browser session re-sends valid credentials on every
+# request while polling every few seconds, and that legitimate traffic
+# must never itself trip the limiter.
+DASHBOARD_LOGIN_RATE_LIMIT_MAX = int(os.environ.get("DASHBOARD_LOGIN_RATE_LIMIT_MAX", "10"))
+DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS = float(
+    os.environ.get("DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS", "300"))
+_dashboard_login_rate_limiter = RateLimiter(
+    DASHBOARD_LOGIN_RATE_LIMIT_MAX, DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS)
+
 # ---------------------------------------------------------------------
 # Wiring — one shared Database + one instance of each module for the
 # life of the process, created at startup and closed at shutdown.
@@ -204,7 +219,12 @@ async def require_dashboard_auth(request: Request, call_next):
     the environment, every protected route returns 503 rather than
     silently staying open. This matches how the rest of this codebase
     treats a missing credential (ANTHROPIC_API_KEY, STRIPE_SECRET_KEY,
-    etc.) — refuse loudly, never degrade silently."""
+    etc.) — refuse loudly, never degrade silently.
+
+    Also rate-limits failed login attempts per client IP (see
+    DASHBOARD_LOGIN_RATE_LIMIT_MAX above) — this one static password is
+    otherwise the only thing standing between anyone who finds the URL
+    and every business's data, so it must not be brute-forceable."""
     path = request.url.path
 
     if dashboard_auth.is_public_path(path):
@@ -217,8 +237,16 @@ async def require_dashboard_auth(request: Request, call_next):
                                 "and DASHBOARD_PASSWORD to enable access."},
         )
 
+    client_ip = _client_ip(request)
+    if _dashboard_login_rate_limiter.blocked(client_ip):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many failed login attempts — please wait and try again."},
+        )
+
     auth_header = request.headers.get("authorization")
     if not dashboard_auth.check_credentials(auth_header):
+        _dashboard_login_rate_limiter.allow(client_ip)
         return JSONResponse(
             status_code=401,
             content={"detail": "Authentication required."},
