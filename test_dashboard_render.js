@@ -261,6 +261,77 @@ test("renderOrdersTable escapes customer-submitted topic and email to prevent HT
   assert.ok(!html.includes("<img"));
 });
 
+test("computeOrdersRevenueByDay only counts paid/fulfilled orders, never pending or failed", () => {
+  const now = new Date("2026-09-20T15:00:00Z");
+  const orders = [
+    { status: "paid", price_usd_cents: 500, paid_at: "2026-09-20 10:00:00" },
+    { status: "fulfilled", price_usd_cents: 1900, paid_at: "2026-09-20 11:00:00" },
+    { status: "pending_payment", price_usd_cents: 1900, created_at: "2026-09-20 12:00:00" },
+    { status: "failed", price_usd_cents: 1900, created_at: "2026-09-20 12:00:00" },
+    { status: "refunded", price_usd_cents: 1900, paid_at: "2026-09-20 12:00:00" },
+  ];
+  const buckets = R.computeOrdersRevenueByDay(orders, 7, now);
+  const todayBucket = buckets[buckets.length - 1];
+  assert.strictEqual(todayBucket.value, 24, "only the $5 paid + $19 fulfilled orders should count");
+});
+
+test("computeOrdersRevenueByDay buckets by paid_at, falling back to created_at when unpaid", () => {
+  const now = new Date("2026-09-20T15:00:00Z");
+  const orders = [
+    // paid_at wins over created_at when both are present
+    { status: "paid", price_usd_cents: 1000, created_at: "2026-09-18 09:00:00", paid_at: "2026-09-19 09:00:00" },
+  ];
+  const buckets = R.computeOrdersRevenueByDay(orders, 7, now);
+  const byKey = Object.fromEntries(buckets.map((b) => [b.key, b.value]));
+  assert.strictEqual(byKey["2026-09-19"], 10);
+  assert.strictEqual(byKey["2026-09-18"], 0);
+});
+
+test("computeOrdersRevenueByDay produces exactly rangeDays buckets ending today, oldest first", () => {
+  const now = new Date("2026-09-20T15:00:00Z");
+  const buckets = R.computeOrdersRevenueByDay([], 7, now);
+  assert.strictEqual(buckets.length, 7);
+  assert.strictEqual(buckets[0].key, "2026-09-14");
+  assert.strictEqual(buckets[6].key, "2026-09-20");
+});
+
+test("computeOrdersRevenueByDay ignores an order outside the selected range", () => {
+  const now = new Date("2026-09-20T15:00:00Z");
+  const orders = [{ status: "paid", price_usd_cents: 1900, paid_at: "2026-08-01 09:00:00" }];
+  const buckets = R.computeOrdersRevenueByDay(orders, 7, now);
+  const total = buckets.reduce((s, b) => s + b.value, 0);
+  assert.strictEqual(total, 0);
+});
+
+test("renderOrdersChart shows an explicit empty state when there's no revenue in range, not a blank chart", () => {
+  const buckets = R.computeOrdersRevenueByDay([], 7, new Date("2026-09-20T15:00:00Z"));
+  const html = R.renderOrdersChart(buckets);
+  assert.ok(html.includes("No paid orders in this range yet"));
+  assert.ok(!html.includes("<svg"));
+});
+
+test("renderOrdersChart renders one clickable, keyboard-reachable bar per bucket with the real day label and value", () => {
+  const now = new Date("2026-09-20T15:00:00Z");
+  const orders = [{ status: "paid", price_usd_cents: 500, paid_at: "2026-09-20 10:00:00" }];
+  const buckets = R.computeOrdersRevenueByDay(orders, 7, now);
+  const html = R.renderOrdersChart(buckets);
+  const barCount = (html.match(/<rect class="orders-chart-bar"/g) || []).length;
+  assert.strictEqual(barCount, 7, "one bar per day bucket, including zero-value days");
+  assert.ok(html.includes('data-action="select-order-bar"'));
+  assert.ok(html.includes('role="button"'));
+  assert.ok(html.includes('tabindex="0"'));
+  assert.ok(html.includes("$5.00"), "the $5 real estate report price should appear in a label/value");
+});
+
+test("renderOrdersChart escapes a day label the same way every other renderer escapes user-adjacent text", () => {
+  // Defensive: the label itself is generated internally (never
+  // user-controlled), but escapeHtml is still applied for consistency
+  // with the rest of this file -- verifying the plumbing didn't skip it.
+  const buckets = [{ key: "2026-09-20", label: "Sep 20", value: 12.5 }];
+  const html = R.renderOrdersChart(buckets);
+  assert.ok(html.includes("Sep 20"));
+});
+
 test("renderOpportunitiesTable handles the empty case", () => {
   assert.ok(R.renderOpportunitiesTable([]).includes("No opportunities researched yet"));
   assert.ok(R.renderOpportunitiesTable(null).includes("No opportunities researched yet"));

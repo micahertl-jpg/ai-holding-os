@@ -981,3 +981,57 @@ select:focus, input:focus {
   .core-node-value { font-size: 11px; }
   .core-node-label { font-size: 6px; }
 }
+
+/* ---------- Revenue trend chart ---------- */
+
+.chart-range-toggle { display: flex; gap: 6px; margin-bottom: 14px; }
+.btn-range { padding: 5px 12px; font-size: 10px; }
+.btn-range[aria-pressed="true"] {
+  background: var(--accent);
+  color: #04222b;
+  box-shadow: 0 0 12px rgba(34,211,238,0.45);
+}
+.btn-range[aria-pressed="true"]:hover { box-shadow: 0 0 14px rgba(34,211,238,0.55); }
+
+.orders-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.orders-chart-grid { stroke: var(--border); stroke-width: 1; }
+.orders-chart-axis-label {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.orders-chart-bar {
+  fill: var(--accent-dim);
+  cursor: pointer;
+  transition: fill 0.15s ease;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: bar-grow-y 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.orders-chart-bar:hover, .orders-chart-bar:focus-visible { fill: var(--accent); outline: none; }
+.orders-chart-bar.selected { fill: var(--amber); }
+@keyframes bar-grow-y { from { transform: scaleY(0.04); } }
+
+.chart-selection {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--amber);
+  min-height: 1.4em;
+  margin: 8px 0 0 0;
+}
+
+.chart-tooltip {
+  position: fixed;
+  transform: translate(-50%, -130%);
+  background: rgba(10,20,32,0.95);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  padding: 5px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+}
+.chart-tooltip.hidden { display: none; }

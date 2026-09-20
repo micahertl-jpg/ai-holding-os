@@ -296,6 +296,7 @@
     research_opportunity: "Opportunity Research",
     research_roblox_trend: "Roblox Trend Research",
     research_app_feasibility: "App Feasibility",
+    research_real_estate: "Real Estate Research",
   };
 
   function orderProductLabel(productType) {
@@ -326,6 +327,97 @@
             <th>Price</th><th>Status</th><th>Created</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
+      </div>`;
+  }
+
+  // Aggregates real orders into one bar per calendar day for the last
+  // `rangeDays` days (today inclusive), counting only orders whose
+  // payment actually succeeded ("paid" or "fulfilled") -- a pending or
+  // failed checkout never collected money, and a refund would overstate
+  // it, so both are excluded. Dates are compared as plain "YYYY-MM-DD"
+  // prefixes of the stored timestamp (paid_at, falling back to
+  // created_at) rather than parsed through Date/toISOString: SQLite and
+  // Postgres serialize timestamps slightly differently, and slicing the
+  // first 10 characters works identically for both without risking a
+  // timezone-driven off-by-one-day shift. `now` is an injectable clock
+  // (defaults to the real current time) purely so this is deterministic
+  // to unit test.
+  const ORDER_REVENUE_STATUSES = { paid: true, fulfilled: true };
+  function computeOrdersRevenueByDay(orders, rangeDays, now) {
+    const days = rangeDays || 7;
+    const today = now || new Date();
+    const buckets = [];
+    const indexByKey = {};
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+      const key = d.toISOString().slice(0, 10);
+      const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+      indexByKey[key] = buckets.length;
+      buckets.push({ key, label, value: 0 });
+    }
+    for (const o of orders || []) {
+      if (!ORDER_REVENUE_STATUSES[o.status]) continue;
+      const raw = o.paid_at || o.created_at;
+      if (!raw || !/^\d{4}-\d{2}-\d{2}/.test(String(raw))) continue;
+      const idx = indexByKey[String(raw).slice(0, 10)];
+      if (idx === undefined) continue; // outside the selected range
+      buckets[idx].value += (o.price_usd_cents || 0) / 100;
+    }
+    return buckets;
+  }
+
+  // Pure SVG bar-chart renderer over already-bucketed data (see
+  // computeOrdersRevenueByDay) -- kept separate from the aggregation
+  // above so each half can be unit tested with hand-built fixtures,
+  // matching computeOverviewCounts/renderGlobalStats's existing split.
+  // Bars carry data-action="select-order-bar" so dashboard.js's single
+  // delegated click handler can pick them up like every other button
+  // here, plus role/tabindex so they're keyboard-reachable.
+  function renderOrdersChart(buckets) {
+    if (!buckets || buckets.length === 0) {
+      return '<p class="empty">No data for this range.</p>';
+    }
+    const total = buckets.reduce((s, b) => s + b.value, 0);
+    if (total <= 0) {
+      return '<p class="empty">No paid orders in this range yet.</p>';
+    }
+    const width = 640, height = 200, padL = 46, padR = 8, padT = 10, padB = 24;
+    const innerW = width - padL - padR, innerH = height - padT - padB;
+    const max = Math.max(...buckets.map((b) => b.value)) * 1.15 || 1;
+    const gap = innerW / buckets.length;
+    const barW = Math.max(2, gap * 0.62);
+    const labelStep = buckets.length <= 7 ? 1 : buckets.length <= 30 ? 5 : 15;
+
+    const gridLines = [0.33, 0.66, 1]
+      .map((f) => {
+        const y = padT + innerH * (1 - f);
+        return `<line class="orders-chart-grid" x1="${padL}" x2="${width - padR}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" />` +
+          `<text class="orders-chart-axis-label" x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end">${fmtUsd(max * f)}</text>`;
+      })
+      .join("");
+    const baseline = `<line class="orders-chart-grid" x1="${padL}" x2="${width - padR}" y1="${(padT + innerH).toFixed(1)}" y2="${(padT + innerH).toFixed(1)}" />`;
+
+    const bars = buckets
+      .map((b, i) => {
+        const x = padL + i * gap + (gap - barW) / 2;
+        const barH = (b.value / max) * innerH;
+        const y = padT + innerH - barH;
+        const showLabel = i % labelStep === 0 || i === buckets.length - 1;
+        const labelEl = showLabel
+          ? `<text class="orders-chart-axis-label" x="${(x + barW / 2).toFixed(1)}" y="${height - 8}" text-anchor="middle">${escapeHtml(b.label)}</text>`
+          : "";
+        return `<rect class="orders-chart-bar" data-action="select-order-bar" data-label="${escapeHtml(b.label)}" ` +
+          `data-value="${b.value.toFixed(2)}" tabindex="0" role="button" ` +
+          `aria-label="${escapeHtml(b.label)}: ${fmtUsd(b.value)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" ` +
+          `width="${barW.toFixed(1)}" height="${Math.max(1, barH).toFixed(1)}" rx="2"></rect>${labelEl}`;
+      })
+      .join("");
+
+    return `
+      <div class="orders-chart">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily revenue for the selected range">
+          ${gridLines}${baseline}${bars}
+        </svg>
       </div>`;
   }
 
@@ -906,6 +998,8 @@
     orderStatusClass,
     orderStatusLabel,
     renderOrdersTable,
+    computeOrdersRevenueByDay,
+    renderOrdersChart,
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
     renderAppFeasibilityTable,
