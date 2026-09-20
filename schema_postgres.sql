@@ -264,3 +264,17 @@ CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
     reference_urls_used TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Ops/Maintenance — see schema.sql for the full explanation; this
+-- mirrors it exactly.
+CREATE TABLE IF NOT EXISTS ops_maintenance_reports (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    overall_severity TEXT,
+    findings TEXT,
+    confidence_level TEXT,
+    summary TEXT,
+    metrics_snapshot TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

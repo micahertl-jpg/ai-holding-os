@@ -140,6 +140,52 @@ _dashboard_login_rate_limiter = RateLimiter(
     DASHBOARD_LOGIN_RATE_LIMIT_MAX, DASHBOARD_LOGIN_RATE_LIMIT_WINDOW_SECONDS)
 
 # ---------------------------------------------------------------------
+# Ops/Maintenance — the sixth business vertical, and the only one with
+# no owner setup step: unlike the storefront (needs Stripe/Resend keys)
+# or Automated Stock Trading (needs an Alpha Vantage key + clicking
+# "Enable Auto-Trading"), watching this system's own health needs
+# nothing beyond the ANTHROPIC_API_KEY every other vertical already
+# requires -- so it's provisioned automatically at startup, not behind
+# a button. See tasks/ops_maintenance_review.py.
+# ---------------------------------------------------------------------
+OPS_BUSINESS_NAME = "System Operations"
+OPS_BUSINESS_TYPE = "ops_maintenance"
+OPS_REVIEW_INTERVAL_SECONDS = int(os.environ.get("OPS_REVIEW_INTERVAL_SECONDS", "86400"))  # 24h
+
+
+def ensure_ops_business_provisioned(db, businesses, agents, banker, jobs):
+    """Idempotent: creates the internal 'System Operations' business, an
+    Ops Monitor agent, and a recurring ops_maintenance_review scheduled
+    job the first time this runs; a no-op on every later call (every
+    startup after the first, and /ops/review's own defensive re-check).
+    Returns the business_id either way, so callers never need a second
+    lookup."""
+    existing = db.query_one("SELECT id FROM businesses WHERE type=?", (OPS_BUSINESS_TYPE,))
+    if existing:
+        return existing["id"]
+
+    business_id = businesses.create(
+        OPS_BUSINESS_NAME, OPS_BUSINESS_TYPE,
+        "Monitor this system's own infrastructure and produce maintenance "
+        "recommendations for the owner -- never acts on its own findings.",
+    )
+    agent_id = agents.create(
+        business_id, "Ops Monitor", role="Systems Maintenance Analyst",
+        department="ops", model="unassigned", permission_level=2,
+    )
+    agents.set_status(agent_id, "idle")
+    banker.allocate(business_id, agent_id, 100.0,
+                     reason="starting ARC runway for automated ops/maintenance reviews")
+    jobs.create(
+        business_id, "System health review", "Review this system's own infrastructure health",
+        interval_seconds=OPS_REVIEW_INTERVAL_SECONDS, permission_level_required=2,
+        task_type="ops_maintenance_review",
+    )
+    db.audit("system", "ops_business_provisioned", "business", business_id, {})
+    return business_id
+
+
+# ---------------------------------------------------------------------
 # Wiring — one shared Database + one instance of each module for the
 # life of the process, created at startup and closed at shutdown.
 # ---------------------------------------------------------------------
@@ -157,6 +203,9 @@ async def lifespan(app: FastAPI):
     state["approvals"] = ApprovalQueue(db)
     state["orchestrator"] = Orchestrator(db, state["banker"], state["approvals"])
     state["jobs"] = JobRegistry(db)
+
+    ensure_ops_business_provisioned(db, state["businesses"], state["agents"],
+                                     state["banker"], state["jobs"])
 
     stop_event = threading.Event()
     scheduler_thread = threading.Thread(
@@ -571,6 +620,10 @@ def overview():
         for r in db.query("SELECT entry_type, SUM(amount) as total FROM arc_ledger GROUP BY entry_type")
     }
 
+    latest_ops_report = row_to_dict(db.query_one(
+        "SELECT * FROM ops_maintenance_reports ORDER BY created_at DESC LIMIT 1"
+    ))
+
     return {
         "businesses": businesses_overview,
         "pending_approvals": [row_to_dict(r) for r in state["approvals"].pending()],
@@ -578,7 +631,40 @@ def overview():
         "tasks_by_status": tasks_by_status,
         "real_revenue_usd_cents": real_revenue_usd_cents,
         "global_arc": global_arc,
+        "latest_ops_report": latest_ops_report,
     }
+
+
+# ---------------------------------------------------------------------
+# Ops/Maintenance — the sixth business vertical, and the only one with
+# no customer/storefront product (see tasks/ops_maintenance_review.py
+# and executor.py's _handle_ops_maintenance_review). System-wide, not
+# scoped to whichever business the owner happens to have selected —
+# same reasoning as /overview's global rollups above.
+# ---------------------------------------------------------------------
+
+@app.get("/ops/reports")
+def list_ops_reports():
+    return [row_to_dict(r) for r in state["db"].query(
+        "SELECT * FROM ops_maintenance_reports ORDER BY created_at DESC LIMIT 20"
+    )]
+
+
+@app.post("/ops/review")
+def trigger_ops_review():
+    """Manually trigger one ops_maintenance_review task right now,
+    outside its scheduled job -- for testing or an on-demand check.
+    Re-provisions the ops business/agent/job if somehow missing (a
+    no-op the vast majority of the time — see ensure_ops_business_provisioned,
+    already called once at startup)."""
+    business_id = ensure_ops_business_provisioned(
+        state["db"], state["businesses"], state["agents"], state["banker"], state["jobs"],
+    )
+    task_id = state["orchestrator"].create_task(
+        business_id, "Review this system's own infrastructure health",
+        permission_level_required=2, task_type="ops_maintenance_review",
+    )
+    return {"task_id": task_id}
 
 
 # ---------------------------------------------------------------------

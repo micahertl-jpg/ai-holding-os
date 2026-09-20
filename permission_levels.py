@@ -22,7 +22,10 @@ let an agent do), but two have real enforced behavior, noted below:
 2  RECOMMEND             - can produce a recommendation/assessment for
                            a human or higher-clearance agent to act on.
                            The storefront's paid research tasks require
-                           this level.
+                           this level, as does 'ops_maintenance_review'
+                           (recommend-only by design — it never acts on
+                           its own findings; see
+                           tasks/ops_maintenance_review.py).
 3  SIMULATE              - can run a simulation / paper / no-real-effect
                            version of an action. Backed by a real task
                            type as of the Automated Stock Trading

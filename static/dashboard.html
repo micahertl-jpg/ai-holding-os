@@ -46,6 +46,18 @@
         approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
     </section>
 
+    <section class="panel">
+      <h3>System Health — Ops/Maintenance</h3>
+      <div id="ops-report"></div>
+      <button id="trigger-ops-review-btn" type="button" class="btn-small">Run Ops Review Now</button>
+      <p class="panel-note">Watches this system's own infrastructure (stuck tasks/approvals/
+        orders, silent scheduled jobs, database growth, recent errors, missing optional config)
+        and only ever recommends — it never restarts, deletes, or changes anything on its own.
+        Runs automatically every
+        <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
+        the approvals panel above.</p>
+    </section>
+
     <section class="panel panel-scanner">
       <h3>Command Center Overview</h3>
       <div id="global-stats"></div>

@@ -21,7 +21,9 @@ directly-testable pass; `run_forever()` is the thin sleep-loop that can
 only really be verified by running the server.
 """
 
+import html
 import json
+import os
 import threading
 
 from llm_client import get_default_client, CostTrackingClient
@@ -35,9 +37,20 @@ from tasks.trading_cycle import run_trading_cycle, TradingCycleError
 from tasks.trading_strategy_review import (
     compute_stats, propose_strategy_update, TradingStrategyReviewError,
 )
+from tasks.ops_maintenance_review import (
+    collect_system_metrics, analyze_system_health, OpsMaintenanceReviewError,
+)
 import market_data
 from db import new_id
 from permission_levels import HUMAN_ONLY_LEVEL
+from emailer import send_email, EmailError
+
+# Same optional alert address fulfillment.py uses for a failed storefront
+# order -- one "tell the owner something needs a look" address, reused
+# here for a warning/critical ops report. Unset by default; a missing
+# OWNER_EMAIL never blocks the review itself from running and saving.
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
+OPS_ALERT_SEVERITIES = {"warning", "critical"}
 
 # ---------------------------------------------------------------------
 # ARC accounting policy for the executor's task handlers.
@@ -497,6 +510,70 @@ def _handle_trading_strategy_review(task_row, client, db):
     return result_text, cost_arc, reward_arc
 
 
+# ---------------------------------------------------------------------
+# Ops/Maintenance — the sixth business vertical, and the only one with
+# no customer/storefront product: it watches this system's OWN
+# infrastructure and produces a recommend-only report for the owner.
+# See tasks/ops_maintenance_review.py.
+# ---------------------------------------------------------------------
+
+def _notify_owner_of_ops_report(report_id, severity, summary, db):
+    """Best-effort alert for a warning/critical ops report -- same
+    pattern as fulfillment.py's _notify_owner_of_failed_order: a missing
+    OWNER_EMAIL or a broken Resend send must never affect the report
+    that's already correctly saved, or crash the executor. Only ever
+    logged via the audit trail either way."""
+    if not OWNER_EMAIL:
+        return
+    subject = f"[{severity.upper()}] Ops/Maintenance review found something"
+    body = f"""
+    <div style="font-family:sans-serif;max-width:600px;">
+      <h2>System health review: {html.escape(severity)}</h2>
+      <p>{html.escape(summary)}</p>
+      <p style="color:#666;font-size:12px;">Report id: {html.escape(report_id)} -- see the
+        dashboard's System Health panel for the full findings list. This system only ever
+        recommends; nothing was changed automatically.</p>
+    </div>
+    """
+    try:
+        send_email(OWNER_EMAIL, subject, body)
+        db.audit("executor", "owner_ops_report_alert_sent", "ops_maintenance_report", report_id, {})
+    except EmailError as e:
+        db.audit("executor", "owner_ops_report_alert_failed", "ops_maintenance_report", report_id,
+                  {"error": str(e)})
+
+
+def _handle_ops_maintenance_review(task_row, client, db):
+    metrics = collect_system_metrics(db)
+
+    tracked_client = CostTrackingClient(client)
+    report = analyze_system_health(metrics, tracked_client)
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    report_id = new_id("ops")
+    db.execute(
+        "INSERT INTO ops_maintenance_reports (id, business_id, task_id, overall_severity, "
+        "findings, confidence_level, summary, metrics_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (report_id, task_row["business_id"], task_row["id"], report["overall_severity"],
+         json.dumps(report["findings"]), report["confidence_level"], report["summary"],
+         json.dumps(metrics)),
+    )
+    db.audit("executor", "ops_maintenance_reviewed", "ops_maintenance_report", report_id,
+              {"overall_severity": report["overall_severity"], "finding_count": len(report["findings"])})
+
+    if report["overall_severity"] in OPS_ALERT_SEVERITIES:
+        _notify_owner_of_ops_report(report_id, report["overall_severity"], report["summary"], db)
+
+    result_text = (
+        f"Ops/Maintenance review saved (id={report_id}, severity={report['overall_severity']}, "
+        f"{len(report['findings'])} finding(s)): {report['summary']}"
+    )
+    reward_arc = CONFIDENCE_REWARD_ARC.get(report["confidence_level"], 0.0)
+    return result_text, cost_arc, reward_arc
+
+
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).
 # 'manual' is deliberately absent — those tasks are never auto-executed.
 HANDLERS = {
@@ -506,6 +583,7 @@ HANDLERS = {
     "research_app_feasibility": _handle_research_app_feasibility,
     "trading_cycle": _handle_trading_cycle,
     "trading_strategy_review": _handle_trading_strategy_review,
+    "ops_maintenance_review": _handle_ops_maintenance_review,
 }
 
 

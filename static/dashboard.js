@@ -71,6 +71,7 @@
     setHtmlIfChanged("businesses-overview-table", R.renderBusinessesOverviewTable(data.businesses));
     setHtmlIfChanged("system-core-center", R.renderSystemCoreCenter(data));
     setHtmlIfChanged("core-orbital-overlay", R.renderOrbitalRing(data));
+    setHtmlIfChanged("ops-report", R.renderOpsReport(data.latest_ops_report));
   }
 
   async function loadDashboard() {
@@ -359,6 +360,17 @@
         await refresh();
       } catch (e) {
         showError("Failed to trigger strategy review: " + e.message);
+      }
+    });
+
+    document.getElementById("trigger-ops-review-btn").addEventListener("click", async () => {
+      // Business-independent -- no currentBusinessId guard needed, unlike
+      // the trading triggers above.
+      try {
+        await api("/ops/review", { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger ops review: " + e.message);
       }
     });
 

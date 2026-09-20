@@ -153,6 +153,25 @@ mode** (test-mode keys, and Stripe's published test card
 4. Only after that succeeds, switch `STRIPE_SECRET_KEY`/
    `STRIPE_WEBHOOK_SECRET` to live-mode values.
 
+## Ops/Maintenance — watches this system's own health (no setup needed)
+
+Unlike every other vertical, this one needs nothing beyond the
+`ANTHROPIC_API_KEY` you already have set — a "System Operations"
+business, an Ops Monitor agent, and a recurring review job are created
+automatically the first time the app starts (idempotent — safe on
+every later restart/redeploy too). It watches this system's own stuck
+tasks/approvals/orders, silent scheduled jobs, database growth, recent
+errors, and missing optional config, and produces a recommend-only
+report on the dashboard's "System Health" panel — it never restarts,
+deletes, or changes anything on its own.
+
+Optional: `OPS_REVIEW_INTERVAL_SECONDS` (default 86400 = 24h) controls
+how often it runs on its own; use the panel's "Run Ops Review Now"
+button to trigger one immediately instead of waiting. A handful of
+`OPS_*_THRESHOLD_HOURS` env vars (see `tasks/ops_maintenance_review.py`)
+tune exactly how overdue something needs to be before it's flagged, if
+the defaults don't fit your usage patterns.
+
 ## After deploying, verify for real (don't just assume it works)
 1. Open `https://your-url/dashboard` — does it load?
 2. Create a business, an agent, a task — does the same flow that

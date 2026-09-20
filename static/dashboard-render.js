@@ -763,6 +763,54 @@
       </div>`;
   }
 
+  // Maps an ops report's severity to the same shared status vocabulary
+  // used everywhere else (completed=green, awaiting_approval=amber,
+  // failed=red) -- "ok"/"info" both read as healthy at a glance, since
+  // neither needs the owner's attention.
+  function opsSeverityClass(severity) {
+    if (severity === "warning") return "status-awaiting_approval";
+    if (severity === "critical") return "status-failed";
+    return "status-completed"; // ok | info
+  }
+
+  function renderOpsReport(report) {
+    if (!report) {
+      return '<p class="empty">No ops review has run yet.</p>';
+    }
+    const findings = (() => {
+      try {
+        return JSON.parse(report.findings || "[]");
+      } catch (e) {
+        return [];
+      }
+    })();
+    const findingsHtml = findings.length
+      ? findings
+          .map(
+            (f) => `
+            <div class="approval-card">
+              <div class="approval-desc">
+                <strong><span class="status ${opsSeverityClass(f.severity)}">${escapeHtml(f.severity)}</span>
+                ${escapeHtml(f.category)}</strong>
+                <div>${escapeHtml(f.description)}</div>
+                <div class="panel-note">Recommendation: ${escapeHtml(f.recommendation)}</div>
+              </div>
+            </div>`
+          )
+          .join("")
+      : '<p class="empty">No findings — everything looked healthy.</p>';
+    return `
+      <div class="approval-card">
+        <div class="approval-desc">
+          <strong><span class="status ${opsSeverityClass(report.overall_severity)}">${escapeHtml(report.overall_severity)}</span>
+          Confidence: ${escapeHtml(report.confidence_level)}</strong>
+          <div>${escapeHtml(report.summary)}</div>
+          <div class="panel-note">Reviewed ${escapeHtml(report.created_at)}</div>
+        </div>
+      </div>
+      ${findingsHtml}`;
+  }
+
   function renderBusinessesOverviewTable(businesses) {
     if (!businesses || businesses.length === 0) {
       return '<p class="empty">No businesses yet — create one below.</p>';
@@ -819,6 +867,8 @@
     renderOpportunitiesTable,
     renderRobloxTrendsTable,
     renderAppFeasibilityTable,
+    opsSeverityClass,
+    renderOpsReport,
     renderGlobalStats,
     renderBusinessesOverviewTable,
     renderTradingPortfolio,
