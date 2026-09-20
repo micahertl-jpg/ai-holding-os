@@ -19,7 +19,28 @@ from approval import ApprovalQueue
 from orchestrator import Orchestrator
 from llm_client import MockClient
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS
+from alpaca_client import MockAlpacaClient, AlpacaError
 import executor
+
+
+class _FakeLiveAlpacaClient(MockAlpacaClient):
+    """A MockAlpacaClient look-alike that reports is_paper=False, so
+    these tests can exercise _handle_live_trading_cycle's real-order
+    path without a real network connection. alpaca_client.MockAlpacaClient
+    itself is always is_paper=True BY DESIGN (see
+    test_alpaca_client_offline.py's test_mock_client_is_paper_is_always_true
+    -- a mock must never be able to represent a live-money connection in
+    production code). This subclass exists only here, as a test double
+    standing in for "an operator who has genuinely configured a live
+    connection" -- it changes nothing about that production guarantee."""
+    is_paper = False
+
+
+class _FailingLiveAlpacaClient(_FakeLiveAlpacaClient):
+    """Simulates a broker that rejects every order -- for testing that
+    a rejected real order is never recorded as a fill."""
+    def place_order(self, *args, **kwargs):
+        raise AlpacaError("simulated broker rejection")
 
 
 class _FakeMarketClient:
@@ -630,6 +651,197 @@ def test_trading_cycle_without_a_portfolio_fails_loudly():
     os.remove(TEST_DB_PATH)
 
 
+def _setup_live_trading(db, biz_id, live_trading_enabled=1, drawdown_halt_pct=None):
+    """Creates a permission_level=4 live-trading agent plus a fresh
+    paper_portfolios row (with live_trading_enabled set as given) and
+    active v1 strategy for biz_id -- live_trading_cycle reuses the same
+    trading_strategy_versions row paper trading does. Returns
+    (live_agent_id, portfolio_id, params). Deliberately a small starting
+    cash_usd/cash figure (100.0) -- irrelevant to paper_portfolios itself
+    (never touched by the live handler) but matches the fake broker's
+    starting cash in the tests below, keeping the numbers easy to reason
+    about."""
+    agents = AgentRegistry(db)
+    live_agent_id = agents.create(biz_id, "Live Trading Agent", role="Real-Money Trading Executor",
+                                   permission_level=4)
+    agents.set_status(live_agent_id, "idle")
+
+    portfolio_id = new_id("port")
+    db.execute(
+        "INSERT INTO paper_portfolios (id, business_id, starting_cash_usd, cash_usd, "
+        "live_trading_enabled) VALUES (?, ?, ?, ?, ?)",
+        (portfolio_id, biz_id, 100.0, 100.0, live_trading_enabled),
+    )
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    if drawdown_halt_pct is not None:
+        params["drawdown_halt_pct"] = drawdown_halt_pct
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+        "rationale, source, active) VALUES (?, ?, 1, ?, ?, 'system', 1)",
+        (new_id("strat"), biz_id, json.dumps(params), "Initial default strategy parameters."),
+    )
+    return live_agent_id, portfolio_id, params
+
+
+def test_live_trading_cycle_task_executes_a_real_order_and_records_it():
+    db, orch, biz_id, agent_id = _setup()
+    live_agent_id, portfolio_id, params = _setup_live_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+
+    canned = json.dumps({"decisions": [
+        {"symbol": s, "action": "buy" if s == "AAPL" else "hold",
+         "confidence_level": "high", "size_pct": 0.05, "rationale": "test rationale"}
+        for s in params["watchlist"]
+    ]})
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+    fake_alpaca = _FakeLiveAlpacaClient(cash=100.0, quote_prices={"AAPL": 100.0})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market), \
+         patch("executor.get_default_alpaca_client", return_value=fake_alpaca):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=canned))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    trades = db.query("SELECT * FROM live_trades WHERE portfolio_id=?", (portfolio_id,))
+    assert len(trades) == 1 and trades[0]["symbol"] == "AAPL" and trades[0]["side"] == "buy"
+    assert trades[0]["alpaca_order_id"] == "mock-order-1"
+    assert trades[0]["rationale"] == "test rationale"
+
+    snapshots = db.query("SELECT * FROM live_snapshots WHERE portfolio_id=?", (portfolio_id,))
+    assert len(snapshots) == 1, "the snapshot's cash/equity must come from the broker, not " \
+                                 "a locally-summed ledger"
+    print("PASS: a live_trading_cycle task places a real order through the broker client, "
+          "records the REAL fill into live_trades, and snapshots real account state")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_refuses_when_live_trading_not_enabled():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_live_trading(db, biz_id, live_trading_enabled=0)
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "not enabled" in outcomes[0][1]
+    print("PASS: a live_trading_cycle task refuses to run (and never touches the broker at "
+          "all) unless live_trading_enabled is explicitly set on the portfolio")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_respects_the_kill_switch():
+    db, orch, biz_id, agent_id = _setup()
+    live_agent_id, portfolio_id, params = _setup_live_trading(db, biz_id)
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+    with patch.dict("tasks.live_trading_safety.os.environ",
+                     {"LIVE_TRADING_KILL_SWITCH": "1"}, clear=False):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "KILL_SWITCH" in outcomes[0][1]
+    trades = db.query("SELECT * FROM live_trades WHERE portfolio_id=?", (portfolio_id,))
+    assert trades == [], "the kill switch must block a cycle before it ever reaches the broker"
+    print("PASS: LIVE_TRADING_KILL_SWITCH halts a live_trading_cycle task before it ever "
+          "contacts the broker, no matter what the strategy would have decided")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_refuses_when_broker_client_is_still_pointed_at_paper():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_live_trading(db, biz_id)
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+    with patch("executor.get_default_alpaca_client", return_value=MockAlpacaClient()):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "PAPER endpoint" in outcomes[0][1]
+    print("PASS: a broker connection still pointed at Alpaca's paper endpoint is refused even "
+          "with live trading enabled -- a paper fill can never be recorded as a live trade")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_records_no_trade_when_the_broker_rejects_the_order():
+    db, orch, biz_id, agent_id = _setup()
+    live_agent_id, portfolio_id, params = _setup_live_trading(db, biz_id)
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+
+    canned = json.dumps({"decisions": [
+        {"symbol": s, "action": "buy" if s == "AAPL" else "hold",
+         "confidence_level": "high", "size_pct": 0.05, "rationale": "test rationale"}
+        for s in params["watchlist"]
+    ]})
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+    fake_alpaca = _FailingLiveAlpacaClient(cash=100.0, quote_prices={"AAPL": 100.0})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market), \
+         patch("executor.get_default_alpaca_client", return_value=fake_alpaca):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=canned))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    trades = db.query("SELECT * FROM live_trades WHERE portfolio_id=?", (portfolio_id,))
+    assert trades == [], "a broker-rejected order must never be recorded as a real trade"
+    print("PASS: a broker-rejected order is never recorded into live_trades, and the task "
+          "still completes rather than crashing the whole cycle over one rejected order")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_daily_loss_halt_pauses_the_live_agent():
+    db, orch, biz_id, agent_id = _setup()
+    live_agent_id, portfolio_id, params = _setup_live_trading(db, biz_id)
+    # Seed a realized loss from earlier today already past the default
+    # $7 live daily-loss cap -- this alone should halt the cycle even
+    # though today's new decisions are all 'hold'.
+    db.execute(
+        "INSERT INTO live_trades (id, portfolio_id, alpaca_order_id, symbol, side, quantity, "
+        "price_usd, realized_pnl_usd, confidence_level, rationale, strategy_version) "
+        "VALUES (?, ?, 'seed-order', 'AAPL', 'sell', 1.0, 90.0, -50.0, 'high', 'seed', 1)",
+        (new_id("ltr"), portfolio_id),
+    )
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+    canned = json.dumps({"decisions": [
+        {"symbol": s, "action": "hold", "confidence_level": "high", "size_pct": 0.0, "rationale": "x"}
+        for s in params["watchlist"]
+    ]})
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+    fake_alpaca = _FakeLiveAlpacaClient(cash=100.0, quote_prices={"AAPL": 100.0})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market), \
+         patch("executor.get_default_alpaca_client", return_value=fake_alpaca):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=canned))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    agent = db.query_one("SELECT * FROM agents WHERE id=?", (live_agent_id,))
+    assert agent["status"] == "paused", agent["status"]
+    print("PASS: a realized loss already past the live daily-loss cap pauses the live "
+          "trading agent, even on a cycle with no new executed trades")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_live_trading_cycle_without_a_portfolio_fails_loudly():
+    db, orch, biz_id, agent_id = _setup()
+    agents = AgentRegistry(db)
+    live_agent_id = agents.create(biz_id, "Live Trading Agent", role="x", permission_level=4)
+    agents.set_status(live_agent_id, "idle")
+
+    task_id = orch.create_task(biz_id, "Run a live (real-money) trading cycle",
+                                permission_level_required=4, task_type="live_trading_cycle")
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "portfolio" in outcomes[0][1]
+    print("PASS: a live_trading_cycle task with no trading portfolio at all fails loudly "
+          "with a clear error, never silently no-ops")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_trading_strategy_review_task_promotes_a_new_validated_version():
     db, orch, biz_id, agent_id = _setup()
     trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
@@ -765,6 +977,13 @@ if __name__ == "__main__":
     test_trading_cycle_task_executes_a_paper_trade_and_records_a_snapshot()
     test_trading_cycle_drawdown_halt_pauses_the_trading_agent()
     test_trading_cycle_without_a_portfolio_fails_loudly()
+    test_live_trading_cycle_task_executes_a_real_order_and_records_it()
+    test_live_trading_cycle_refuses_when_live_trading_not_enabled()
+    test_live_trading_cycle_respects_the_kill_switch()
+    test_live_trading_cycle_refuses_when_broker_client_is_still_pointed_at_paper()
+    test_live_trading_cycle_records_no_trade_when_the_broker_rejects_the_order()
+    test_live_trading_cycle_daily_loss_halt_pauses_the_live_agent()
+    test_live_trading_cycle_without_a_portfolio_fails_loudly()
     test_trading_strategy_review_task_promotes_a_new_validated_version()
     test_trading_strategy_review_rejects_an_out_of_bounds_proposal()
     test_ops_maintenance_review_task_gets_executed_and_saved()

@@ -38,6 +38,18 @@ let an agent do), but two have real enforced behavior, noted below:
                            a real order. See tasks/trading_cycle.py.
 4  EXECUTE_LOW_RISK       - can take a real, low-risk, easily-reversible
                            action with no spending budget attached.
+                           'live_trading_cycle' (real-money stock
+                           trading via Alpaca) defaults to this level —
+                           one tier above paper trading's 3, staying
+                           auto-executable per this system's "fully
+                           autonomous within hard caps" design, while
+                           every order it places still passes through
+                           TWO independent safety layers first: the
+                           existing percentage limits in
+                           tasks/trading_common.py AND the absolute-
+                           dollar caps + kill switch in
+                           tasks/live_trading_safety.py. See
+                           executor.py's _handle_live_trading_cycle.
 5  EXECUTE_WITH_BUDGET    - can take a real action that spends ARC/real
                            resources, but only within its own budget
                            (banker.py's existing balance checks apply).

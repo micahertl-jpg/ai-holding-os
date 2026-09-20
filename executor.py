@@ -25,6 +25,7 @@ import html
 import json
 import os
 import threading
+import time
 
 from llm_client import get_default_client, CostTrackingClient
 from tasks.summarize_urls import summarize_urls
@@ -38,10 +39,14 @@ from tasks.trading_cycle import run_trading_cycle, TradingCycleError
 from tasks.trading_strategy_review import (
     compute_stats, propose_strategy_update, TradingStrategyReviewError,
 )
+from tasks.live_trading_safety import (
+    apply_live_safety_caps, is_kill_switch_active, LIVE_MAX_DAILY_LOSS_USD,
+)
 from tasks.ops_maintenance_review import (
     collect_system_metrics, analyze_system_health, OpsMaintenanceReviewError,
 )
 import market_data
+from alpaca_client import get_default_client as get_default_alpaca_client, AlpacaError
 from db import new_id
 from permission_levels import HUMAN_ONLY_LEVEL
 from emailer import send_email, EmailError
@@ -550,6 +555,232 @@ def _handle_trading_strategy_review(task_row, client, db):
 
 
 # ---------------------------------------------------------------------
+# Automated Stock Trading — LIVE (REAL MONEY). Reuses the exact same
+# decide_trades()/apply_risk_limits() pair from tasks/trading_cycle.py
+# as paper trading, completely unchanged ("model proposes, code
+# disposes" — see that module's docstring). Two differences from
+# _handle_trading_cycle above: (1) cash/positions/equity come from
+# Alpaca's own account every cycle, never from a locally-summed ledger
+# (alpaca_client.py's "source of truth from the broker" contract —
+# paper_portfolios.cash_usd is never touched by this handler), and (2)
+# every executed trade passes through tasks/live_trading_safety.py's
+# apply_live_safety_caps() — a second, independent absolute-dollar
+# layer — AFTER apply_risk_limits() and BEFORE any real order is
+# placed. Results are recorded into live_trades/live_snapshots, tables
+# deliberately separate from paper_trades/trading_snapshots so a report
+# that forgets a WHERE clause fails loudly rather than silently
+# blending real and simulated activity.
+# ---------------------------------------------------------------------
+
+# A freshly-placed order often comes back "accepted"/"new", not yet
+# filled. These are the statuses this handler treats as final — no
+# more polling needed either because a real fill (or partial fill)
+# happened, or because the order will clearly never fill.
+TERMINAL_ORDER_STATUSES = {
+    "filled", "partially_filled", "canceled", "expired", "rejected",
+    "done_for_day", "stopped",
+}
+LIVE_ORDER_FILL_POLL_SECONDS = 1.0
+LIVE_ORDER_FILL_TIMEOUT_SECONDS = 30.0
+
+
+def _poll_order_until_filled(alpaca, order):
+    """Polls get_order() until a terminal status is reached or a
+    bounded timeout elapses. Never fabricates a fill -- returns
+    whatever Alpaca's own get_order() last reported, filled or not, so
+    the caller records exactly what really happened rather than
+    assuming a placed order means a filled order."""
+    if order.get("status") in TERMINAL_ORDER_STATUSES:
+        return order
+    order_id = order["id"]
+    waited = 0.0
+    while waited < LIVE_ORDER_FILL_TIMEOUT_SECONDS:
+        time.sleep(LIVE_ORDER_FILL_POLL_SECONDS)
+        waited += LIVE_ORDER_FILL_POLL_SECONDS
+        order = alpaca.get_order(order_id)
+        if order.get("status") in TERMINAL_ORDER_STATUSES:
+            return order
+    return order
+
+
+def _handle_live_trading_cycle(task_row, client, db):
+    business_id = task_row["business_id"]
+    strategy_row, strategy_params = _get_active_trading_strategy(db, business_id)
+    portfolio = _get_trading_portfolio(db, business_id)
+    if not portfolio.get("live_trading_enabled"):
+        raise ValueError(
+            "live trading is not enabled for this business's portfolio -- the owner must "
+            "explicitly enable it first (POST /businesses/{id}/trading/live/enable)"
+        )
+    if is_kill_switch_active():
+        raise RuntimeError(
+            "LIVE_TRADING_KILL_SWITCH is active -- all live trading is halted until it's cleared"
+        )
+
+    alpaca = get_default_alpaca_client()
+    if alpaca.is_paper:
+        # get_default_alpaca_client() only ever returns a real
+        # AlpacaClient, but that client itself defaults to Alpaca's
+        # PAPER endpoint unless ALPACA_BASE_URL is explicitly set to
+        # the live one -- catching that here turns what would silently
+        # be a no-op (a "live" task that only ever touches Alpaca's
+        # simulator) into a loud, actionable error, and prevents a
+        # paper fill from ever being recorded into live_trades.
+        raise RuntimeError(
+            "live trading is enabled but this client is talking to Alpaca's PAPER endpoint "
+            "(ALPACA_BASE_URL is not set to the live one) -- set "
+            "ALPACA_BASE_URL=https://api.alpaca.markets to actually place real orders"
+        )
+
+    account = alpaca.get_account()
+    live_positions = alpaca.get_positions()
+    positions = [{"symbol": p["symbol"], "quantity": p["quantity"],
+                  "avg_cost_usd": p["avg_entry_price"]} for p in live_positions]
+    positions_by_symbol = {p["symbol"]: p for p in positions}
+
+    recent = [_row_to_dict(r) for r in db.query(
+        "SELECT * FROM live_trades WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 10",
+        (portfolio["id"],),
+    )]
+    recent_trades_summary = "\n".join(
+        f"- {r['side']} {r['quantity']:.4f} {r['symbol']} @ ${r['price_usd']:.2f}"
+        + (f" (realized P&L ${r['realized_pnl_usd']:+.2f})"
+           if r["side"] == "sell" and r["realized_pnl_usd"] is not None else "")
+        + (f" — {r['rationale']}" if r.get("rationale") else "")
+        for r in recent
+    )
+
+    tracked_client = CostTrackingClient(client)
+    result = run_trading_cycle(
+        account["cash"], positions, strategy_params, recent_trades_summary,
+        market_data.get_default_client(), tracked_client,
+    )
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    today_pnl_row = db.query_one(
+        "SELECT COALESCE(SUM(realized_pnl_usd), 0) as pnl FROM live_trades "
+        "WHERE portfolio_id=? AND side='sell' AND date(created_at) = date('now')",
+        (portfolio["id"],),
+    )
+    todays_realized_pnl = today_pnl_row["pnl"] if today_pnl_row else 0.0
+
+    capped_trades = apply_live_safety_caps(result["trades"], todays_realized_pnl)
+
+    lines = [f"Live trading cycle starting. Cash ${account['cash']:.2f}, "
+             f"equity ${account['equity']:.2f}, {len(positions)} open position(s)."]
+    cycle_realized_pnl = 0.0
+    for t in capped_trades:
+        if not t["executed"]:
+            lines.append(f"  skipped {t['action']} {t['symbol']}: {t['skip_reason']}")
+            continue
+
+        notional_usd = t["quantity"] * t["price"]
+        try:
+            order = alpaca.place_order(t["symbol"], t["side"], notional_usd)
+            order = _poll_order_until_filled(alpaca, order)
+        except AlpacaError as e:
+            db.audit("executor", "live_order_failed", "agent", task_row["agent_id"], {
+                "business_id": business_id, "symbol": t["symbol"], "side": t["side"],
+                "notional_usd": notional_usd, "error": str(e),
+            })
+            lines.append(f"  ORDER FAILED {t['side'].upper()} ~${notional_usd:.2f} {t['symbol']}: {e}")
+            continue
+
+        filled_qty = float(order.get("filled_qty") or 0)
+        filled_price = float(order.get("filled_avg_price") or 0)
+        if filled_qty <= 0 or filled_price <= 0:
+            # Placed but never confirmed filled within the poll window (or
+            # rejected/canceled without a fill) -- never fabricate a trade
+            # row for a real order that didn't actually execute.
+            db.audit("executor", "live_order_unconfirmed", "agent", task_row["agent_id"], {
+                "business_id": business_id, "symbol": t["symbol"], "side": t["side"],
+                "order_id": order.get("id"), "status": order.get("status"),
+            })
+            lines.append(f"  ORDER UNCONFIRMED {t['side'].upper()} {t['symbol']} "
+                         f"(id={order.get('id')}, status={order.get('status')}) -- no fill recorded")
+            continue
+
+        existing = positions_by_symbol.get(t["symbol"], {"quantity": 0.0, "avg_cost_usd": 0.0})
+        realized_pnl = None
+        if t["side"] == "sell":
+            realized_pnl = (filled_price - existing["avg_cost_usd"]) * filled_qty
+            cycle_realized_pnl += realized_pnl
+
+        db.execute(
+            "INSERT INTO live_trades (id, portfolio_id, task_id, alpaca_order_id, symbol, side, "
+            "quantity, price_usd, realized_pnl_usd, confidence_level, rationale, "
+            "strategy_version, live_cap_applied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id("ltr"), portfolio["id"], task_row["id"], order.get("id"), t["symbol"],
+             t["side"], filled_qty, filled_price, realized_pnl, t["confidence_level"],
+             t["rationale"], strategy_row["version"], 1 if t.get("live_cap_applied") else 0),
+        )
+        lines.append(f"  EXECUTED {t['side'].upper()} {filled_qty:.4f} {t['symbol']} "
+                     f"@ ${filled_price:.2f} [{t['confidence_level']}]"
+                     + (" (cap-clamped)" if t.get("live_cap_applied") else "")
+                     + f" — {t['rationale']}")
+
+    # Source of truth is the broker, always -- re-fetch after every order
+    # this cycle so the snapshot reflects exactly what Alpaca itself now
+    # holds, never a locally-summed guess.
+    final_account = alpaca.get_account()
+    final_positions = alpaca.get_positions()
+    open_positions_count = sum(1 for p in final_positions if p["quantity"] > 0)
+
+    db.execute(
+        "INSERT INTO live_snapshots (id, portfolio_id, strategy_version, equity_usd, "
+        "cash_usd, open_positions) VALUES (?, ?, ?, ?, ?, ?)",
+        (new_id("lsnap"), portfolio["id"], strategy_row["version"], final_account["equity"],
+         final_account["cash"], open_positions_count),
+    )
+
+    peak_row = db.query_one(
+        "SELECT MAX(equity_usd) as peak FROM live_snapshots WHERE portfolio_id=?",
+        (portfolio["id"],),
+    )
+    peak_equity = (peak_row["peak"] if peak_row and peak_row["peak"] is not None
+                   else final_account["equity"])
+    drawdown_pct = ((peak_equity - final_account["equity"]) / peak_equity) if peak_equity > 0 else 0.0
+    drawdown_halted = drawdown_pct >= strategy_params["drawdown_halt_pct"]
+
+    todays_realized_pnl_after = todays_realized_pnl + cycle_realized_pnl
+    daily_loss_halted = todays_realized_pnl_after <= -abs(LIVE_MAX_DAILY_LOSS_USD)
+
+    halted = drawdown_halted or daily_loss_halted
+    if halted:
+        halt_reasons = []
+        if drawdown_halted:
+            halt_reasons.append(f"drawdown {drawdown_pct:.1%} >= threshold "
+                                 f"{strategy_params['drawdown_halt_pct']:.1%}")
+        if daily_loss_halted:
+            halt_reasons.append(f"today's realized P&L ${todays_realized_pnl_after:.2f} <= "
+                                 f"-${LIVE_MAX_DAILY_LOSS_USD:.2f} daily loss cap")
+        db.audit("executor", "live_trading_halt", "agent", task_row["agent_id"], {
+            "business_id": business_id, "reasons": halt_reasons,
+            "equity_usd": final_account["equity"], "peak_equity_usd": peak_equity,
+            "todays_realized_pnl_usd": todays_realized_pnl_after,
+        })
+        lines.append(f"*** LIVE TRADING HALTED: {'; '.join(halt_reasons)} -- agent paused, "
+                     f"owner review required to resume. ***")
+
+    result_text = "\n".join(lines)
+
+    reward_arc = TRADING_CYCLE_BASE_REWARD_ARC
+    if cycle_realized_pnl > 0:
+        reward_arc += min(cycle_realized_pnl * TRADING_PNL_REWARD_ARC_PER_USD,
+                           TRADING_PNL_REWARD_ARC_CAP)
+
+    # Same optional 4th-element mechanism _handle_trading_cycle uses --
+    # see run_once() below. complete_task() would otherwise silently
+    # reset the agent to 'idle' right after a halt this handler just
+    # applied.
+    if halted:
+        return result_text, cost_arc, reward_arc, "paused"
+    return result_text, cost_arc, reward_arc
+
+
+# ---------------------------------------------------------------------
 # Ops/Maintenance — the sixth business vertical, and the only one with
 # no customer/storefront product: it watches this system's OWN
 # infrastructure and produces a recommend-only report for the owner.
@@ -623,6 +854,7 @@ HANDLERS = {
     "research_real_estate": _handle_research_real_estate,
     "trading_cycle": _handle_trading_cycle,
     "trading_strategy_review": _handle_trading_strategy_review,
+    "live_trading_cycle": _handle_live_trading_cycle,
     "ops_maintenance_review": _handle_ops_maintenance_review,
 }
 

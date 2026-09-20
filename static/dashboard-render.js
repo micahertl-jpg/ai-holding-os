@@ -717,6 +717,70 @@
       </table>`;
   }
 
+  function renderLiveTrading(view) {
+    if (!view) {
+      return '<p class="empty">No trading portfolio yet — create a paper trading portfolio ' +
+        'above first, then enable live trading below.</p>';
+    }
+    const snap = view.latest_snapshot;
+    const history = view.equity_history || [];
+    const sparkline = renderSparkline(history.map((h) => ({ value: h.equity_usd })), { color: "var(--red)" });
+    const statusBadge = view.live_trading_enabled
+      ? '<span class="status status-failed">LIVE — real money</span>'
+      : '<span class="status status-idle">disabled</span>';
+    return `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Status</span><span class="value">${statusBadge}</span></div>
+        <div class="arc-stat"><span class="label">Real Cash</span><span class="value">${
+          snap ? fmtUsd(snap.cash_usd) : "n/a"
+        }</span></div>
+        <div class="arc-stat"><span class="label">Real Equity</span><span class="value">${
+          snap ? fmtUsd(snap.equity_usd) : "n/a"
+        }</span></div>
+        <div class="arc-stat"><span class="label">Open positions</span><span class="value">${
+          snap ? escapeHtml(snap.open_positions) : "0"
+        }</span></div>
+      </div>
+      <div class="sparkline-block">
+        <div class="stat-bars-title">Real equity trend (last ${history.length} snapshots)</div>
+        ${sparkline}
+      </div>
+      <p class="panel-note">${
+        snap
+          ? `Last real snapshot: ${escapeHtml(snap.created_at)} (strategy v${escapeHtml(snap.strategy_version)}).`
+          : "No live trading cycle has run yet."
+      }</p>`;
+  }
+
+  function renderLiveTradingTrades(trades) {
+    if (!trades || trades.length === 0) {
+      return '<p class="empty">No live (real-money) trades yet.</p>';
+    }
+    const rows = trades
+      .map((t) => {
+        const hasPnl = t.realized_pnl_usd !== null && t.realized_pnl_usd !== undefined;
+        return `
+        <tr>
+          <td>${escapeHtml(t.created_at)}</td>
+          <td><span class="status ${t.side === "buy" ? "status-idle" : "status-working"}">${escapeHtml(t.side)}</span></td>
+          <td>${escapeHtml(t.symbol)}</td>
+          <td>${Number(t.quantity).toFixed(4)}</td>
+          <td>${fmtUsd(t.price_usd)}</td>
+          <td>${hasPnl ? fmtUsd(t.realized_pnl_usd) : "—"}</td>
+          <td>${t.live_cap_applied ? "yes" : "no"}</td>
+          <td>${escapeHtml(t.confidence_level || "")}</td>
+          <td>${escapeHtml(t.rationale || "")}</td>
+        </tr>`;
+      })
+      .join("");
+    return `
+      <table class="data-table">
+        <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
+          <th>Realized P&amp;L</th><th>Cap Applied</th><th>Confidence</th><th>Rationale</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
   function renderTradingStrategyVersions(versions) {
     if (!versions || versions.length === 0) {
       return '<p class="empty">No strategy versions yet.</p>';
@@ -1012,6 +1076,8 @@
     renderTradingPositions,
     renderTradingTrades,
     renderTradingStrategyVersions,
+    renderLiveTrading,
+    renderLiveTradingTrades,
   };
 
   if (typeof module !== "undefined" && module.exports) {

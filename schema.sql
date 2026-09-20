@@ -221,6 +221,16 @@ CREATE TABLE IF NOT EXISTS paper_portfolios (
     agent_id TEXT REFERENCES agents(id),
     starting_cash_usd REAL NOT NULL,
     cash_usd REAL NOT NULL,
+    -- Owner-controlled switch for THIS business's real-money trading —
+    -- off by default, and staying off is what keeps every other
+    -- account on this system paper-only even after live trading exists
+    -- in the codebase. Only ever flipped by an explicit owner action on
+    -- the dashboard (see api.py's set-live-trading-enabled endpoint),
+    -- never by the model or by any default. See alpaca_client.py and
+    -- tasks/live_trading_safety.py for the rest of the real-money
+    -- safety design (paper-by-default broker endpoint, hard dollar
+    -- caps, a separate kill switch).
+    live_trading_enabled INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -288,6 +298,52 @@ CREATE TABLE IF NOT EXISTS trading_snapshots (
     portfolio_id TEXT REFERENCES paper_portfolios(id),
     strategy_version INTEGER,
     equity_usd REAL NOT NULL,         -- cash + mark-to-market open positions
+    cash_usd REAL NOT NULL,
+    open_positions INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Real-money trading (see alpaca_client.py, tasks/live_trading_safety.py,
+-- executor.py's _handle_live_trading_cycle). Deliberately separate
+-- tables from paper_trades/trading_snapshots, not a shared table with
+-- an is_live flag -- real and simulated activity must never be
+-- reachable by the same unfiltered query, so a report or dashboard
+-- panel that forgets a WHERE clause fails loudly (wrong table/empty
+-- result) instead of silently blending real trades into a paper
+-- report or vice versa.
+--
+-- Append-only real trade log, structurally parallel to paper_trades.
+-- price_usd is always the REAL fill price Alpaca reports back, never
+-- the pre-trade quote used to size the order -- real fills can differ
+-- from the quoted price (slippage), and this table must reflect what
+-- actually happened to real money, not what was requested.
+CREATE TABLE IF NOT EXISTS live_trades (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    task_id TEXT REFERENCES tasks(id),
+    alpaca_order_id TEXT NOT NULL,    -- traces every row back to the real broker order
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,               -- buy | sell
+    quantity REAL NOT NULL,           -- the REAL filled quantity, not the requested one
+    price_usd REAL NOT NULL,          -- the REAL fill price, not the pre-trade quote
+    realized_pnl_usd REAL,            -- set for 'sell' only
+    confidence_level TEXT,
+    rationale TEXT,
+    strategy_version INTEGER NOT NULL,
+    live_cap_applied INTEGER DEFAULT 0,  -- true if live_trading_safety.py clamped this trade's size
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Real equity history, fetched fresh from Alpaca's own account endpoint
+-- every live cycle -- never derived from locally-summed cash/positions,
+-- so it can never silently drift from what the broker actually holds.
+-- Powers the live equity curve and the drawdown circuit breaker, the
+-- same role trading_snapshots plays for paper.
+CREATE TABLE IF NOT EXISTS live_snapshots (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    strategy_version INTEGER,
+    equity_usd REAL NOT NULL,         -- real equity, straight from Alpaca's /v2/account
     cash_usd REAL NOT NULL,
     open_positions INTEGER NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))

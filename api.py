@@ -516,6 +516,13 @@ class EnableAutoTradingRequest(BaseModel):
     review_interval_seconds: int = 86400   # 24 hours
 
 
+class EnableLiveTradingRequest(BaseModel):
+    # Deliberately no default of True -- the owner must actively set
+    # this exact field on every call to turn on real-money trading.
+    confirm_real_money: bool = False
+    cycle_interval_seconds: int = 14400    # 4 hours, same default as paper
+
+
 # ---------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------
@@ -765,6 +772,7 @@ def business_dashboard(business_id: str):
     trading_strategy_versions = [row_to_dict(r) for r in db.query(
         "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version DESC",
         (business_id,))]
+    live_trading = _live_trading_view(business_id)
     return {
         "business": row_to_dict(biz),
         "agents": agents,
@@ -780,6 +788,7 @@ def business_dashboard(business_id: str):
         "trading_portfolio": trading_portfolio,
         "trading_trades": trading_trades,
         "trading_strategy_versions": trading_strategy_versions,
+        "live_trading": live_trading,
     }
 
 
@@ -1356,6 +1365,171 @@ def enable_auto_trading(business_id: str, req: EnableAutoTradingRequest):
         "review_job_id": review_job_id,
         "portfolio": _trading_portfolio_view(business_id),
     }
+
+
+# ---------------------------------------------------------------------
+# Automated Stock Trading — LIVE (REAL MONEY). Everything below this
+# point can place real orders against real cash once
+# live_trading_enabled=1 on a business's paper_portfolios row AND
+# ALPACA_API_KEY/ALPACA_API_SECRET/ALPACA_BASE_URL are all configured
+# (see alpaca_client.py's paper-by-default safety default, and
+# executor.py's _handle_live_trading_cycle for the two independent
+# safety layers applied to every trade before it reaches the broker).
+# live_trading_cycle tasks reuse the SAME active trading_strategy_
+# versions row as paper trading -- there is deliberately no separate
+# "live strategy"; only execution differs.
+# ---------------------------------------------------------------------
+
+def _live_trading_view(business_id: str):
+    db = state["db"]
+    portfolio = db.query_one("SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not portfolio:
+        return None
+    trades = [row_to_dict(r) for r in db.query(
+        "SELECT * FROM live_trades WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 100",
+        (portfolio["id"],),
+    )]
+    latest_snapshot = db.query_one(
+        "SELECT * FROM live_snapshots WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 1",
+        (portfolio["id"],),
+    )
+    # Real recorded equity only, oldest-first, same 30-point cap as the
+    # paper sparkline -- never synthesized or backfilled.
+    equity_history = [row_to_dict(r) for r in db.query(
+        "SELECT equity_usd, created_at FROM live_snapshots WHERE portfolio_id=? "
+        "ORDER BY created_at DESC LIMIT 30", (portfolio["id"],),
+    )][::-1]
+    return {
+        "live_trading_enabled": bool(portfolio["live_trading_enabled"]),
+        "portfolio_id": portfolio["id"],
+        "trades": trades,
+        "latest_snapshot": row_to_dict(latest_snapshot),
+        "equity_history": equity_history,
+    }
+
+
+@app.get("/businesses/{business_id}/trading/live")
+def get_live_trading(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    view = _live_trading_view(business_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="create a paper trading portfolio first")
+    return view
+
+
+@app.post("/businesses/{business_id}/trading/live/enable")
+def enable_live_trading(business_id: str, req: EnableLiveTradingRequest):
+    """Owner-only switch that turns REAL MONEY trading on for this
+    business. Requires a paper trading portfolio to already exist (its
+    active trading_strategy_versions row is reused as-is) and an
+    explicit confirm_real_money=true on every call -- there is no
+    default that enables this by accident. Also fails fast if Alpaca
+    credentials aren't configured at all, rather than silently
+    scheduling a job that will only ever fail. Creates a dedicated
+    live-trading agent (permission_level=4, one tier above paper's 3 —
+    see permission_levels.py) if this business doesn't already have
+    one, and a recurring live_trading_cycle scheduled job, same shape
+    as enable_auto_trading's paper job."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if not req.confirm_real_money:
+        raise HTTPException(
+            status_code=400,
+            detail="confirm_real_money must be set to true -- this switches on real-money "
+                   "trading with real cash; it is never enabled by a default value",
+        )
+    db = state["db"]
+    portfolio = db.query_one("SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not portfolio:
+        raise HTTPException(
+            status_code=404,
+            detail="create a paper trading portfolio first (POST /businesses/{id}/trading/portfolio) "
+                   "-- live trading reuses its active strategy",
+        )
+    if not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_API_SECRET")):
+        raise HTTPException(
+            status_code=400,
+            detail="ALPACA_API_KEY / ALPACA_API_SECRET are not configured -- set both (and "
+                   "ALPACA_BASE_URL=https://api.alpaca.markets to actually reach the live "
+                   "endpoint, not Alpaca's paper simulator) before enabling live trading",
+        )
+
+    db.execute("UPDATE paper_portfolios SET live_trading_enabled=1, updated_at=datetime('now') "
+               "WHERE id=?", (portfolio["id"],))
+
+    live_agent = db.query_one(
+        "SELECT id FROM agents WHERE business_id=? AND permission_level >= 4 "
+        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
+    )
+    if not live_agent:
+        agent_id = state["agents"].create(
+            business_id, "Live Trading Agent", role="Real-Money Trading Executor",
+            department="Trading", model="unassigned", permission_level=4,
+        )
+        state["agents"].set_status(agent_id, "idle")
+        state["banker"].allocate(business_id, agent_id, 200.0,
+                                  reason="starting ARC runway for live trading")
+
+    cycle_job_id = state["jobs"].create(
+        business_id, "Live trading cycle", "Run a live (real-money) trading cycle",
+        interval_seconds=req.cycle_interval_seconds, permission_level_required=4,
+        task_type="live_trading_cycle",
+    )
+    db.audit("owner", "enable_live_trading", "paper_portfolio", portfolio["id"],
+              {"business_id": business_id, "cycle_job_id": cycle_job_id})
+    return {"cycle_job_id": cycle_job_id, "live_trading": _live_trading_view(business_id)}
+
+
+@app.post("/businesses/{business_id}/trading/live/disable")
+def disable_live_trading(business_id: str):
+    """Always safe, no confirmation required: flips live_trading_enabled
+    off (the next executor pass refuses any already-assigned
+    live_trading_cycle task -- see _handle_live_trading_cycle) and
+    disables every scheduled live_trading_cycle job for this business,
+    so nothing keeps recreating the task after this call returns."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    portfolio = db.query_one("SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,))
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="no trading portfolio for this business")
+
+    db.execute("UPDATE paper_portfolios SET live_trading_enabled=0, updated_at=datetime('now') "
+               "WHERE id=?", (portfolio["id"],))
+    live_jobs = db.query(
+        "SELECT id FROM scheduled_jobs WHERE business_id=? AND task_type='live_trading_cycle' "
+        "AND enabled=1", (business_id,),
+    )
+    for job in live_jobs:
+        state["jobs"].set_enabled(job["id"], False)
+    db.audit("owner", "disable_live_trading", "paper_portfolio", portfolio["id"],
+              {"business_id": business_id, "disabled_job_ids": [j["id"] for j in live_jobs]})
+    return {"live_trading": _live_trading_view(business_id)}
+
+
+@app.post("/businesses/{business_id}/trading/live/cycle")
+def trigger_live_trading_cycle(business_id: str, department: Optional[str] = None):
+    """Manually trigger one live_trading_cycle task right now, outside
+    any scheduled job -- same on-demand pattern as trigger_trading_cycle.
+    Refuses if live trading isn't enabled, rather than creating a task
+    that _handle_live_trading_cycle will just reject."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    portfolio = state["db"].query_one(
+        "SELECT * FROM paper_portfolios WHERE business_id=?", (business_id,)
+    )
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="create a paper trading portfolio first")
+    if not portfolio["live_trading_enabled"]:
+        raise HTTPException(status_code=400,
+                             detail="live trading is not enabled for this business yet "
+                                    "(POST /businesses/{id}/trading/live/enable)")
+    task_id = state["orchestrator"].create_task(
+        business_id, "Run a live (real-money) trading cycle", department=department,
+        permission_level_required=4, task_type="live_trading_cycle",
+    )
+    return {"task_id": task_id}
 
 
 # ---------------------------------------------------------------------

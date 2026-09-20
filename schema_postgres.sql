@@ -193,6 +193,9 @@ CREATE TABLE IF NOT EXISTS paper_portfolios (
     agent_id TEXT REFERENCES agents(id),
     starting_cash_usd DOUBLE PRECISION NOT NULL,
     cash_usd DOUBLE PRECISION NOT NULL,
+    -- Owner-controlled real-money switch -- see schema.sql for the
+    -- full explanation; this mirrors it exactly.
+    live_trading_enabled INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -235,6 +238,36 @@ CREATE TABLE IF NOT EXISTS trading_strategy_versions (
 );
 
 CREATE TABLE IF NOT EXISTS trading_snapshots (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    strategy_version INTEGER,
+    equity_usd DOUBLE PRECISION NOT NULL,
+    cash_usd DOUBLE PRECISION NOT NULL,
+    open_positions INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Real-money trading -- see schema.sql for the full explanation of why
+-- these are deliberately separate tables from paper_trades/
+-- trading_snapshots; this mirrors it exactly.
+CREATE TABLE IF NOT EXISTS live_trades (
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT REFERENCES paper_portfolios(id),
+    task_id TEXT REFERENCES tasks(id),
+    alpaca_order_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity DOUBLE PRECISION NOT NULL,
+    price_usd DOUBLE PRECISION NOT NULL,
+    realized_pnl_usd DOUBLE PRECISION,
+    confidence_level TEXT,
+    rationale TEXT,
+    strategy_version INTEGER NOT NULL,
+    live_cap_applied INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS live_snapshots (
     id TEXT PRIMARY KEY,
     portfolio_id TEXT REFERENCES paper_portfolios(id),
     strategy_version INTEGER,
