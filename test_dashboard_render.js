@@ -98,6 +98,32 @@ test("renderTasksTable renders status and cost correctly", () => {
   assert.ok(html.includes("4.0"));
 });
 
+test("renderTasksTable shows a failed task's real error message", () => {
+  const tasks = [{
+    id: "task_1", objective: "Backtest and search for a better trading strategy",
+    status: "failed", priority: 3, cost_arc: 0,
+    result: "executor error: no daily bars found for AAPL in range 2026-01-01..2026-09-01",
+  }];
+  const html = R.renderTasksTable(tasks);
+  assert.ok(html.includes("no daily bars found for AAPL"));
+  assert.ok(html.includes("status-failed"));
+});
+
+test("renderTasksTable handles a task with no result/error yet without throwing", () => {
+  const tasks = [{ id: "task_1", objective: "x", status: "queued", priority: 3, cost_arc: 0 }];
+  const html = R.renderTasksTable(tasks); // should not throw
+  assert.ok(html.includes("status-queued"));
+});
+
+test("renderTasksTable escapes a task's result to prevent HTML injection", () => {
+  const tasks = [{
+    id: "task_1", objective: "x", status: "failed", priority: 3, cost_arc: 0,
+    result: "<img src=x onerror=alert(1)>",
+  }];
+  const html = R.renderTasksTable(tasks);
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderApprovalsList shows risk level, description, amount, and action buttons", () => {
   const approvals = [{
     id: "appr_1", action_type: "execute_task",
