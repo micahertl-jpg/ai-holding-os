@@ -278,12 +278,23 @@ vertical uses) — without it, `market_data.py` returns clearly-labeled
 mock historical data and the backtest refuses to run against it,
 exactly like live/paper trading refuse to trade on a mock quote.
 
+**Free-tier history is capped at ~100 trading days (roughly the last
+4-5 calendar months), found live:** Alpha Vantage's `TIME_SERIES_DAILY`
+endpoint has an `outputsize=full` option for full history, but it's a
+premium-only parameter now — a free key only ever gets `outputsize=
+compact` (the most recent ~100 points). Pick a `train_start_date` no
+more than about 4-5 months back from today, or the earlier portion of
+your train window will simply have fewer (or zero) real bars than
+requested. A range entirely older than that fails loudly
+("no daily bars found for SYMBOL in range...") rather than silently
+running on a partial or fabricated dataset.
+
 **Real cost, stated plainly:** each simulated trading day is one real
 LLM call — the same cost as one real trading_cycle task. A backtest
 search over N historical days with `max_candidates` tries costs
 roughly `N × max_candidates` LLM calls. Keep date ranges reasonable
-(a few months is usually plenty to start) rather than backtesting
-years of history in one call.
+(a few months is usually plenty to start, and is close to the free-tier
+ceiling anyway) rather than backtesting years of history in one call.
 
 **Nothing here is ever auto-activated.** A backtest run only ever
 saves a report (`backtest_runs` table) of every candidate tried, with

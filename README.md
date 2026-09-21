@@ -768,16 +768,24 @@ Backtesting" section.
 - Schema applied cleanly and verified on both SQLite and a real local
   Postgres database.
 
-**What was NOT verified** (this sandbox has no general internet access
-at all — confirmed by a direct connectivity test to Alpha Vantage's own
-host during this build, which failed to even establish a connection):
-- Any actual network call to Alpha Vantage's historical-data endpoint —
-  only ever exercised against `MockMarketDataClient`/a same-shaped test
-  double reporting `mock=False`.
-- A real backtest search run against real historical prices and a real
-  model, end to end.
-- The new dashboard panel's form and results table clicked through in a
-  real browser by a human.
+**Update, from the owner's real deployment:** the very first real call
+to Alpha Vantage's historical-data endpoint (this sandbox still can't
+reach it directly) surfaced a real bug this code's own comments got
+wrong: `outputsize=full` — assumed free-tier-accessible when this was
+written — is actually a premium-only parameter now; a free key only
+ever gets `outputsize=compact` (~100 most recent trading days, roughly
+4-5 calendar months). Fixed to request `compact`; see DEPLOY.md's
+"Strategy Backtesting" section for the resulting date-range guidance.
+Also confirmed live: `run_backtest()`'s own guard correctly failed the
+task loudly with Alpha Vantage's real error text rather than silently
+proceeding on partial/fabricated data — the safety property held even
+though the underlying assumption about free-tier limits didn't.
+
+**Still not verified:** an actual backtest search completing
+successfully end to end against real historical prices and a real
+model (the `outputsize` fix above hasn't yet been confirmed live), and
+the new dashboard panel's form/results table clicked through in a real
+browser by a human.
 
 **To verify it yourself**, with `ANTHROPIC_API_KEY` and
 `ALPHAVANTAGE_API_KEY` both set: open the dashboard, pick a business
