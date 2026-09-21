@@ -32,7 +32,10 @@ import json
 
 from market_data import MarketDataError
 
-REQUIRED_DECISION_FIELDS = {"symbol", "action", "confidence_level", "size_pct", "rationale"}
+REQUIRED_DECISION_FIELDS = {"symbol", "action", "confidence_level", "rationale"}
+# size_pct is checked separately, below -- required for buy/sell, but
+# allowed to be missing (defaulted to 0.0) for hold, where it's
+# provably unused. See decide_trades()'s validation loop.
 VALID_ACTIONS = {"buy", "sell", "hold"}
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
@@ -52,11 +55,12 @@ movement. Never claim a trade is guaranteed to be profitable or risk-free.
 - confidence_level must be one of "low", "medium", "high", reflecting how much real signal (vs. \
 speculation) supports this decision. Use "low" liberally — it is not penalized, and a dishonest \
 "high" is worse than an honest "low".
-- size_pct is a number from 0.0 to 1.0: for "buy", the fraction of AVAILABLE CASH you'd want to \
-deploy into this symbol; for "sell", the fraction of the CURRENT POSITION you'd want to close. \
-Ignored (may be 0) for "hold". Your suggestion is advisory — the system enforces its own hard \
-position/trade-size/exposure limits regardless of what you propose here, so do not assume your \
-suggested size will be used exactly as given.
+- size_pct is a number from 0.0 to 1.0, and must ALWAYS be present in every decision object, with \
+no exceptions: for "buy", the fraction of AVAILABLE CASH you'd want to deploy into this symbol; \
+for "sell", the fraction of the CURRENT POSITION you'd want to close; for "hold", it has no \
+effect on anything — always set it to 0.0 rather than leaving it out. Your suggestion is \
+advisory — the system enforces its own hard position/trade-size/exposure limits regardless of \
+what you propose here, so do not assume your suggested size will be used exactly as given.
 - rationale must be a concrete, specific reason (1-2 sentences) — never a generic statement that \
 could apply to any symbol.
 - Only decide on symbols you were actually given a current price for.
@@ -141,10 +145,29 @@ def decide_trades(cash_usd, positions, strategy_params, recent_trades_summary, q
             raise TradingCycleError(f"decision[{i}] has invalid action {d['action']!r}")
         if d["confidence_level"] not in CONFIDENCE_ORDER:
             raise TradingCycleError(f"decision[{i}] has invalid confidence_level {d['confidence_level']!r}")
-        try:
-            size_pct = float(d["size_pct"])
-        except (TypeError, ValueError):
-            raise TradingCycleError(f"decision[{i}] has non-numeric size_pct: {d['size_pct']!r}")
+
+        if "size_pct" not in d:
+            # The prompt says size_pct "has no effect" for hold, and a
+            # real model has been seen (live) reading that as "may be
+            # omitted" rather than "always include it, just use 0.0" --
+            # safe to default ONLY for hold, since apply_risk_limits()
+            # never reads size_pct on its hold branch at all. A missing
+            # size_pct on a buy/sell is a genuine, unresolvable
+            # ambiguity (silently guessing a size would be exactly the
+            # kind of fabrication this codebase never does), so that
+            # still fails loudly below.
+            if d["action"] != "hold":
+                raise TradingCycleError(
+                    f"decision[{i}] missing required field 'size_pct' (only ever optional for "
+                    f"action='hold', where it has no effect): {d}"
+                )
+            size_pct = 0.0
+        else:
+            try:
+                size_pct = float(d["size_pct"])
+            except (TypeError, ValueError):
+                raise TradingCycleError(f"decision[{i}] has non-numeric size_pct: {d['size_pct']!r}")
+
         validated.append({
             "symbol": d["symbol"],
             "action": d["action"],
