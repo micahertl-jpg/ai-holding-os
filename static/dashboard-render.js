@@ -821,6 +821,8 @@
               <td>${trades}${vs.sample_size_ok ? "" : " (thin)"}</td>
               <td>${_fmtBacktestStat(ts.net_pnl_usd)}</td>
               <td>${escapeHtml(c.rationale || "(initial strategy, not a proposal)")}</td>
+              <td><button type="button" class="btn-small" data-action="promote-backtest-candidate"
+                data-run-id="${escapeHtml(run.id)}" data-candidate-index="${i}">Promote</button></td>
             </tr>`;
           })
           .join("");
@@ -834,12 +836,16 @@
           </div>
           <p class="opportunity-summary">Validation window starts ${escapeHtml(run.validation_split_date)}. ${
             candidates.length
-          } candidate(s) tried (max ${escapeHtml(run.max_candidates)}).</p>
-          <table class="data-table">
-            <thead><tr><th>#</th><th>Bar</th><th>Val P&amp;L</th><th>Val PF</th><th>Val Win%</th>
-              <th>Val MaxDD</th><th>Val Trades</th><th>Train P&amp;L</th><th>Rationale</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
+          } candidate(s) tried (max ${escapeHtml(run.max_candidates)}). "Promote" sets a candidate as the
+            business's active strategy (used by future paper/live trading cycles) -- this never happens
+            automatically, a candidate passing PASS is only a recommendation.</p>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Bar</th><th>Val P&amp;L</th><th>Val PF</th><th>Val Win%</th>
+                <th>Val MaxDD</th><th>Val Trades</th><th>Train P&amp;L</th><th>Rationale</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         </div>`;
       })
       .join("");

@@ -18,6 +18,12 @@
   // selecting a bar never needs a network round-trip.
   let lastOrders = [];
   let ordersChartRangeDays = 7;
+
+  // Promoting a backtest candidate (see the "promote-backtest-candidate"
+  // action below) needs that candidate's full parameters dict, which is
+  // too large/nested to round-trip through data-* attributes -- kept
+  // here instead, refreshed on every loadDashboard() like lastOrders.
+  let lastBacktestRuns = [];
   function renderOrdersChartPanel() {
     setHtmlIfChanged("orders-chart", R.renderOrdersChart(R.computeOrdersRevenueByDay(lastOrders, ordersChartRangeDays)));
   }
@@ -128,6 +134,7 @@
     setHtmlIfChanged("live-trading-trades",
       R.renderLiveTradingTrades(data.live_trading ? data.live_trading.trades : []));
     setHtmlIfChanged("backtest-runs", R.renderBacktestRuns(data.backtest_runs));
+    lastBacktestRuns = data.backtest_runs || [];
   }
 
   async function refresh() {
@@ -569,6 +576,30 @@
         } else if (action === "delete-real-estate") {
           if (!currentBusinessId) return;
           await api(`/businesses/${currentBusinessId}/real-estate/${t.dataset.id}`, { method: "DELETE" });
+          await refresh();
+        } else if (action === "promote-backtest-candidate") {
+          if (!currentBusinessId) return;
+          const run = lastBacktestRuns.find((r) => r.id === t.dataset.runId);
+          const candidate = run && run.candidates && run.candidates[parseInt(t.dataset.candidateIndex, 10)];
+          if (!candidate) {
+            showError("That backtest candidate is no longer available -- refresh and try again.");
+            return;
+          }
+          if (!window.confirm(
+            "Set this as the active trading strategy? Future paper/live trading cycles will use " +
+            "these parameters instead of the current ones."
+          )) {
+            return;
+          }
+          await api(`/businesses/${currentBusinessId}/trading/strategy-override`, {
+            method: "POST",
+            body: JSON.stringify({
+              parameters: candidate.parameters,
+              rationale: `Promoted from backtest run ${run.id} (${run.train_start_date} -> ` +
+                `${run.validation_end_date}), candidate ${t.dataset.candidateIndex}: ` +
+                (candidate.rationale || "initial strategy"),
+            }),
+          });
           await refresh();
         } else if (action === "set-orders-range") {
           // Pure display state over data already in hand -- no network
