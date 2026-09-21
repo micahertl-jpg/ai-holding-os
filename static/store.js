@@ -32,7 +32,7 @@
     container.innerHTML = products
       .map(
         (p) => `
-      <div class="product-card">
+      <div class="product-card" id="product-${escapeHtml(p.product_type)}">
         <h2>${escapeHtml(p.name)}</h2>
         <div class="product-price">${fmtPrice(p.price_usd_cents)}</div>
         <p class="product-description">${escapeHtml(p.description)}</p>
@@ -83,6 +83,22 @@
         }
       });
     });
+
+    // The SEO landing pages (seo-*.html) link here as e.g.
+    // /store#product-research_opportunity so a visitor arriving from a
+    // topic-specific page lands scrolled straight to that product,
+    // rather than the generic top of a 4-product list. Done here,
+    // after render, rather than relying on the browser's native
+    // load-time fragment scroll, since the target element doesn't
+    // exist yet at that point -- products are fetched and rendered
+    // asynchronously.
+    if (window.location.hash) {
+      const target = document.getElementById(window.location.hash.slice(1));
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.classList.add("product-card-highlighted");
+      }
+    }
   }
 
   async function init() {

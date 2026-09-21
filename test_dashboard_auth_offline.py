@@ -21,14 +21,23 @@ def _basic_header(username, password):
 
 
 def test_public_paths_are_recognized():
-    for path in ("/", "/health", "/robots.txt", "/store", "/store/products",
+    for path in ("/", "/health", "/robots.txt", "/sitemap.xml", "/store", "/store/products",
                  "/store/checkout", "/store/webhook", "/store/orders/ord_123",
-                 "/store/terms", "/static/store.html", "/static/store.css",
+                 "/store/terms", "/store/business-idea-research",
+                 "/store/roblox-game-idea-research", "/store/app-feasibility-report",
+                 "/store/real-estate-investment-research",
+                 "/static/store.html", "/static/store.css",
                  "/static/store.js", "/static/store-success.html",
                  "/static/store-success.js", "/static/store-legal.html",
                  "/static/favicon.svg"):
         assert is_public_path(path), f"{path} should be public"
     print("PASS: the public storefront/health/root paths are all recognized as public")
+
+
+def test_sitemap_prefix_is_not_fooled_by_lookalikes():
+    assert not is_public_path("/sitemap.xml.evil")
+    assert not is_public_path("/sitemapxml")
+    print("PASS: the /sitemap.xml public path respects path boundaries, no lookalike bypass")
 
 
 def test_internal_paths_are_not_public():

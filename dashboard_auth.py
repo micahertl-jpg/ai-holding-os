@@ -40,7 +40,7 @@ import secrets
 # "/" itself is the public storefront's landing page (see api.py's root
 # route) -- the only customer-facing surface in the whole system, so it
 # gets the clean root URL rather than living under /static/store.html.
-PUBLIC_PATH_PREFIXES = ("/health", "/store", "/robots.txt", "/")
+PUBLIC_PATH_PREFIXES = ("/health", "/store", "/robots.txt", "/sitemap.xml", "/")
 PUBLIC_STATIC_PATHS = {
     "/static/store.html", "/static/store.css", "/static/store.js",
     "/static/store-success.html", "/static/store-success.js",
