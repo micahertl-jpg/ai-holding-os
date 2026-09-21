@@ -883,6 +883,24 @@ test("renderBacktestRuns formats an infinite profit_factor and a thin sample siz
   assert.ok(html.includes("none passed"));
 });
 
+test("renderBacktestRuns renders a Promote button per candidate with matching run id and index", () => {
+  const runs = [{
+    id: "btr_abc123",
+    train_start_date: "2026-01-01", validation_split_date: "2026-02-01",
+    validation_end_date: "2026-02-15", max_candidates: 2, stopped_early: true,
+    best_candidate_index: 1,
+    candidates: [
+      { rationale: null, validation_meets_bar: false, train_stats: {}, validation_stats: { sample_size_ok: false } },
+      { rationale: "better", validation_meets_bar: true, train_stats: {}, validation_stats: { sample_size_ok: false } },
+    ],
+  }];
+  const html = R.renderBacktestRuns(runs);
+  assert.ok(html.includes('data-action="promote-backtest-candidate"'));
+  assert.ok(html.includes('data-run-id="btr_abc123"'));
+  assert.ok(html.includes('data-candidate-index="0"'));
+  assert.ok(html.includes('data-candidate-index="1"'));
+});
+
 test("renderBacktestRuns escapes rationale to prevent HTML injection", () => {
   const runs = [{
     train_start_date: "2026-01-01", validation_split_date: "2026-02-01",
