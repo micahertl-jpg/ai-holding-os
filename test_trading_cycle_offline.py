@@ -152,6 +152,42 @@ def test_decide_trades_rejects_invalid_action():
     print("PASS: decide_trades rejects an action outside buy/sell/hold")
 
 
+def test_decide_trades_defaults_a_missing_size_pct_to_zero_for_hold():
+    # A real bug found live: the system prompt says size_pct "has no
+    # effect" for hold, and a real model read that as "may be omitted"
+    # rather than "always include it, just use 0.0" -- this must not
+    # fail the whole cycle over a field that apply_risk_limits() never
+    # even reads on its hold branch.
+    quotes = {"AAPL": {"price": 200.0, "as_of": "x", "mock": False}}
+    canned = json.dumps({"decisions": [
+        {"symbol": "AAPL", "action": "hold", "confidence_level": "medium", "rationale": "x"},
+    ]})
+    decisions = decide_trades(10000, [], PARAMS, "", quotes, _FakeLLMClient(canned))
+    assert decisions == [{"symbol": "AAPL", "action": "hold", "confidence_level": "medium",
+                           "size_pct": 0.0, "rationale": "x"}]
+    print("PASS: decide_trades defaults a missing size_pct to 0.0 for a hold decision, "
+          "rather than failing the whole cycle over a field hold never uses")
+
+
+def test_decide_trades_still_rejects_a_missing_size_pct_for_buy_or_sell():
+    # The default above must NEVER extend to buy/sell -- a missing size
+    # there is a genuine, unresolvable ambiguity about how much real
+    # cash/position to move, and silently guessing at it would be
+    # exactly the kind of fabrication this codebase never does.
+    quotes = {"AAPL": {"price": 200.0, "as_of": "x", "mock": False}}
+    for action in ("buy", "sell"):
+        canned = json.dumps({"decisions": [
+            {"symbol": "AAPL", "action": action, "confidence_level": "high", "rationale": "x"},
+        ]})
+        try:
+            decide_trades(10000, [], PARAMS, "", quotes, _FakeLLMClient(canned))
+            assert False, f"expected TradingCycleError for a {action} missing size_pct"
+        except TradingCycleError as e:
+            assert "size_pct" in str(e)
+    print("PASS: decide_trades still fails loudly on a missing size_pct for buy/sell -- the "
+          "hold-only default never weakens this")
+
+
 # ---------------------------------------------------------------------
 # apply_risk_limits — the actual safety enforcement, no LLM involved
 # ---------------------------------------------------------------------
@@ -318,6 +354,8 @@ if __name__ == "__main__":
     test_decide_trades_rejects_non_json()
     test_decide_trades_rejects_decision_for_unquoted_symbol()
     test_decide_trades_rejects_invalid_action()
+    test_decide_trades_defaults_a_missing_size_pct_to_zero_for_hold()
+    test_decide_trades_still_rejects_a_missing_size_pct_for_buy_or_sell()
     test_buy_is_clamped_to_max_trade_pct_of_cash()
     test_buy_is_clamped_to_max_position_pct_of_equity()
     test_buy_skipped_when_max_open_positions_reached()
