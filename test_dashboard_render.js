@@ -128,6 +128,40 @@ test("renderTasksTable escapes a task's result to prevent HTML injection, in bot
   assert.ok(!html.includes("<img"));
 });
 
+test("every data-table renderer wraps its table in .table-scroll so wide columns are reachable, never clipped", () => {
+  // Regression test: the backtest-runs table had exactly this bug (a
+  // wide table silently clipped by its panel, with the last column
+  // unreachable) before .table-scroll was added there in an earlier
+  // fix -- renderTasksTable (the Result/Error column) turned out to
+  // have the same gap, and a full audit found four more render
+  // functions that had never been wrapped at all. Checked together so
+  // this class of bug can't quietly reappear in just one of them.
+  const checks = [
+    ["renderAgentsTable", [{ id: "a1", name: "x", status: "idle", arc_balance: 0 }]],
+    ["renderTasksTable", [{ id: "t1", objective: "x", status: "completed", priority: 3, cost_arc: 0 }]],
+    ["renderJobsTable", [{ id: "j1", name: "x", objective: "x", interval_seconds: 60, enabled: 1 }]],
+    ["renderOrdersTable", [{ id: "o1", topic: "x", product_type: "research_opportunity",
+                             customer_email: "a@b.com", price_usd_cents: 100, status: "paid",
+                             created_at: "2026-01-01" }]],
+    ["renderTradingPositions", [{ symbol: "AAPL", quantity: 1, avg_cost_usd: 100 }]],
+    ["renderTradingTrades", [{ created_at: "2026-01-01", side: "buy", symbol: "AAPL", quantity: 1,
+                               price_usd: 100 }]],
+    ["renderLiveTradingTrades", [{ created_at: "2026-01-01", side: "buy", symbol: "AAPL", quantity: 1,
+                                   price_usd: 100 }]],
+    ["renderBusinessesOverviewTable", [{ id: "b1", name: "x", type: "x", status: "active",
+                                          agent_count: 0, open_task_count: 0 }]],
+    ["renderBacktestRuns", [{ id: "r1", train_start_date: "2026-01-01", validation_split_date: "2026-02-01",
+                              validation_end_date: "2026-02-15", max_candidates: 1, stopped_early: false,
+                              best_candidate_index: 0,
+                              candidates: [{ rationale: null, validation_meets_bar: false,
+                                             train_stats: {}, validation_stats: {} }] }]],
+  ];
+  for (const [fn, arg] of checks) {
+    const html = R[fn](arg);
+    assert.ok(html.includes('<div class="table-scroll">'), `${fn} should wrap its table in .table-scroll`);
+  }
+});
+
 test("renderTasksTable hides terminal tasks past DEFAULT_TERMINAL_SHOWN by default, keeping all non-terminal ones", () => {
   const tasks = [
     { id: "t_active_1", objective: "Active 1", status: "queued", priority: 3, cost_arc: 0 },

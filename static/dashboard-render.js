@@ -161,11 +161,13 @@
       )
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Role</th><th>Dept</th><th>Status</th>
-          <th>Perm</th><th>ARC</th><th>Actions</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Role</th><th>Dept</th><th>Status</th>
+            <th>Perm</th><th>ARC</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   // Statuses a task never leaves once reached (see orchestrator.py) --
@@ -221,11 +223,13 @@
       toggle = '<p class="tasks-toggle"><button type="button" class="tasks-show-all-btn">Show fewer</button></p>';
     }
     return `
-      <table class="data-table">
-        <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th>
-          <th>Result / Error</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th>
+            <th>Result / Error</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
       ${toggle}`;
   }
 
@@ -300,11 +304,13 @@
       })
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Objective</th><th>Interval</th>
-          <th>Next Run</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Objective</th><th>Interval</th>
+            <th>Next Run</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   // Maps a storefront order's status to the same four-color status
@@ -666,10 +672,12 @@
       )
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>Symbol</th><th>Quantity</th><th>Avg Cost</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Symbol</th><th>Quantity</th><th>Avg Cost</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   function renderTradingTrades(trades) {
@@ -693,11 +701,13 @@
       })
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
-          <th>Realized P&amp;L</th><th>Confidence</th><th>Rationale</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
+            <th>Realized P&amp;L</th><th>Confidence</th><th>Rationale</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   function renderLiveTrading(view) {
@@ -757,11 +767,13 @@
       })
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
-          <th>Realized P&amp;L</th><th>Cap Applied</th><th>Confidence</th><th>Rationale</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>When</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th>
+            <th>Realized P&amp;L</th><th>Cap Applied</th><th>Confidence</th><th>Rationale</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   function _fmtBacktestStat(v) {
@@ -1091,11 +1103,13 @@
       })
       .join("");
     return `
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Agents</th>
-          <th>Open Tasks</th><th>Approvals</th><th>ARC Earned / Spent</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Agents</th>
+            <th>Open Tasks</th><th>Approvals</th><th>ARC Earned / Spent</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   const api = {
