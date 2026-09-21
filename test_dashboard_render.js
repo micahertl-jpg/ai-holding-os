@@ -472,6 +472,31 @@ test("renderOpportunitiesTable renders the real shape from the opportunities tab
   assert.ok(html.includes('data-id="opp_1"'));
 });
 
+test("renderOpportunitiesTable shows a Launch Business button for an unlaunched opportunity", () => {
+  const opportunities = [{
+    id: "opp_1", business_id: "biz_1", topic: "AI-powered recipe apps",
+    confidence_level: "medium", summary: "Worth a small validation effort.",
+    launched_business_id: null,
+  }];
+  const html = R.renderOpportunitiesTable(opportunities);
+  assert.ok(html.includes('data-action="launch-opportunity"'));
+  assert.ok(html.includes('data-business-id="biz_1"'));
+  assert.ok(html.includes('data-opportunity-id="opp_1"'));
+  assert.ok(html.includes('data-topic="AI-powered recipe apps"'));
+  assert.ok(!html.includes(">launched<"));
+});
+
+test("renderOpportunitiesTable shows a launched badge instead of the button once launched", () => {
+  const opportunities = [{
+    id: "opp_1", business_id: "biz_1", topic: "AI-powered recipe apps",
+    confidence_level: "medium", summary: "Worth a small validation effort.",
+    launched_business_id: "biz_2",
+  }];
+  const html = R.renderOpportunitiesTable(opportunities);
+  assert.ok(!html.includes('data-action="launch-opportunity"'), "can't re-launch an already-launched opportunity");
+  assert.ok(html.includes(">launched<"));
+});
+
 test("renderOpportunitiesTable's summary/fields are collapsed by default behind a toggle", () => {
   const opportunities = [{
     id: "opp_1", topic: "AI-powered recipe apps", confidence_level: "medium",

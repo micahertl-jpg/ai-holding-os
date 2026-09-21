@@ -523,6 +523,10 @@ class ResearchOpportunityRequest(BaseModel):
     department: Optional[str] = None
     permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
     priority: int = 3
+
+
+class LaunchOpportunityRequest(BaseModel):
+    name: Optional[str] = None
     budget_arc: float = 0.0
 
 
@@ -1061,6 +1065,43 @@ def list_opportunities(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM opportunities WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.post("/businesses/{business_id}/opportunities/{opportunity_id}/launch")
+def launch_opportunity(business_id: str, opportunity_id: str, req: LaunchOpportunityRequest):
+    """Turns a researched opportunity into a real, standalone business --
+    the one owner-initiated action that closes the loop between
+    'research says this might be worth doing' and an actual business
+    existing to do it. Creates a new business seeded with the
+    opportunity's topic/summary as its founding objective; never moves
+    money, never auto-adds agents, never auto-activates anything --
+    same as every other business the owner creates via POST /businesses,
+    just pre-filled from real research instead of a blank form. Can only
+    ever launch once per opportunity (see launched_business_id): a
+    second attempt is refused with a pointer to the business that
+    already exists, rather than spawning duplicates."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    opp = db.query_one("SELECT * FROM opportunities WHERE id=? AND business_id=?",
+                        (opportunity_id, business_id))
+    if not opp:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    if opp["launched_business_id"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"this opportunity was already launched as business {opp['launched_business_id']!r}",
+        )
+    name = req.name or opp["topic"]
+    objective = f"Founded from a researched business opportunity: {opp['topic']}."
+    if opp["summary"]:
+        objective += f" {opp['summary']}"
+    new_business_id = state["businesses"].create(name, "venture", objective, 0.0)
+    db.execute("UPDATE opportunities SET launched_business_id=? WHERE id=?",
+               (new_business_id, opportunity_id))
+    db.audit("owner", "opportunity_launched", "opportunity", opportunity_id,
+              {"business_id": business_id, "new_business_id": new_business_id})
+    return {"business_id": new_business_id}
 
 
 @app.delete("/businesses/{business_id}/opportunities/{opportunity_id}")

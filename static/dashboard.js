@@ -610,6 +610,34 @@
             }),
           });
           await refresh();
+        } else if (action === "launch-opportunity") {
+          const bizId = t.dataset.businessId;
+          const oppId = t.dataset.opportunityId;
+          const topic = t.dataset.topic;
+          const name = window.prompt(
+            `Name for the new business, launched from this researched opportunity:\n"${topic}"`,
+            topic,
+          );
+          if (name === null) return; // cancelled
+          if (!window.confirm(
+            `Create a new business "${name}"? This is a real business record (agents, tasks, ARC ` +
+            "budget all start from zero) -- nothing about the research is copied over except its " +
+            "topic and summary as the founding objective."
+          )) {
+            return;
+          }
+          const result = await api(`/businesses/${bizId}/opportunities/${oppId}/launch`, {
+            method: "POST",
+            body: JSON.stringify({ name: name || undefined }),
+          });
+          // Land the owner on the new business's (empty) dashboard --
+          // same pattern as the create-business form below -- so the
+          // launch visibly did something real, not just a silent flag
+          // flip on the opportunity card.
+          currentBusinessId = result.business_id;
+          await loadBusinessList();
+          document.getElementById("business-select").value = currentBusinessId;
+          await refresh();
         } else if (action === "set-orders-range") {
           // Pure display state over data already in hand -- no network
           // call, so this never needs to go through refresh().

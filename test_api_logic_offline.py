@@ -127,6 +127,33 @@ def main():
     print("PASS: retry_queued_tasks() promotes a previously-orphaned queued task "
           "once an eligible agent becomes available")
 
+    # --- mirrors POST /businesses/{id}/opportunities/{id}/launch: turns
+    # a researched opportunity into a real, standalone business, seeded
+    # from that research, and marks the opportunity as launched so it
+    # can't be launched a second time. ---
+    opp_id = "opp_launch_test"
+    db.execute(
+        "INSERT INTO opportunities (id, business_id, topic, summary, confidence_level) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (opp_id, biz_id, "AI-powered pet grooming subscription boxes",
+         "Worth a small validation effort.", "medium"),
+    )
+    opp = db.query_one("SELECT * FROM opportunities WHERE id=?", (opp_id,))
+    assert opp["launched_business_id"] is None
+    new_biz_id = businesses.create(opp["topic"], "venture",
+                                    f"Founded from a researched business opportunity: "
+                                    f"{opp['topic']}. {opp['summary']}", 0.0)
+    db.execute("UPDATE opportunities SET launched_business_id=? WHERE id=?", (new_biz_id, opp_id))
+    launched_opp = db.query_one("SELECT * FROM opportunities WHERE id=?", (opp_id,))
+    assert launched_opp["launched_business_id"] == new_biz_id
+    new_biz = businesses.get(new_biz_id)
+    assert new_biz["name"] == "AI-powered pet grooming subscription boxes"
+    assert new_biz["type"] == "venture"
+    assert "Worth a small validation effort." in new_biz["objective"]
+    assert new_biz["budget_usd"] == 0.0
+    print("PASS: launching an opportunity creates a real business seeded from its research "
+          "and marks the opportunity as launched")
+
     db.close()
     os.remove(TEST_DB_PATH)
     print("\nAll API-logic offline checks passed — the code every api.py "

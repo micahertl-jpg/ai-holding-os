@@ -144,6 +144,10 @@ CREATE TABLE IF NOT EXISTS opportunities (
     confidence_level TEXT,            -- low|medium|high — see research_opportunity.py
     summary TEXT,
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    -- Set once, by POST .../opportunities/{id}/launch, when the owner
+    -- turns this researched idea into a real business -- see api.py's
+    -- launch_opportunity(). NULL means "not launched yet".
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TEXT DEFAULT (datetime('now'))
 );
 

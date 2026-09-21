@@ -377,6 +377,20 @@ tasks doing nothing.
   `GET /businesses/{id}/opportunities` (list saved assessments). A new
   dashboard panel shows researched opportunities as cards and lets you
   kick off new research directly.
+- `POST /businesses/{id}/opportunities/{opportunity_id}/launch` closes
+  the loop research alone never did: turns a researched opportunity
+  into a real, standalone business, seeded with that opportunity's
+  topic/summary as its founding objective. Owner-initiated only (a
+  "Launch Business" button on each unlaunched opportunity card) — it
+  never moves money, never auto-adds agents, and never auto-activates
+  anything; it's the exact same `POST /businesses` a blank "Create a
+  New Business" form hits, just pre-filled from real research instead
+  of typed by hand. `opportunities.launched_business_id` (new column,
+  retrofitted via `_COLUMN_MIGRATIONS` in `db.py` for existing
+  deployments) means an opportunity can only ever be launched once —
+  the card shows a "launched" badge instead of the button afterward,
+  and a second attempt is refused with a pointer to the business that
+  already exists.
 
 **What was actually verified in the sandbox that built this** (still no
 PyPI/API-key access there):

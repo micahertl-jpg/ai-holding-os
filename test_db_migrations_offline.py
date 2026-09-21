@@ -31,11 +31,18 @@ def test_every_registered_migration_is_actually_missing_from_an_old_table_and_ge
     one."""
     if os.path.exists(TEST_DB_PATH):
         os.remove(TEST_DB_PATH)
-    # A deliberately bare version of the one migrated table, built
-    # WITHOUT its migrated column -- standing in for "a database that
-    # was deployed before this column was added to the schema."
+    # A deliberately bare version of every migrated table, built WITHOUT
+    # its migrated column -- standing in for "a database that was
+    # deployed before this column was added to the schema." Loops over
+    # every distinct table in _COLUMN_MIGRATIONS (not just one
+    # hardcoded table) so a future migration entry for a new table is
+    # exercised by this same test automatically, not silently skipped.
     conn = sqlite3.connect(TEST_DB_PATH)
-    conn.execute("CREATE TABLE paper_portfolios (id TEXT PRIMARY KEY, business_id TEXT)")
+    seen_tables = set()
+    for table, _column, _ddl in _COLUMN_MIGRATIONS:
+        if table not in seen_tables:
+            conn.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY, business_id TEXT)")
+            seen_tables.add(table)
     conn.commit()
     for table, column, _ddl in _COLUMN_MIGRATIONS:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
