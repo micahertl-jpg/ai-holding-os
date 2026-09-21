@@ -319,11 +319,40 @@
   // = amber/needs-a-look, status-failed = red), so an owner recognizes
   // "this needs attention" at a glance without learning a second color
   // scheme just for orders.
-  function orderStatusClass(status) {
+  // Mirrors OPS_STUCK_ORDER_THRESHOLD_HOURS' default in
+  // tasks/ops_maintenance_review.py -- keeps this table's own visual
+  // flag in sync with the same threshold the ops report uses, so a
+  // stuck order looks urgent here too, not just after running a
+  // review.
+  const STUCK_ORDER_THRESHOLD_HOURS = 24;
+
+  function orderStatusClass(status, ageHours) {
     if (status === "fulfilled") return "status-completed";
     if (status === "paid") return "status-working";
-    if (status === "pending_payment") return "status-awaiting_approval";
+    if (status === "pending_payment") {
+      return ageHours != null && ageHours >= STUCK_ORDER_THRESHOLD_HOURS
+        ? "status-failed" : "status-awaiting_approval";
+    }
     return "status-failed"; // failed | refunded | anything unexpected
+  }
+
+  function _hoursSince(isoString) {
+    const then = Date.parse(isoString);
+    if (Number.isNaN(then)) return null;
+    return (Date.now() - then) / 3600000;
+  }
+
+  // Stripe's own checkout-session dashboard page -- the one place that
+  // can actually answer "did this customer pay" for an order stuck in
+  // pending_payment, since this system deliberately never marks an
+  // order 'paid' except in direct response to a verified webhook (see
+  // api.py's stripe_webhook()). Session ids are prefixed cs_test_/
+  // cs_live_, which is also how Stripe's own dashboard URLs pick
+  // test vs. live mode.
+  function _stripeSessionUrl(sessionId) {
+    if (!sessionId) return null;
+    const testPrefix = sessionId.startsWith("cs_test_") ? "test/" : "";
+    return `https://dashboard.stripe.com/${testPrefix}checkout/sessions/${encodeURIComponent(sessionId)}`;
   }
 
   // "pending_payment" is an unbreakable 16-character token that alone
@@ -353,23 +382,31 @@
       return '<p class="empty">No store orders yet.</p>';
     }
     const rows = orders
-      .map(
-        (o) => `
+      .map((o) => {
+        const ageHours = o.status === "pending_payment" ? _hoursSince(o.created_at) : null;
+        const stuck = ageHours != null && ageHours >= STUCK_ORDER_THRESHOLD_HOURS;
+        const stripeUrl = _stripeSessionUrl(o.stripe_session_id);
+        return `
         <tr>
           <td>${escapeHtml(o.topic)}</td>
           <td>${escapeHtml(orderProductLabel(o.product_type))}</td>
           <td>${escapeHtml(o.customer_email)}</td>
           <td>${fmtUsd((o.price_usd_cents || 0) / 100)}</td>
-          <td><span class="status ${orderStatusClass(o.status)}">${escapeHtml(orderStatusLabel(o.status))}</span></td>
+          <td><span class="status ${orderStatusClass(o.status, ageHours)}">${escapeHtml(orderStatusLabel(o.status))}</span>${
+            stuck ? ` <span class="order-stuck-note">(${ageHours.toFixed(0)}h, check Stripe)</span>` : ""
+          }</td>
           <td>${escapeHtml(o.created_at)}</td>
-        </tr>`
-      )
+          <td>${stripeUrl
+            ? `<a href="${escapeHtml(stripeUrl)}" target="_blank" rel="noopener">View in Stripe</a>`
+            : "—"}</td>
+        </tr>`;
+      })
       .join("");
     return `
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>Topic</th><th>Product</th><th>Customer</th>
-            <th>Price</th><th>Status</th><th>Created</th></tr></thead>
+            <th>Price</th><th>Status</th><th>Created</th><th>Stripe</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;

@@ -491,6 +491,16 @@ select:focus, input:focus {
   50% { box-shadow: 0 0 6px rgba(79,214,255,0.6); }
 }
 
+/* A pending_payment order past STUCK_ORDER_THRESHOLD_HOURS in
+   renderOrdersTable -- the status badge itself already turns red, this
+   is the small inline hint pointing at where to actually check (this
+   system never marks an order paid except from a verified Stripe
+   webhook, so Stripe's own dashboard is the only source of truth). */
+.order-stuck-note { color: var(--red); font-size: 11px; }
+
+.data-table a { color: var(--accent); text-decoration: none; font-size: 12px; }
+.data-table a:hover { text-decoration: underline; }
+
 .empty { color: var(--muted); font-size: 13px; font-style: italic; font-family: var(--font-mono); }
 
 /* ---------- Forms & buttons ---------- */
