@@ -20,7 +20,62 @@ from orchestrator import Orchestrator
 from llm_client import MockClient
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS
 from alpaca_client import MockAlpacaClient, AlpacaError
+from market_data import MarketDataError
 import executor
+
+
+class _FakeHistoricalMarketClient:
+    """Stand-in for market_data.get_default_client() in these tests --
+    serves real-shaped (mock=False) historical bars from a fixed dict
+    per symbol, filtered to the requested date range, exactly like
+    AlphaVantageClient.get_daily_history() would. get_quote() is
+    deliberately unimplemented since _handle_strategy_backtest_search
+    never calls it."""
+
+    def __init__(self, bars_by_symbol, raise_for=()):
+        self.bars_by_symbol = bars_by_symbol
+        self.raise_for = set(raise_for)
+
+    def get_daily_history(self, symbol, start_date, end_date):
+        if symbol in self.raise_for:
+            raise MarketDataError(f"no historical data for {symbol}")
+        return [b for b in self.bars_by_symbol[symbol] if start_date <= b["date"] <= end_date]
+
+
+class _MultiPurposeLLMClient:
+    """Routes each call to a decision response or a proposal response
+    based on which system prompt it's given -- see
+    test_strategy_backtest_search_offline.py for the full rationale;
+    duplicated here (not imported) since each test file in this
+    codebase is self-contained."""
+
+    def __init__(self, decision_responses, proposal_responses=()):
+        self.decision_responses = list(decision_responses)
+        self.proposal_responses = list(proposal_responses)
+        self.decision_calls = 0
+        self.proposal_calls = 0
+        self.last_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+
+    def complete(self, messages, system=None, max_tokens=1000):
+        if system and "paper-trading equity analyst" in system:
+            response = self.decision_responses[self.decision_calls % len(self.decision_responses)]
+            self.decision_calls += 1
+            return response
+        response = self.proposal_responses[self.proposal_calls % len(self.proposal_responses)]
+        self.proposal_calls += 1
+        return response
+
+
+def _bt_bar(date, close):
+    return {"date": date, "open": close, "high": close * 1.01, "low": close * 0.99,
+            "close": close, "volume": 1000000, "mock": False}
+
+
+def _bt_decisions(*entries):
+    return json.dumps({"decisions": [
+        {"symbol": s, "action": a, "confidence_level": "high", "size_pct": p, "rationale": "x"}
+        for s, a, p in entries
+    ]})
 
 
 class _FakeLiveAlpacaClient(MockAlpacaClient):
@@ -842,6 +897,142 @@ def test_live_trading_cycle_without_a_portfolio_fails_loudly():
     os.remove(TEST_DB_PATH)
 
 
+def _setup_backtest_strategy(db, biz_id):
+    """A permission_level=2 agent (this task type is recommend-only,
+    same tier as ops_maintenance_review) plus an active v1 strategy
+    with watchlist=['AAPL'] -- no paper_portfolios row needed, since
+    _handle_strategy_backtest_search never reads one."""
+    agents = AgentRegistry(db)
+    agent_id = agents.create(biz_id, "Backtest Agent", role="Strategy Researcher",
+                              permission_level=2)
+    agents.set_status(agent_id, "idle")
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    params["watchlist"] = ["AAPL"]
+    db.execute(
+        "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+        "rationale, source, active) VALUES (?, ?, 1, ?, ?, 'system', 1)",
+        (new_id("strat"), biz_id, json.dumps(params), "Initial default strategy parameters."),
+    )
+    return agent_id, params
+
+
+def test_strategy_backtest_search_task_runs_and_saves_a_report():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_backtest_strategy(db, biz_id)
+
+    task_id = orch.create_task(
+        biz_id, "Backtest and search for a better trading strategy against real historical "
+                "price data", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={
+            "train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+            "validation_end_date": "2026-01-07", "max_candidates": 1,
+        },
+    )
+    bars = {"AAPL": [_bt_bar("2026-01-05", 100.0), _bt_bar("2026-01-06", 110.0),
+                      _bt_bar("2026-01-07", 90.0)]}
+    fake_market = _FakeHistoricalMarketClient(bars)
+    llm = _MultiPurposeLLMClient(decision_responses=[
+        _bt_decisions(("AAPL", "buy", 0.5)),
+        _bt_decisions(("AAPL", "sell", 1.0)),
+    ])
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=llm)
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    runs = db.query("SELECT * FROM backtest_runs WHERE task_id=?", (task_id,))
+    assert len(runs) == 1
+    candidates = json.loads(runs[0]["candidates_json"])
+    assert len(candidates) == 1  # max_candidates=1 -- only the current strategy was tried
+    assert candidates[0]["train_stats"]["total_trades"] >= 1
+    assert runs[0]["train_start_date"] == "2026-01-05"
+    assert runs[0]["validation_split_date"] == "2026-01-06"
+    print("PASS: a strategy_backtest_search task runs a real backtest against historical data "
+          "and saves a report -- never touching paper_trades/live_trades")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_strategy_backtest_search_never_touches_paper_or_live_trade_tables():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_backtest_strategy(db, biz_id)
+    task_id = orch.create_task(
+        biz_id, "Backtest", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={"train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+                    "validation_end_date": "2026-01-07", "max_candidates": 1},
+    )
+    bars = {"AAPL": [_bt_bar("2026-01-05", 100.0), _bt_bar("2026-01-06", 110.0),
+                      _bt_bar("2026-01-07", 90.0)]}
+    fake_market = _FakeHistoricalMarketClient(bars)
+    llm = _MultiPurposeLLMClient(decision_responses=[
+        _bt_decisions(("AAPL", "buy", 0.5)), _bt_decisions(("AAPL", "sell", 1.0)),
+    ])
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        executor.run_once(db, orch, client=llm)
+
+    assert db.query("SELECT * FROM paper_trades") == []
+    assert db.query("SELECT * FROM live_trades") == []
+    assert db.query("SELECT * FROM trading_snapshots") == []
+    print("PASS: a backtest search never writes to paper_trades/live_trades/trading_snapshots "
+          "-- it can only ever save a backtest_runs report")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_strategy_backtest_search_requires_complete_date_range_in_task_input():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_backtest_strategy(db, biz_id)
+    task_id = orch.create_task(
+        biz_id, "Backtest", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={"train_start_date": "2026-01-05"},  # missing the other two required dates
+    )
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "missing required" in outcomes[0][1]
+    print("PASS: a strategy_backtest_search task with an incomplete date range fails loudly "
+          "before ever fetching historical data or calling the model")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_strategy_backtest_search_fails_loudly_on_missing_historical_data():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_backtest_strategy(db, biz_id)
+    task_id = orch.create_task(
+        biz_id, "Backtest", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={"train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+                    "validation_end_date": "2026-01-07", "max_candidates": 1},
+    )
+    fake_market = _FakeHistoricalMarketClient({"AAPL": []}, raise_for=["AAPL"])
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "no historical data for AAPL" in outcomes[0][1]
+    print("PASS: a real historical-data fetch failure fails the task loudly with the real "
+          "error, never silently backtests against an empty/fabricated dataset")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_strategy_backtest_search_without_an_active_strategy_fails_loudly():
+    db, orch, biz_id, agent_id = _setup()
+    agents = AgentRegistry(db)
+    agent_id2 = agents.create(biz_id, "Backtest Agent", role="x", permission_level=2)
+    agents.set_status(agent_id2, "idle")
+    task_id = orch.create_task(
+        biz_id, "Backtest", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={"train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+                    "validation_end_date": "2026-01-07"},
+    )
+    outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:") and "no active trading strategy" in outcomes[0][1]
+    print("PASS: a strategy_backtest_search task with no active strategy for the business "
+          "fails loudly, same as trading_cycle/trading_strategy_review would")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_trading_strategy_review_task_promotes_a_new_validated_version():
     db, orch, biz_id, agent_id = _setup()
     trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
@@ -984,6 +1175,11 @@ if __name__ == "__main__":
     test_live_trading_cycle_records_no_trade_when_the_broker_rejects_the_order()
     test_live_trading_cycle_daily_loss_halt_pauses_the_live_agent()
     test_live_trading_cycle_without_a_portfolio_fails_loudly()
+    test_strategy_backtest_search_task_runs_and_saves_a_report()
+    test_strategy_backtest_search_never_touches_paper_or_live_trade_tables()
+    test_strategy_backtest_search_requires_complete_date_range_in_task_input()
+    test_strategy_backtest_search_fails_loudly_on_missing_historical_data()
+    test_strategy_backtest_search_without_an_active_strategy_fails_loudly()
     test_trading_strategy_review_task_promotes_a_new_validated_version()
     test_trading_strategy_review_rejects_an_out_of_bounds_proposal()
     test_ops_maintenance_review_task_gets_executed_and_saved()

@@ -42,6 +42,10 @@ from tasks.trading_strategy_review import (
 from tasks.live_trading_safety import (
     apply_live_safety_caps, is_kill_switch_active, LIVE_MAX_DAILY_LOSS_USD,
 )
+from tasks.backtest import BacktestError
+from tasks.strategy_backtest_search import (
+    run_strategy_search, split_bars_by_date, StrategySearchError, DEFAULT_MAX_CANDIDATES,
+)
 from tasks.ops_maintenance_review import (
     collect_system_metrics, analyze_system_health, OpsMaintenanceReviewError,
 )
@@ -781,6 +785,120 @@ def _handle_live_trading_cycle(task_row, client, db):
 
 
 # ---------------------------------------------------------------------
+# Backtesting & bounded strategy search against REAL historical data
+# (see tasks/backtest.py, tasks/strategy_backtest_search.py).
+# Recommend-only, like ops_maintenance_review: this NEVER touches
+# paper_trades/trading_snapshots/live_trades/live_snapshots, and never
+# auto-activates a candidate strategy as the business's active one --
+# promoting a candidate is always a separate, explicit owner action via
+# the existing POST /businesses/{id}/trading/strategy-override endpoint
+# (already versioned, already bounds-checked). This only ever saves a
+# report of what was tried and found.
+# ---------------------------------------------------------------------
+
+BACKTEST_SEARCH_BASE_REWARD_ARC = 5.0
+
+
+def _fmt_stat(value):
+    """Formats a stats value that may be None or +/-inf (profit_factor
+    with zero losing trades) safely -- a plain f-string :.2f on an
+    inf/None value would crash or misrepresent the result."""
+    if value is None:
+        return "n/a"
+    if isinstance(value, float) and (value == float("inf") or value == float("-inf")):
+        return str(value)
+    return f"{value:.4f}"
+
+
+def _handle_strategy_backtest_search(task_row, client, db):
+    business_id = task_row["business_id"]
+    task_input = json.loads(task_row["task_input"]) if task_row["task_input"] else {}
+    train_start_date = task_input.get("train_start_date")
+    validation_split_date = task_input.get("validation_split_date")
+    validation_end_date = task_input.get("validation_end_date")
+    if not (train_start_date and validation_split_date and validation_end_date):
+        raise ValueError(
+            "strategy_backtest_search task_input missing required 'train_start_date' / "
+            "'validation_split_date' / 'validation_end_date' (each \"YYYY-MM-DD\")"
+        )
+    starting_cash_usd = float(task_input.get("starting_cash_usd", 10000.0))
+    max_candidates = int(task_input.get("max_candidates", DEFAULT_MAX_CANDIDATES))
+
+    strategy_row, strategy_params = _get_active_trading_strategy(db, business_id)
+    market_client = market_data.get_default_client()
+
+    # One real historical-data fetch per watchlist symbol, covering the
+    # WHOLE train+validation range in one call each (not one call per
+    # window) -- split_bars_by_date then cuts it at the boundary. Any
+    # MarketDataError here (including get_default_client() falling back
+    # to a mock with no ALPHAVANTAGE_API_KEY, which run_strategy_search
+    # would then refuse via BacktestError anyway) propagates up through
+    # run_once()'s normal try/except and fails this task loudly.
+    historical_bars_by_symbol = {
+        symbol: market_client.get_daily_history(symbol, train_start_date, validation_end_date)
+        for symbol in strategy_params["watchlist"]
+    }
+    train_bars, validation_bars = split_bars_by_date(historical_bars_by_symbol, validation_split_date)
+
+    tracked_client = CostTrackingClient(client)
+    try:
+        search_result = run_strategy_search(
+            starting_cash_usd, strategy_params, train_bars, validation_bars,
+            tracked_client, max_candidates=max_candidates,
+        )
+    except (BacktestError, StrategySearchError) as e:
+        raise ValueError(str(e)) from e
+
+    cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
+    _require_affordable(task_row, db, cost_arc)
+
+    candidates_summary = [
+        {
+            "parameters": c["parameters"],
+            "rationale": c.get("rationale"),
+            "confidence_level": c.get("confidence_level"),
+            "train_stats": c["train_stats"],
+            "validation_stats": c["validation_stats"],
+            "train_meets_bar": c["train_meets_bar"],
+            "validation_meets_bar": c["validation_meets_bar"],
+        }
+        for c in search_result["candidates"]
+    ]
+
+    run_id = new_id("bt")
+    db.execute(
+        "INSERT INTO backtest_runs (id, business_id, task_id, train_start_date, "
+        "validation_split_date, validation_end_date, max_candidates, candidates_json, "
+        "best_candidate_index, stopped_early) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, business_id, task_row["id"], train_start_date, validation_split_date,
+         validation_end_date, max_candidates, json.dumps(candidates_summary),
+         search_result["best_index"], 1 if search_result["stopped_early"] else 0),
+    )
+    db.audit("executor", "strategy_backtest_search_completed", "backtest_run", run_id, {
+        "business_id": business_id, "candidates_tried": len(candidates_summary),
+        "stopped_early": search_result["stopped_early"],
+    })
+
+    best = candidates_summary[search_result["best_index"]]
+    vs = best["validation_stats"]
+    result_text = (
+        f"Backtest search complete: {len(candidates_summary)} candidate(s) tried against real "
+        f"historical data, "
+        + ("a strategy cleared the profitability bar on held-out validation data."
+           if search_result["stopped_early"] else
+           "none cleared the profitability bar on held-out validation data.")
+        + f" Best by real validation net P&L: ${_fmt_stat(vs['net_pnl_usd'])} "
+        f"(profit_factor={_fmt_stat(vs['profit_factor'])}, win_rate={_fmt_stat(vs['win_rate'])}, "
+        f"max_drawdown={_fmt_stat(vs['max_drawdown_pct'])}, "
+        f"sample_size_ok={vs['sample_size_ok']}, sell_trades={vs['sell_trades']}). "
+        f"Review every candidate on the dashboard's Backtest panel (id={run_id}) and use the "
+        f"existing strategy-override endpoint to promote one -- nothing is auto-activated."
+    )
+    reward_arc = BACKTEST_SEARCH_BASE_REWARD_ARC
+    return result_text, cost_arc, reward_arc
+
+
+# ---------------------------------------------------------------------
 # Ops/Maintenance — the sixth business vertical, and the only one with
 # no customer/storefront product: it watches this system's OWN
 # infrastructure and produces a recommend-only report for the owner.
@@ -855,6 +973,7 @@ HANDLERS = {
     "trading_cycle": _handle_trading_cycle,
     "trading_strategy_review": _handle_trading_strategy_review,
     "live_trading_cycle": _handle_live_trading_cycle,
+    "strategy_backtest_search": _handle_strategy_backtest_search,
     "ops_maintenance_review": _handle_ops_maintenance_review,
 }
 

@@ -781,6 +781,67 @@
       </table>`;
   }
 
+  function _fmtBacktestStat(v) {
+    if (v === null || v === undefined) return "n/a";
+    if (v === Infinity) return "∞";
+    if (typeof v === "number") return v.toFixed(2);
+    return String(v);
+  }
+
+  function renderBacktestRuns(runs) {
+    if (!runs || runs.length === 0) {
+      return '<p class="empty">No backtest runs yet — use the form above to test the current ' +
+        'strategy against real historical data.</p>';
+    }
+    const cards = runs
+      .map((run) => {
+        const candidates = run.candidates || [];
+        const rows = candidates
+          .map((c, i) => {
+            const isBest = i === run.best_candidate_index;
+            const vs = c.validation_stats || {};
+            const ts = c.train_stats || {};
+            const winPct = vs.win_rate != null ? `${(vs.win_rate * 100).toFixed(0)}%` : "n/a";
+            const ddPct = vs.max_drawdown_pct != null ? `${(vs.max_drawdown_pct * 100).toFixed(1)}%` : "n/a";
+            const trades = vs.sell_trades != null ? vs.sell_trades : 0;
+            return `
+            <tr class="${isBest ? "backtest-best-row" : ""}">
+              <td>${i}${isBest ? " ★" : ""}</td>
+              <td>${c.validation_meets_bar
+                ? '<span class="status status-idle">PASS</span>'
+                : '<span class="status status-failed">no</span>'}</td>
+              <td>${_fmtBacktestStat(vs.net_pnl_usd)}</td>
+              <td>${_fmtBacktestStat(vs.profit_factor)}</td>
+              <td>${winPct}</td>
+              <td>${ddPct}</td>
+              <td>${trades}${vs.sample_size_ok ? "" : " (thin)"}</td>
+              <td>${_fmtBacktestStat(ts.net_pnl_usd)}</td>
+              <td>${escapeHtml(c.rationale || "(initial strategy, not a proposal)")}</td>
+            </tr>`;
+          })
+          .join("");
+        return `
+        <div class="opportunity-card confidence-${run.stopped_early ? "high" : "low"}">
+          <div class="opportunity-head">
+            <strong>${escapeHtml(run.train_start_date)} → ${escapeHtml(run.validation_end_date)}</strong>
+            <span class="status ${run.stopped_early ? "status-idle" : "status-awaiting_approval"}">${
+              run.stopped_early ? "strategy found" : "none passed"
+            }</span>
+          </div>
+          <p class="opportunity-summary">Validation window starts ${escapeHtml(run.validation_split_date)}. ${
+            candidates.length
+          } candidate(s) tried (max ${escapeHtml(run.max_candidates)}).</p>
+          <table class="data-table">
+            <thead><tr><th>#</th><th>Bar</th><th>Val P&amp;L</th><th>Val PF</th><th>Val Win%</th>
+              <th>Val MaxDD</th><th>Val Trades</th><th>Train P&amp;L</th><th>Rationale</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+      })
+      .join("");
+    return cards;
+  }
+
   function renderTradingStrategyVersions(versions) {
     if (!versions || versions.length === 0) {
       return '<p class="empty">No strategy versions yet.</p>';
@@ -1078,6 +1139,7 @@
     renderTradingStrategyVersions,
     renderLiveTrading,
     renderLiveTradingTrades,
+    renderBacktestRuns,
   };
 
   if (typeof module !== "undefined" && module.exports) {

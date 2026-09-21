@@ -349,6 +349,37 @@ CREATE TABLE IF NOT EXISTS live_snapshots (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Backtesting & bounded strategy search against REAL historical price
+-- data (see tasks/backtest.py, tasks/strategy_backtest_search.py). One
+-- row per triggered search: every candidate strategy tried, each with
+-- its own TRAIN stats (what the model saw) and VALIDATION stats (a
+-- held-out window it never saw) -- the defense against a strategy that
+-- looks great on the data it was tuned against and nowhere else.
+-- Recommend-only, like ops_maintenance_reports: nothing here ever
+-- becomes the active strategy automatically. Deliberately separate
+-- from paper_trades/live_trades/trading_snapshots -- a backtest never
+-- writes to any of those, so simulated-on-history activity can never
+-- be mistaken for a real paper cycle or a real trade.
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    train_start_date TEXT NOT NULL,
+    validation_split_date TEXT NOT NULL,  -- bars before this date are TRAIN, on/after are VALIDATION
+    validation_end_date TEXT NOT NULL,
+    max_candidates INTEGER NOT NULL,
+    -- Full candidate list as JSON: [{parameters, rationale, confidence_level,
+    -- train_stats, validation_stats, train_meets_bar, validation_meets_bar}, ...]
+    -- -- same "structured JSON in a text column" pattern as
+    -- ops_maintenance_reports.findings, kept here rather than normalized
+    -- into a child table since a run's candidates are always read/shown
+    -- together, never queried individually.
+    candidates_json TEXT NOT NULL,
+    best_candidate_index INTEGER,      -- index into candidates_json's array, by validation net P&L
+    stopped_early INTEGER DEFAULT 0,   -- true if a candidate cleared the profitability bar
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- App Development — feasibility/planning assessments produced by the
 -- research_app_feasibility task type. Every field is the model's
 -- ESTIMATE, never a guaranteed timeline/cost/outcome — see

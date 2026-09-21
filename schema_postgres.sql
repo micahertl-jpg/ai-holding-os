@@ -277,6 +277,22 @@ CREATE TABLE IF NOT EXISTS live_snapshots (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Backtesting & strategy search — see schema.sql for the full
+-- explanation; this mirrors it exactly.
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id TEXT PRIMARY KEY,
+    business_id TEXT REFERENCES businesses(id),
+    task_id TEXT REFERENCES tasks(id),
+    train_start_date TEXT NOT NULL,
+    validation_split_date TEXT NOT NULL,
+    validation_end_date TEXT NOT NULL,
+    max_candidates INTEGER NOT NULL,
+    candidates_json TEXT NOT NULL,
+    best_candidate_index INTEGER,
+    stopped_early INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- App Development — see schema.sql for the full explanation; this
 -- mirrors it exactly.
 CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
