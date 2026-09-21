@@ -24,6 +24,14 @@
   // too large/nested to round-trip through data-* attributes -- kept
   // here instead, refreshed on every loadDashboard() like lastOrders.
   let lastBacktestRuns = [];
+
+  // Tasks table: whether the completed-task history is expanded (see
+  // renderTasksTable's showAll param). Toggling this is a pure local
+  // display choice over data already in hand, so it re-renders from
+  // lastTasks directly rather than re-fetching.
+  let lastTasks = [];
+  let tasksShowAll = false;
+
   function renderOrdersChartPanel() {
     setHtmlIfChanged("orders-chart", R.renderOrdersChart(R.computeOrdersRevenueByDay(lastOrders, ordersChartRangeDays)));
   }
@@ -113,7 +121,8 @@
     const data = await api(`/businesses/${currentBusinessId}/dashboard`);
     setHtmlIfChanged("business-header", R.renderBusinessHeader(data.business));
     setHtmlIfChanged("agents-table", R.renderAgentsTable(data.agents));
-    setHtmlIfChanged("tasks-table", R.renderTasksTable(data.tasks));
+    lastTasks = data.tasks || [];
+    setHtmlIfChanged("tasks-table", R.renderTasksTable(lastTasks, tasksShowAll));
     setHtmlIfChanged("arc-summary", R.renderArcSummary(data.arc_summary));
     setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
     setHtmlIfChanged("orders-table", R.renderOrdersTable(data.orders));
@@ -676,6 +685,30 @@
     document.body.addEventListener("click", (ev) => {
       const cell = ev.target.closest && ev.target.closest(".task-result-cell");
       if (cell) cell.classList.toggle("expanded");
+    });
+
+    // Tasks table's "Show N completed tasks" / "Show fewer" toggle (see
+    // renderTasksTable's showAll param) -- a pure local display choice
+    // over data already fetched, so it re-renders from lastTasks
+    // directly rather than round-tripping to the API again.
+    document.body.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest(".tasks-show-all-btn");
+      if (!btn) return;
+      tasksShowAll = !tasksShowAll;
+      setHtmlIfChanged("tasks-table", R.renderTasksTable(lastTasks, tasksShowAll));
+    });
+
+    // Research report cards (opportunities/roblox/app-feasibility/real-
+    // estate) and trading strategy version cards collapse their
+    // summary+field-list body by default (see .card-details in
+    // dashboard.css) -- same rationale and same "own listener, not
+    // data-action" pattern as the task-result-cell toggle above, since
+    // this never calls the API either.
+    document.body.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest(".card-toggle-btn");
+      if (!btn) return;
+      const card = btn.closest(".opportunity-card");
+      if (card) card.classList.toggle("expanded");
     });
 
     // Click-ripple on every button on the page, uniformly -- one

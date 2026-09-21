@@ -128,6 +128,49 @@ test("renderTasksTable escapes a task's result to prevent HTML injection, in bot
   assert.ok(!html.includes("<img"));
 });
 
+test("renderTasksTable hides terminal tasks past DEFAULT_TERMINAL_SHOWN by default, keeping all non-terminal ones", () => {
+  const tasks = [
+    { id: "t_active_1", objective: "Active 1", status: "queued", priority: 3, cost_arc: 0 },
+    { id: "t_active_2", objective: "Active 2", status: "in_progress", priority: 3, cost_arc: 0 },
+    { id: "t_done_1", objective: "Done 1", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_2", objective: "Done 2", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_3", objective: "Done 3", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_4", objective: "Done 4", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_5", objective: "Done 5", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_6", objective: "Done 6", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_done_7", objective: "Done 7", status: "cancelled", priority: 3, cost_arc: 0 },
+  ];
+  const html = R.renderTasksTable(tasks, false);
+  assert.ok(html.includes("Active 1") && html.includes("Active 2"), "non-terminal tasks always shown");
+  assert.ok(html.includes("Done 1") && html.includes("Done 5"), "first 5 terminal tasks shown");
+  assert.ok(!html.includes("Done 6") && !html.includes("Done 7"), "terminal tasks past the cap are hidden");
+  assert.ok(html.includes("tasks-show-all-btn"), "a toggle button appears when tasks are hidden");
+  assert.ok(html.includes("Show 2 completed tasks"), "toggle button states exactly how many are hidden");
+});
+
+test("renderTasksTable with showAll=true shows every task and offers a 'Show fewer' toggle", () => {
+  const tasks = [
+    { id: "t_1", objective: "One", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_2", objective: "Two", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_3", objective: "Three", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_4", objective: "Four", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_5", objective: "Five", status: "completed", priority: 3, cost_arc: 0 },
+    { id: "t_6", objective: "Six", status: "completed", priority: 3, cost_arc: 0 },
+  ];
+  const html = R.renderTasksTable(tasks, true);
+  assert.ok(html.includes("One") && html.includes("Six"), "every task shown when showAll is true");
+  assert.ok(html.includes("Show fewer"), "a 'Show fewer' toggle appears when collapsed there'd be hidden tasks");
+});
+
+test("renderTasksTable shows no toggle at all when there's nothing to hide", () => {
+  const tasks = [
+    { id: "t_1", objective: "One", status: "queued", priority: 3, cost_arc: 0 },
+    { id: "t_2", objective: "Two", status: "completed", priority: 3, cost_arc: 0 },
+  ];
+  const html = R.renderTasksTable(tasks, false);
+  assert.ok(!html.includes("tasks-show-all-btn"), "no toggle needed when everything already fits");
+});
+
 test("renderApprovalsList shows risk level, description, amount, and action buttons", () => {
   const approvals = [{
     id: "appr_1", action_type: "execute_task",
@@ -393,6 +436,18 @@ test("renderOpportunitiesTable renders the real shape from the opportunities tab
   assert.ok(html.includes("confidence-medium"));
   assert.ok(html.includes('data-action="delete-opportunity"'));
   assert.ok(html.includes('data-id="opp_1"'));
+});
+
+test("renderOpportunitiesTable's summary/fields are collapsed by default behind a toggle", () => {
+  const opportunities = [{
+    id: "opp_1", topic: "AI-powered recipe apps", confidence_level: "medium",
+    summary: "Worth a small validation effort.", reference_urls_used: null,
+  }];
+  const html = R.renderOpportunitiesTable(opportunities);
+  assert.ok(html.includes('class="card-details"'), "the detail body is wrapped for collapsing");
+  assert.ok(html.includes('class="card-toggle-btn"'), "a toggle button is rendered");
+  // Not expanded by default -- the containing card has no "expanded" class.
+  assert.ok(!/opportunity-card[^"]*expanded/.test(html), "card starts collapsed, not expanded");
 });
 
 test("renderOpportunitiesTable shows the no-references note when none were used", () => {
@@ -765,6 +820,19 @@ test("renderTradingStrategyVersions shows parameters, active badge, and source",
   assert.ok(html.includes("AAPL, MSFT"));
   assert.ok(html.includes("15%"));
   assert.ok(html.includes("12%"));
+});
+
+test("renderTradingStrategyVersions expands the active version by default, collapses history", () => {
+  const versions = [
+    { version: 2, active: 1, source: "strategy_review", rationale: "Current.", parameters: "{}" },
+    { version: 1, active: 0, source: "system", rationale: "Superseded.", parameters: "{}" },
+  ];
+  const html = R.renderTradingStrategyVersions(versions);
+  const cards = html.split('<div class="opportunity-card');
+  const activeCard = cards.find((c) => c.includes("Version 2"));
+  const historyCard = cards.find((c) => c.includes("Version 1"));
+  assert.ok(/^ confidence-\w+ expanded"/.test(activeCard), "the active version's card starts expanded");
+  assert.ok(!/expanded"/.test(historyCard.split(">")[0]), "a non-active version's card starts collapsed");
 });
 
 test("renderTradingStrategyVersions never throws on malformed parameters JSON", () => {

@@ -168,11 +168,38 @@
       </table>`;
   }
 
-  function renderTasksTable(tasks) {
+  // Statuses a task never leaves once reached (see orchestrator.py) --
+  // used below to tell a routine finished cycle log apart from
+  // something that still needs attention.
+  var TERMINAL_TASK_STATUSES = { completed: true, failed: true, cancelled: true };
+
+  // With auto-trading running a cycle every few hours, this table's
+  // already-newest-first, already-capped-at-50 list still fills up
+  // almost entirely with routine completed cycle logs within a day or
+  // two, burying anything that actually needs a look (queued/assigned/
+  // in-progress, or a recent failure). Default view keeps every
+  // non-terminal task plus the DEFAULT_TERMINAL_SHOWN most recent
+  // terminal ones, in their original (newest-first) order; `showAll`
+  // reveals the rest of what was fetched, with no extra API call --
+  // see dashboard.js's tasksShowAll/lastTasks.
+  var DEFAULT_TERMINAL_SHOWN = 5;
+
+  function renderTasksTable(tasks, showAll) {
     if (!tasks || tasks.length === 0) {
       return '<p class="empty">No tasks yet.</p>';
     }
-    const rows = tasks
+    let visible = tasks;
+    let hiddenCount = 0;
+    if (!showAll) {
+      let terminalSeen = 0;
+      visible = tasks.filter((t) => {
+        if (!TERMINAL_TASK_STATUSES[t.status]) return true;
+        terminalSeen += 1;
+        return terminalSeen <= DEFAULT_TERMINAL_SHOWN;
+      });
+      hiddenCount = tasks.length - visible.length;
+    }
+    const rows = visible
       .map(
         (t) => `
         <tr>
@@ -186,12 +213,20 @@
         </tr>`
       )
       .join("");
+    let toggle = "";
+    if (hiddenCount > 0) {
+      toggle = `<p class="tasks-toggle"><button type="button" class="tasks-show-all-btn">` +
+        `Show ${hiddenCount} completed task${hiddenCount === 1 ? "" : "s"}</button></p>`;
+    } else if (showAll && tasks.some((t) => TERMINAL_TASK_STATUSES[t.status])) {
+      toggle = '<p class="tasks-toggle"><button type="button" class="tasks-show-all-btn">Show fewer</button></p>';
+    }
     return `
       <table class="data-table">
         <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th>
           <th>Result / Error</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>`;
+      </table>
+      ${toggle}`;
   }
 
   function renderApprovalsList(approvals) {
@@ -425,48 +460,68 @@
       </div>`;
   }
 
+  // Shared by every research-report card renderer below (opportunities,
+  // roblox trends, app feasibility, real estate) -- they were four
+  // near-identical copies of the same card shape (head + summary + a
+  // field list + references), which meant the collapsible-details
+  // behavior added here would otherwise need to be kept in sync by hand
+  // in four places. Collapsed by default (see .card-details in
+  // dashboard.css) -- these reports can run long, and a business with
+  // several researched concepts turns into a lot of scrolling if every
+  // card is fully expanded at once; the head (title + confidence) is
+  // enough to scan the list, full detail is one click away.
+  function _renderResearchCard(title, confidence, summary, fields, urls, removeAction, removeId, removeTitle) {
+    const confEsc = escapeHtml(confidence || "unknown");
+    const statusClass = confEsc === "high" ? "idle" : confEsc === "medium" ? "awaiting_approval" : "failed";
+    const fieldsHtml = fields
+      .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || "")}</dd>`)
+      .join("");
+    const refsHtml = urls.length > 0
+      ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
+      : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>';
+    return `
+        <div class="opportunity-card confidence-${confEsc}">
+          <div class="opportunity-head">
+            <strong>${escapeHtml(title)}</strong>
+            <span class="opportunity-head-right">
+              <span class="status status-${statusClass}">confidence: ${confEsc}</span>
+              <button type="button" class="card-toggle-btn">Details</button>
+              <button class="btn-remove-card" data-action="${removeAction}" data-id="${escapeHtml(removeId)}"
+                title="${escapeHtml(removeTitle)}">Remove</button>
+            </span>
+          </div>
+          <div class="card-details">
+            <p class="opportunity-summary">${escapeHtml(summary || "")}</p>
+            <dl class="opportunity-fields">${fieldsHtml}</dl>
+            ${refsHtml}
+          </div>
+        </div>`;
+  }
+
+  function _referenceUrls(raw) {
+    try {
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   function renderOpportunitiesTable(opportunities) {
     if (!opportunities || opportunities.length === 0) {
       return '<p class="empty">No opportunities researched yet.</p>';
     }
     const cards = opportunities
-      .map((o) => {
-        const confidence = escapeHtml(o.confidence_level || "unknown");
-        let urls = [];
-        try {
-          urls = o.reference_urls_used ? JSON.parse(o.reference_urls_used) : [];
-        } catch (e) {
-          urls = [];
-        }
-        return `
-        <div class="opportunity-card confidence-${confidence}">
-          <div class="opportunity-head">
-            <strong>${escapeHtml(o.topic)}</strong>
-            <span class="opportunity-head-right">
-              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-                confidence: ${confidence}
-              </span>
-              <button class="btn-remove-card" data-action="delete-opportunity" data-id="${escapeHtml(o.id)}"
-                title="Remove this researched opportunity">Remove</button>
-            </span>
-          </div>
-          <p class="opportunity-summary">${escapeHtml(o.summary || "")}</p>
-          <dl class="opportunity-fields">
-            <dt>Market size</dt><dd>${escapeHtml(o.market_size || "")}</dd>
-            <dt>Competition</dt><dd>${escapeHtml(o.competition || "")}</dd>
-            <dt>Startup cost</dt><dd>${escapeHtml(o.startup_cost || "")}</dd>
-            <dt>Revenue potential</dt><dd>${escapeHtml(o.revenue_potential || "")}</dd>
-            <dt>Time to market</dt><dd>${escapeHtml(o.time_to_market || "")}</dd>
-            <dt>Operational complexity</dt><dd>${escapeHtml(o.operational_complexity || "")}</dd>
-            <dt>Legal/regulatory risk</dt><dd>${escapeHtml(o.legal_regulatory_risk || "")}</dd>
-            <dt>Capital requirements</dt><dd>${escapeHtml(o.capital_requirements || "")}</dd>
-            <dt>Downside risk</dt><dd>${escapeHtml(o.downside_risk || "")}</dd>
-          </dl>
-          ${urls.length > 0
-            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
-            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
-        </div>`;
-      })
+      .map((o) => _renderResearchCard(
+        o.topic, o.confidence_level, o.summary,
+        [
+          ["Market size", o.market_size], ["Competition", o.competition],
+          ["Startup cost", o.startup_cost], ["Revenue potential", o.revenue_potential],
+          ["Time to market", o.time_to_market], ["Operational complexity", o.operational_complexity],
+          ["Legal/regulatory risk", o.legal_regulatory_risk], ["Capital requirements", o.capital_requirements],
+          ["Downside risk", o.downside_risk],
+        ],
+        _referenceUrls(o.reference_urls_used), "delete-opportunity", o.id, "Remove this researched opportunity",
+      ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
   }
@@ -476,42 +531,16 @@
       return '<p class="empty">No Roblox concepts researched yet.</p>';
     }
     const cards = trends
-      .map((t) => {
-        const confidence = escapeHtml(t.confidence_level || "unknown");
-        let urls = [];
-        try {
-          urls = t.reference_urls_used ? JSON.parse(t.reference_urls_used) : [];
-        } catch (e) {
-          urls = [];
-        }
-        return `
-        <div class="opportunity-card confidence-${confidence}">
-          <div class="opportunity-head">
-            <strong>${escapeHtml(t.concept)}</strong>
-            <span class="opportunity-head-right">
-              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-                confidence: ${confidence}
-              </span>
-              <button class="btn-remove-card" data-action="delete-roblox-trend" data-id="${escapeHtml(t.id)}"
-                title="Remove this researched concept">Remove</button>
-            </span>
-          </div>
-          <p class="opportunity-summary">${escapeHtml(t.summary || "")}</p>
-          <dl class="opportunity-fields">
-            <dt>Player demand signals</dt><dd>${escapeHtml(t.player_demand_signals || "")}</dd>
-            <dt>Competition level</dt><dd>${escapeHtml(t.competition_level || "")}</dd>
-            <dt>Build complexity</dt><dd>${escapeHtml(t.build_complexity || "")}</dd>
-            <dt>Target audience</dt><dd>${escapeHtml(t.target_audience || "")}</dd>
-            <dt>Monetization fit</dt><dd>${escapeHtml(t.monetization_fit || "")}</dd>
-            <dt>Estimated dev time</dt><dd>${escapeHtml(t.estimated_dev_time || "")}</dd>
-            <dt>Similar successful games</dt><dd>${escapeHtml(t.similar_successful_games || "")}</dd>
-            <dt>Risk factors</dt><dd>${escapeHtml(t.risk_factors || "")}</dd>
-          </dl>
-          ${urls.length > 0
-            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
-            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
-        </div>`;
-      })
+      .map((t) => _renderResearchCard(
+        t.concept, t.confidence_level, t.summary,
+        [
+          ["Player demand signals", t.player_demand_signals], ["Competition level", t.competition_level],
+          ["Build complexity", t.build_complexity], ["Target audience", t.target_audience],
+          ["Monetization fit", t.monetization_fit], ["Estimated dev time", t.estimated_dev_time],
+          ["Similar successful games", t.similar_successful_games], ["Risk factors", t.risk_factors],
+        ],
+        _referenceUrls(t.reference_urls_used), "delete-roblox-trend", t.id, "Remove this researched concept",
+      ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
   }
@@ -521,42 +550,16 @@
       return '<p class="empty">No app feasibility assessments yet.</p>';
     }
     const cards = assessments
-      .map((a) => {
-        const confidence = escapeHtml(a.confidence_level || "unknown");
-        let urls = [];
-        try {
-          urls = a.reference_urls_used ? JSON.parse(a.reference_urls_used) : [];
-        } catch (e) {
-          urls = [];
-        }
-        return `
-        <div class="opportunity-card confidence-${confidence}">
-          <div class="opportunity-head">
-            <strong>${escapeHtml(a.concept)}</strong>
-            <span class="opportunity-head-right">
-              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-                confidence: ${confidence}
-              </span>
-              <button class="btn-remove-card" data-action="delete-app-feasibility" data-id="${escapeHtml(a.id)}"
-                title="Remove this feasibility assessment">Remove</button>
-            </span>
-          </div>
-          <p class="opportunity-summary">${escapeHtml(a.summary || "")}</p>
-          <dl class="opportunity-fields">
-            <dt>Platform recommendation</dt><dd>${escapeHtml(a.platform_recommendation || "")}</dd>
-            <dt>Suggested tech stack</dt><dd>${escapeHtml(a.suggested_tech_stack || "")}</dd>
-            <dt>Complexity tier</dt><dd>${escapeHtml(a.complexity_tier || "")}</dd>
-            <dt>Estimated timeline</dt><dd>${escapeHtml(a.estimated_timeline || "")}</dd>
-            <dt>Estimated cost range</dt><dd>${escapeHtml(a.estimated_cost_range || "")}</dd>
-            <dt>MVP feature scope</dt><dd>${escapeHtml(a.mvp_feature_scope || "")}</dd>
-            <dt>Key technical risks</dt><dd>${escapeHtml(a.key_technical_risks || "")}</dd>
-            <dt>Similar existing apps</dt><dd>${escapeHtml(a.similar_existing_apps || "")}</dd>
-          </dl>
-          ${urls.length > 0
-            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
-            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
-        </div>`;
-      })
+      .map((a) => _renderResearchCard(
+        a.concept, a.confidence_level, a.summary,
+        [
+          ["Platform recommendation", a.platform_recommendation], ["Suggested tech stack", a.suggested_tech_stack],
+          ["Complexity tier", a.complexity_tier], ["Estimated timeline", a.estimated_timeline],
+          ["Estimated cost range", a.estimated_cost_range], ["MVP feature scope", a.mvp_feature_scope],
+          ["Key technical risks", a.key_technical_risks], ["Similar existing apps", a.similar_existing_apps],
+        ],
+        _referenceUrls(a.reference_urls_used), "delete-app-feasibility", a.id, "Remove this feasibility assessment",
+      ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
   }
@@ -566,39 +569,15 @@
       return '<p class="empty">No real estate assessments yet.</p>';
     }
     const cards = assessments
-      .map((a) => {
-        const confidence = escapeHtml(a.confidence_level || "unknown");
-        let urls = [];
-        try {
-          urls = a.reference_urls_used ? JSON.parse(a.reference_urls_used) : [];
-        } catch (e) {
-          urls = [];
-        }
-        return `
-        <div class="opportunity-card confidence-${confidence}">
-          <div class="opportunity-head">
-            <strong>${escapeHtml(a.property_or_market)}</strong>
-            <span class="opportunity-head-right">
-              <span class="status status-${confidence === "high" ? "idle" : confidence === "medium" ? "awaiting_approval" : "failed"}">
-                confidence: ${confidence}
-              </span>
-              <button class="btn-remove-card" data-action="delete-real-estate" data-id="${escapeHtml(a.id)}"
-                title="Remove this assessment">Remove</button>
-            </span>
-          </div>
-          <p class="opportunity-summary">${escapeHtml(a.summary || "")}</p>
-          <dl class="opportunity-fields">
-            <dt>Market trend</dt><dd>${escapeHtml(a.market_trend || "")}</dd>
-            <dt>Comparable properties</dt><dd>${escapeHtml(a.comparable_properties || "")}</dd>
-            <dt>Estimated rental yield</dt><dd>${escapeHtml(a.estimated_rental_yield || "")}</dd>
-            <dt>Price trend assessment</dt><dd>${escapeHtml(a.price_trend_assessment || "")}</dd>
-            <dt>Risk factors</dt><dd>${escapeHtml(a.risk_factors || "")}</dd>
-          </dl>
-          ${urls.length > 0
-            ? `<p class="opportunity-refs">References: ${urls.map((u) => escapeHtml(u)).join(", ")}</p>`
-            : '<p class="opportunity-refs">No reference URLs fetched — based on general knowledge only.</p>'}
-        </div>`;
-      })
+      .map((a) => _renderResearchCard(
+        a.property_or_market, a.confidence_level, a.summary,
+        [
+          ["Market trend", a.market_trend], ["Comparable properties", a.comparable_properties],
+          ["Estimated rental yield", a.estimated_rental_yield],
+          ["Price trend assessment", a.price_trend_assessment], ["Risk factors", a.risk_factors],
+        ],
+        _referenceUrls(a.reference_urls_used), "delete-real-estate", a.id, "Remove this assessment",
+      ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
   }
@@ -866,21 +845,29 @@
         }
         const confidence = escapeHtml(v.confidence_level || "unknown");
         const watchlist = (params.watchlist || []).map((s) => escapeHtml(s)).join(", ");
+        // The active version is the one you actually came here to check
+        // -- shown expanded by default; every prior version is history,
+        // collapsed until you specifically want to compare against it.
         return `
-        <div class="opportunity-card confidence-${confidence}">
+        <div class="opportunity-card confidence-${confidence}${v.active ? " expanded" : ""}">
           <div class="opportunity-head">
             <strong>Version ${escapeHtml(v.version)}${v.active ? " (active)" : ""}</strong>
-            <span class="status status-${v.source === "owner_override" ? "awaiting_approval" : "idle"}">${escapeHtml(v.source)}</span>
+            <span class="opportunity-head-right">
+              <span class="status status-${v.source === "owner_override" ? "awaiting_approval" : "idle"}">${escapeHtml(v.source)}</span>
+              <button type="button" class="card-toggle-btn">Details</button>
+            </span>
           </div>
-          <p class="opportunity-summary">${escapeHtml(v.rationale || "")}</p>
-          <dl class="opportunity-fields">
-            <dt>Watchlist</dt><dd>${watchlist}</dd>
-            <dt>Max position %</dt><dd>${params.max_position_pct != null ? (params.max_position_pct * 100).toFixed(0) + "%" : ""}</dd>
-            <dt>Max trade % of cash</dt><dd>${params.max_trade_pct_of_cash != null ? (params.max_trade_pct_of_cash * 100).toFixed(0) + "%" : ""}</dd>
-            <dt>Max open positions</dt><dd>${escapeHtml(params.max_open_positions)}</dd>
-            <dt>Drawdown halt</dt><dd>${params.drawdown_halt_pct != null ? (params.drawdown_halt_pct * 100).toFixed(0) + "%" : ""}</dd>
-            <dt>Min confidence to trade</dt><dd>${escapeHtml(params.min_confidence_to_trade)}</dd>
-          </dl>
+          <div class="card-details">
+            <p class="opportunity-summary">${escapeHtml(v.rationale || "")}</p>
+            <dl class="opportunity-fields">
+              <dt>Watchlist</dt><dd>${watchlist}</dd>
+              <dt>Max position %</dt><dd>${params.max_position_pct != null ? (params.max_position_pct * 100).toFixed(0) + "%" : ""}</dd>
+              <dt>Max trade % of cash</dt><dd>${params.max_trade_pct_of_cash != null ? (params.max_trade_pct_of_cash * 100).toFixed(0) + "%" : ""}</dd>
+              <dt>Max open positions</dt><dd>${escapeHtml(params.max_open_positions)}</dd>
+              <dt>Drawdown halt</dt><dd>${params.drawdown_halt_pct != null ? (params.drawdown_halt_pct * 100).toFixed(0) + "%" : ""}</dd>
+              <dt>Min confidence to trade</dt><dd>${escapeHtml(params.min_confidence_to_trade)}</dd>
+            </dl>
+          </div>
         </div>`;
       })
       .join("");
