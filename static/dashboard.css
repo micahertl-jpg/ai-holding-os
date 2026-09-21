@@ -421,7 +421,15 @@ select:focus, input:focus {
 }
 .data-table tbody tr { transition: background 0.15s ease; }
 .data-table tbody tr:hover { background: rgba(79,214,255,0.06); box-shadow: inset 3px 0 0 var(--accent); }
-.task-result-cell { max-width: 360px; white-space: normal; word-break: break-word; color: var(--muted); font-size: 12px; }
+.task-result-cell {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: default;
+}
 
 .status {
   font-family: var(--font-mono);

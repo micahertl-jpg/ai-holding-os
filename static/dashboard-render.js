@@ -180,7 +180,9 @@
           <td><span class="status status-${escapeHtml(t.status)}">${escapeHtml(t.status)}</span></td>
           <td>${escapeHtml(t.priority)}</td>
           <td>${fmtArc(t.cost_arc)}</td>
-          <td class="task-result-cell">${t.result ? escapeHtml(t.result) : ""}</td>
+          <td class="task-result-cell" title="${t.result ? escapeHtml(t.result) : ""}">${
+            t.result ? escapeHtml(t.result) : ""
+          }</td>
         </tr>`
       )
       .join("");
