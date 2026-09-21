@@ -52,6 +52,8 @@
 body {
   margin: 0;
   font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
   color: var(--text);
   position: relative;
   background:
@@ -216,9 +218,15 @@ body::after {
 
 .layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 18px;
-  padding: 20px 28px;
+  /* Raised from 360px: at the old floor, 3 (sometimes 4) panels
+     packed into a normal laptop-width window, leaving each one too
+     narrow for its own text/tables to breathe -- exactly the "small
+     and cramped" readability complaint. 460px keeps most viewports at
+     2 roomy columns instead, and still lets very wide monitors fit
+     3-4 without ever going narrower than this floor. */
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 22px;
+  padding: 24px 32px;
   /* Capped and centered so panels don't stretch edge-to-edge into
      abnormally wide, sparse-looking columns on a large desktop
      monitor -- the ambient body background stays full-bleed behind it. */
@@ -241,7 +249,7 @@ body::after {
   -webkit-backdrop-filter: blur(14px) saturate(150%);
   border: 1px solid rgba(79,214,255,.22);
   clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
-  padding: 18px;
+  padding: 22px 22px 24px;
   filter: drop-shadow(0 0 16px rgba(79,214,255,.05));
   /* fill-mode "backwards" (not "both"): holds the from-state before the
      animation starts, but relinquishes `transform` back to the normal
@@ -302,11 +310,11 @@ body::after {
 
 .panel h3 {
   position: relative;
-  margin: 0 0 14px 0;
+  margin: 0 0 16px 0;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 1.5px;
+  font-size: 14px;
+  letter-spacing: 1.2px;
   text-transform: uppercase;
   color: var(--accent);
   padding-bottom: 8px;
@@ -330,8 +338,8 @@ body::after {
 .panel h4 {
   margin: 18px 0 10px 0;
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 1.2px;
+  font-size: 12px;
+  letter-spacing: 1.1px;
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
@@ -405,29 +413,29 @@ select:focus, input:focus {
    panels or get silently clipped. */
 .table-scroll { overflow-x: auto; }
 
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .data-table th, .data-table td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 .data-table th {
   color: var(--muted);
   font-weight: normal;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
 }
 .data-table tbody tr { transition: background 0.15s ease; }
 .data-table tbody tr:hover { background: rgba(79,214,255,0.06); box-shadow: inset 3px 0 0 var(--accent); }
 .task-result-cell {
-  max-width: 260px;
+  max-width: 320px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   cursor: default;
 }
 
@@ -454,7 +462,7 @@ select:focus, input:focus {
   50% { box-shadow: 0 0 6px rgba(79,214,255,0.6); }
 }
 
-.empty { color: var(--muted); font-size: 12px; font-style: italic; font-family: var(--font-mono); }
+.empty { color: var(--muted); font-size: 13px; font-style: italic; font-family: var(--font-mono); }
 
 /* ---------- Forms & buttons ---------- */
 
@@ -614,11 +622,11 @@ button { position: relative; overflow: hidden; }
 /* ---------- Opportunities ---------- */
 
 .panel-note {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   font-style: italic;
   margin: 12px 0 0 0;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 /* ---------- Live Trading (real money) ---------- */
@@ -653,7 +661,7 @@ button { position: relative; overflow: hidden; }
   border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: 2px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: rgba(0,0,0,0.15);
   animation: panel-in 0.45s ease backwards;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -712,20 +720,20 @@ button { position: relative; overflow: hidden; }
 }
 .opportunity-fields dt {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--muted);
   margin: 0;
 }
 .opportunity-fields dd {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text);
   margin: 1px 0 6px 0;
 }
 
 .opportunity-refs {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
   padding-top: 8px;
