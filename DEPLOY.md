@@ -109,7 +109,10 @@ and `send_email()` raises rather than pretending an email went out).
    every storefront order/task/ARC entry. `GET /businesses` lists ids.
 4. **`PUBLIC_BASE_URL`** — your real deployed URL, no trailing slash
    (e.g. `https://ai-holding-os-production.up.railway.app`). Stripe uses
-   this to build the success/cancel redirect URLs.
+   this to build the success/cancel redirect URLs, and it's also what
+   turns on `/sitemap.xml` (linked from `/robots.txt`) — without it,
+   `/sitemap.xml` says so in plain text rather than emitting broken
+   relative URLs.
 5. **`RESEND_API_KEY`** — from resend.com (they have a free tier). This
    is what actually emails the finished report to the paying customer.
 6. **`RESEND_FROM_EMAIL`** — a sender address on a domain you've verified

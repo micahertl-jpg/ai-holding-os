@@ -337,24 +337,28 @@ def storefront_landing():
 def robots_txt():
     """Points crawlers at the one page actually worth indexing and away
     from the internal dashboard/API (which 401s for an anonymous crawler
-    anyway -- this is a courtesy/hint, not the security boundary)."""
-    return Response(
-        content=(
-            "User-agent: *\n"
-            "Allow: /\n"
-            "Allow: /static/store.html\n"
-            "Allow: /static/store-legal.html\n"
-            "Disallow: /dashboard\n"
-            "Disallow: /businesses\n"
-            "Disallow: /agents\n"
-            "Disallow: /tasks\n"
-            "Disallow: /approvals\n"
-            "Disallow: /banker\n"
-            "Disallow: /scheduled-jobs\n"
-            "Disallow: /static/store-success.html\n"
-        ),
-        media_type="text/plain",
-    )
+    anyway -- this is a courtesy/hint, not the security boundary). Also
+    points them at sitemap.xml when PUBLIC_BASE_URL is configured (the
+    sitemap itself refuses to emit broken relative URLs without it --
+    see sitemap_xml() -- so there's no point advertising it here
+    either)."""
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "Allow: /static/store.html",
+        "Allow: /static/store-legal.html",
+        "Disallow: /dashboard",
+        "Disallow: /businesses",
+        "Disallow: /agents",
+        "Disallow: /tasks",
+        "Disallow: /approvals",
+        "Disallow: /banker",
+        "Disallow: /scheduled-jobs",
+        "Disallow: /static/store-success.html",
+    ]
+    if PUBLIC_BASE_URL:
+        lines.append(f"Sitemap: {PUBLIC_BASE_URL}/sitemap.xml")
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain")
 
 
 @app.get("/dashboard")
@@ -381,6 +385,51 @@ def store_terms():
     not cosmetic. Linked from store.html's and store-success.html's
     footers."""
     return FileResponse(str(STATIC_DIR / "store-legal.html"))
+
+
+# SEO landing pages -- one per product in PRODUCT_CATALOG, each a real,
+# useful, indexable page (not a thin doorway page) that explains what
+# that specific report covers and links into /store to buy it. Under
+# /store/... so they're covered by dashboard_auth's existing public
+# "/store" prefix without needing a change there. See SEO_PAGE_SLUGS
+# below, used again by sitemap_xml().
+SEO_PAGE_SLUGS = {
+    "business-idea-research": "seo-business-idea-research.html",
+    "roblox-game-idea-research": "seo-roblox-game-idea-research.html",
+    "app-feasibility-report": "seo-app-feasibility-report.html",
+    "real-estate-investment-research": "seo-real-estate-investment-research.html",
+}
+
+for _slug, _filename in SEO_PAGE_SLUGS.items():
+    def _make_seo_page_handler(filename):
+        def _handler():
+            return FileResponse(str(STATIC_DIR / filename))
+        return _handler
+    app.get(f"/store/{_slug}")(_make_seo_page_handler(_filename))
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    """Lists every real public URL for search engines -- storefront
+    root, terms, and each SEO landing page above. Needs absolute URLs
+    (that's the entire point of a sitemap), which needs PUBLIC_BASE_URL
+    configured; without it this says so in plain text rather than
+    emitting a sitemap full of broken relative-looking URLs, same
+    fail-loud-not-silently-wrong posture as everything else that
+    depends on PUBLIC_BASE_URL."""
+    if not PUBLIC_BASE_URL:
+        return Response(
+            content="Sitemap unavailable: PUBLIC_BASE_URL is not configured.",
+            media_type="text/plain",
+        )
+    urls = [PUBLIC_BASE_URL + "/", PUBLIC_BASE_URL + "/store/terms"]
+    urls += [PUBLIC_BASE_URL + f"/store/{slug}" for slug in SEO_PAGE_SLUGS]
+    body = ['<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for url in urls:
+        body.append(f"  <url><loc>{url}</loc></url>")
+    body.append("</urlset>")
+    return Response(content="\n".join(body), media_type="application/xml")
 
 
 def row_to_dict(row):
