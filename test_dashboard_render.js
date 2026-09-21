@@ -98,7 +98,7 @@ test("renderTasksTable renders status and cost correctly", () => {
   assert.ok(html.includes("4.0"));
 });
 
-test("renderTasksTable shows a failed task's real error message", () => {
+test("renderTasksTable shows a failed task's real error message, truncated visually via title", () => {
   const tasks = [{
     id: "task_1", objective: "Backtest and search for a better trading strategy",
     status: "failed", priority: 3, cost_arc: 0,
@@ -107,6 +107,10 @@ test("renderTasksTable shows a failed task's real error message", () => {
   const html = R.renderTasksTable(tasks);
   assert.ok(html.includes("no daily bars found for AAPL"));
   assert.ok(html.includes("status-failed"));
+  // The full message must still be present in a title= attribute for hover,
+  // even though the cell itself is CSS-truncated to one line -- nothing is
+  // actually thrown away, only visually collapsed.
+  assert.ok(html.includes('title="executor error: no daily bars found for AAPL'));
 });
 
 test("renderTasksTable handles a task with no result/error yet without throwing", () => {
@@ -115,7 +119,7 @@ test("renderTasksTable handles a task with no result/error yet without throwing"
   assert.ok(html.includes("status-queued"));
 });
 
-test("renderTasksTable escapes a task's result to prevent HTML injection", () => {
+test("renderTasksTable escapes a task's result to prevent HTML injection, in both the cell and the title attribute", () => {
   const tasks = [{
     id: "task_1", objective: "x", status: "failed", priority: 3, cost_arc: 0,
     result: "<img src=x onerror=alert(1)>",
