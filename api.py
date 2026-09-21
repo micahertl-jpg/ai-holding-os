@@ -22,6 +22,7 @@ revisit with a real connection pool before this sees production traffic.
 """
 
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Optional, List
 import json
@@ -1560,6 +1561,29 @@ def trigger_live_trading_cycle(business_id: str, department: Optional[str] = Non
 # than backtest against fabricated prices.
 # ---------------------------------------------------------------------
 
+def _estimate_backtest_calendar_days(train_start_date: str, validation_end_date: str) -> int:
+    """A deliberately loose upper bound (calendar days, not trading
+    days -- weekends/holidays make the real count somewhat lower) used
+    only to size a starting ARC allocation generously. Never used for
+    anything that needs to be exact; tasks/backtest.py's own date
+    handling is what actually matters for correctness."""
+    d1 = date.fromisoformat(train_start_date)
+    d2 = date.fromisoformat(validation_end_date)
+    return max((d2 - d1).days, 1)
+
+
+# Conservative real-cost-per-simulated-day estimate, in ARC (see
+# llm_client.PRICING_USD_PER_TOKEN and executor.ARC_PER_USD) -- rounded
+# up generously, since a real call's exact token count varies with
+# watchlist size and trade history length. Better to over-fund an
+# agent by a little than have a real, already-spent backtest run get
+# discarded at the very end for insufficient ARC (see
+# executor._require_affordable -- the LLM cost is incurred either way,
+# this only controls whether the result is kept).
+ESTIMATED_ARC_PER_SIMULATED_DAY = 15.0
+MIN_BACKTEST_AGENT_STARTING_ARC = 500.0
+
+
 @app.post("/businesses/{business_id}/trading/backtest")
 def trigger_strategy_backtest_search(business_id: str, req: TriggerBacktestSearchRequest,
                                       department: Optional[str] = None):
@@ -1569,10 +1593,20 @@ def trigger_strategy_backtest_search(business_id: str, req: TriggerBacktestSearc
     max_candidates -- real USD either way, same as every other task
     type. Never auto-promotes anything; review results via GET
     .../trading/backtest-runs and promote a candidate (if any) through
-    the existing strategy-override endpoint yourself."""
+    the existing strategy-override endpoint yourself.
+
+    Auto-creates a permission_level=2 agent (same pattern as
+    enable_live_trading) if this business doesn't already have one
+    eligible, and tops up its ARC balance if it's under-funded for
+    THIS specific request -- a backtest can call the model hundreds of
+    times in one task, far more than the generic Add Agent form's
+    100 ARC default covers, so without this a real run could get all
+    the way through (spending real USD on every call) only to have its
+    result discarded at the very end for insufficient ARC."""
     if not state["businesses"].get(business_id):
         raise HTTPException(status_code=404, detail="business not found")
-    if not state["db"].query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+    db = state["db"]
+    if not db.query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
         raise HTTPException(status_code=404, detail="create a paper trading portfolio first -- "
                                                       "a backtest reuses its active strategy")
     if not (1 <= req.max_candidates <= 10):
@@ -1583,6 +1617,30 @@ def trigger_strategy_backtest_search(business_id: str, req: TriggerBacktestSearc
     if req.validation_split_date >= req.validation_end_date:
         raise HTTPException(status_code=400,
                              detail="validation_split_date must be before validation_end_date")
+
+    estimated_days = _estimate_backtest_calendar_days(req.train_start_date, req.validation_end_date)
+    estimated_arc_needed = max(
+        estimated_days * req.max_candidates * ESTIMATED_ARC_PER_SIMULATED_DAY,
+        MIN_BACKTEST_AGENT_STARTING_ARC,
+    )
+
+    backtest_agent = db.query_one(
+        "SELECT id, arc_balance FROM agents WHERE business_id=? AND permission_level >= 2 "
+        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
+    )
+    if not backtest_agent:
+        agent_id = state["agents"].create(
+            business_id, "Backtest Agent", role="Strategy Researcher",
+            department="Trading", model="unassigned", permission_level=2,
+        )
+        state["agents"].set_status(agent_id, "idle")
+        state["banker"].allocate(business_id, agent_id, estimated_arc_needed,
+                                  reason="starting ARC runway for this backtest search")
+    elif backtest_agent["arc_balance"] < estimated_arc_needed:
+        state["banker"].allocate(
+            business_id, backtest_agent["id"], estimated_arc_needed - backtest_agent["arc_balance"],
+            reason="topping up ARC runway for this backtest search",
+        )
 
     task_id = state["orchestrator"].create_task(
         business_id, "Backtest and search for a better trading strategy against real "
