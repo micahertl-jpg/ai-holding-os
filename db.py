@@ -47,6 +47,45 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+# ---------------------------------------------------------------------
+# Column migrations -- a real production bug found and fixed in this
+# session, root-caused here. `CREATE TABLE IF NOT EXISTS` (used
+# throughout schema.sql/schema_postgres.sql, re-run on every process
+# startup by both __init__ methods below) creates a brand-new table
+# fine, but is a silent no-op on a table that already exists — it
+# NEVER adds a column a later change adds to an already-existing
+# table's CREATE TABLE statement. Without this list, any already-
+# deployed database (SQLite or Postgres) stays permanently missing
+# that column after a redeploy, and every query reading it either
+# KeyErrors (sqlite3.Row / psycopg2's RealDictRow) or fails outright —
+# exactly what happened with paper_portfolios.live_trading_enabled
+# (added by the Live Trading feature): it worked in every offline test
+# and every live-verification pass in this session because every test/
+# verification database was always created FRESH from the current
+# schema file, never by redeploying on top of an existing one — the
+# one case that actually matters in production and the one case none
+# of that testing exercised.
+#
+# Add an entry here — not just to the CREATE TABLE statement in
+# schema.sql/schema_postgres.sql — every time a column is added to a
+# table that might already exist in a deployed database. Both backends
+# below apply this same list; the DDL syntax for "add this column with
+# this type/default" happens to be identical between SQLite and
+# Postgres for every type used here, so one list serves both, and
+# there's exactly one place to remember instead of two.
+_COLUMN_MIGRATIONS = [
+    # (table, column, type_and_default_ddl)
+    ("paper_portfolios", "live_trading_enabled", "INTEGER DEFAULT 0"),
+]
+
+
+def _apply_sqlite_column_migrations(conn):
+    for table, column, ddl in _COLUMN_MIGRATIONS:
+        existing_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 class ExecResult:
     """Minimal, backend-agnostic result of an execute() call, exposing
     just `.rowcount`. sqlite3.Cursor already provides this natively
@@ -77,6 +116,7 @@ class Database:
         self._lock = threading.Lock()
         with open(SCHEMA_PATH) as f:
             self.conn.executescript(f.read())
+        _apply_sqlite_column_migrations(self.conn)
         self.conn.commit()
 
     @contextmanager
@@ -142,6 +182,13 @@ class PostgresDatabase:
         with open(SCHEMA_POSTGRES_PATH) as f:
             with self.conn.cursor() as cur:
                 cur.execute(f.read())
+                # Postgres supports IF NOT EXISTS directly on ADD COLUMN
+                # (unlike the SQLite build this sandbox has, which
+                # doesn't -- see _apply_sqlite_column_migrations), so
+                # this can be one statement per migration, no existence
+                # check needed. See _COLUMN_MIGRATIONS' comment above.
+                for table, column, ddl in _COLUMN_MIGRATIONS:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
         self.conn.commit()
 
     @staticmethod
