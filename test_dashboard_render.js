@@ -308,12 +308,48 @@ test("renderOrdersTable shows the shortened label for a pending_payment order, n
   const orders = [{
     id: "ord_5", product_type: "research_opportunity", topic: "x",
     customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
-    created_at: "2026-09-19 12:00:00",
+    created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h old, not stuck
   }];
   const html = R.renderOrdersTable(orders);
   assert.ok(html.includes(">pending<"));
   assert.ok(!html.includes(">pending_payment<"));
   assert.ok(html.includes("status-awaiting_approval"));
+});
+
+test("renderOrdersTable flags a pending_payment order stuck past the threshold and links to Stripe", () => {
+  const orders = [{
+    id: "ord_stuck", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
+    created_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(), // 48h old, well past 24h
+    stripe_session_id: "cs_test_abc123",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes("status-failed"), "a stuck pending order gets the urgent status color");
+  assert.ok(html.includes("order-stuck-note"));
+  assert.ok(html.includes("check Stripe"));
+  assert.ok(html.includes("https://dashboard.stripe.com/test/checkout/sessions/cs_test_abc123"));
+  assert.ok(html.includes("View in Stripe"));
+});
+
+test("renderOrdersTable links to live-mode Stripe URLs (no /test/ prefix) for a cs_live_ session", () => {
+  const orders = [{
+    id: "ord_live", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "paid",
+    created_at: new Date().toISOString(), stripe_session_id: "cs_live_xyz789",
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(html.includes("https://dashboard.stripe.com/checkout/sessions/cs_live_xyz789"));
+  assert.ok(!html.includes("/test/checkout/sessions/cs_live_xyz789"));
+});
+
+test("renderOrdersTable shows a dash, not a broken link, when an order has no stripe_session_id", () => {
+  const orders = [{
+    id: "ord_nosession", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
+    created_at: new Date().toISOString(),
+  }];
+  const html = R.renderOrdersTable(orders);
+  assert.ok(!html.includes("View in Stripe"));
 });
 
 test("renderOrdersTable handles the empty case", () => {
