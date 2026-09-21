@@ -523,11 +523,11 @@ class ResearchOpportunityRequest(BaseModel):
     department: Optional[str] = None
     permission_level_required: int = Field(2, ge=MIN_LEVEL, le=MAX_LEVEL)
     priority: int = 3
+    budget_arc: float = 0.0
 
 
 class LaunchOpportunityRequest(BaseModel):
     name: Optional[str] = None
-    budget_arc: float = 0.0
 
 
 class ResearchRobloxTrendRequest(BaseModel):
