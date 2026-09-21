@@ -636,6 +636,17 @@
       }
     }, true);
 
+    // Tasks table's Result/Error cells are truncated to one line by
+    // default (see .task-result-cell in dashboard.css) -- click toggles
+    // full, wrapped text instead of relying on the title="" hover
+    // tooltip alone, which is easy to miss and useless on touch. A pure
+    // local UI toggle, not an API action, so it's its own listener
+    // rather than folding into the data-action dispatcher above.
+    document.body.addEventListener("click", (ev) => {
+      const cell = ev.target.closest && ev.target.closest(".task-result-cell");
+      if (cell) cell.classList.toggle("expanded");
+    });
+
     // Click-ripple on every button on the page, uniformly -- one
     // delegated listener rather than wiring it into each of the many
     // individual button handlers above and elsewhere in this file.

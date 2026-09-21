@@ -436,7 +436,21 @@ select:focus, input:focus {
   text-overflow: ellipsis;
   color: var(--muted);
   font-size: 13px;
-  cursor: default;
+  cursor: pointer;
+}
+/* The title="" attribute gives a hover tooltip, but hover alone is
+   easy to miss (and useless on touch) -- click toggles this class for
+   an always-discoverable way to read the full text. The dotted
+   underline is the "this does something" affordance; nothing else
+   about the row changes until it's actually clicked. */
+.task-result-cell:hover { color: var(--text); text-decoration: underline dotted; text-underline-offset: 3px; }
+.task-result-cell.expanded {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 480px;
+  word-break: break-word;
+  text-decoration: none;
 }
 
 .status {
