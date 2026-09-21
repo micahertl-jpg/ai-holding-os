@@ -746,8 +746,15 @@ def business_dashboard(business_id: str):
     if not biz:
         raise HTTPException(status_code=404, detail="business not found")
     agents = [row_to_dict(r) for r in state["agents"].list_by_business(business_id)]
+    # Newest first, capped -- without this, a business accumulates every
+    # task it's ever run (including every retried/failed debugging
+    # attempt) with no ordering at all, so the Tasks panel just grows
+    # forever and old completed/failed tasks bury whatever's actually
+    # current. 50 keeps a generous, useful recent window without
+    # re-litigating months of history on every dashboard load.
     tasks = [row_to_dict(r) for r in
-             db.query("SELECT * FROM tasks WHERE business_id=?", (business_id,))]
+             db.query("SELECT * FROM tasks WHERE business_id=? ORDER BY created_at DESC LIMIT 50",
+                       (business_id,))]
     pending_approvals = [row_to_dict(r) for r in
                           db.query("SELECT * FROM approvals WHERE business_id=? "
                                    "AND status='pending'", (business_id,))]
@@ -876,7 +883,8 @@ def create_task(business_id: str, req: CreateTaskRequest):
 @app.get("/businesses/{business_id}/tasks")
 def list_tasks(business_id: str):
     return [row_to_dict(r) for r in
-            state["db"].query("SELECT * FROM tasks WHERE business_id=?", (business_id,))]
+            state["db"].query("SELECT * FROM tasks WHERE business_id=? ORDER BY created_at DESC "
+                               "LIMIT 50", (business_id,))]
 
 
 @app.post("/tasks/{task_id}/complete")
