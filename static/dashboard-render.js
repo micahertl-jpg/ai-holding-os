@@ -399,6 +399,11 @@
           <td>${stripeUrl
             ? `<a href="${escapeHtml(stripeUrl)}" target="_blank" rel="noopener">View in Stripe</a>`
             : "—"}</td>
+          <td>${stuck
+            ? `<button class="btn-remove-card" data-action="delete-abandoned-order"
+                data-id="${escapeHtml(o.id)}"
+                title="Only enabled once verified in Stripe to have never been paid">Remove</button>`
+            : ""}</td>
         </tr>`;
       })
       .join("");
@@ -406,7 +411,7 @@
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>Topic</th><th>Product</th><th>Customer</th>
-            <th>Price</th><th>Status</th><th>Created</th><th>Stripe</th></tr></thead>
+            <th>Price</th><th>Status</th><th>Created</th><th>Stripe</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;

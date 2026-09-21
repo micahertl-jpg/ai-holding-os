@@ -22,7 +22,7 @@ revisit with a real connection pool before this sees production traffic.
 """
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 import json
@@ -47,6 +47,7 @@ import stripe_client
 import dashboard_auth
 from rate_limiter import RateLimiter
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
+from tasks.ops_maintenance_review import STUCK_ORDER_THRESHOLD_HOURS, age_hours as _order_age_hours
 from db import new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -1867,6 +1868,53 @@ def create_checkout(req: CheckoutRequest, request: Request):
 
     db.execute("UPDATE orders SET stripe_session_id=? WHERE id=?", (session["id"], order_id))
     return {"order_id": order_id, "checkout_url": session["url"]}
+
+
+@app.delete("/businesses/{business_id}/orders/{order_id}")
+def delete_abandoned_order(business_id: str, order_id: str):
+    """Owner-initiated cleanup for a checkout that was verified, by hand,
+    against Stripe's own record (not this system's — see the Store
+    Orders panel's 'View in Stripe' link) to have never actually
+    collected payment. This system deliberately never decides that on
+    its own, so this endpoint refuses on anything that isn't a plain,
+    stale pending_payment order:
+
+    - Only status='pending_payment' is deletable. A 'paid'/'fulfilled'
+      order already has a real_transactions row and a real Stripe
+      charge behind it -- undoing that is a manual Stripe refund (see
+      DEPLOY.md), never a silent delete here. 'failed' likewise stays
+      (a failed order can still have been paid, if its research task
+      failed after checkout succeeded).
+    - Only once it's been pending for at least STUCK_ORDER_THRESHOLD_HOURS
+      (the same threshold the ops review flags it with) -- by then the
+      customer's Stripe Checkout Session has almost certainly already
+      expired on Stripe's own side too, so there's no live session left
+      to race against."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    db = state["db"]
+    order = db.query_one("SELECT * FROM orders WHERE id=? AND business_id=?", (order_id, business_id))
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    if order["status"] != "pending_payment":
+        raise HTTPException(
+            status_code=400,
+            detail=f"only a pending_payment order can be deleted here (this one is "
+                   f"{order['status']!r}) -- a paid/fulfilled/failed order already involves real "
+                   "money and needs a manual Stripe refund, never a silent delete",
+        )
+    hours_pending = _order_age_hours(datetime.now(timezone.utc).replace(tzinfo=None), order["created_at"])
+    if hours_pending < STUCK_ORDER_THRESHOLD_HOURS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"this order has only been pending {hours_pending:.1f}h -- wait until at least "
+                   f"{STUCK_ORDER_THRESHOLD_HOURS:.0f}h (its Stripe checkout session likely hasn't "
+                   "expired yet) before deleting it",
+        )
+    db.execute("DELETE FROM orders WHERE id=?", (order_id,))
+    db.audit("owner", "delete_abandoned_order", "order", order_id,
+              {"business_id": business_id, "hours_pending": round(hours_pending, 1)})
+    return {"status": "deleted"}
 
 
 @app.get("/store/orders/{order_id}")

@@ -570,6 +570,17 @@
             body: JSON.stringify({ enabled }),
           });
           await refresh();
+        } else if (action === "delete-abandoned-order") {
+          if (!currentBusinessId) return;
+          if (!window.confirm(
+            "Delete this order? Only do this after confirming in Stripe (use the \"View in Stripe\" " +
+            "link on this row) that the customer never actually paid -- this removes it from this " +
+            "dashboard only, it does not touch Stripe or refund anything, and cannot be undone here."
+          )) {
+            return;
+          }
+          await api(`/businesses/${currentBusinessId}/orders/${t.dataset.id}`, { method: "DELETE" });
+          await refresh();
         } else if (action === "delete-opportunity") {
           if (!currentBusinessId) return;
           await api(`/businesses/${currentBusinessId}/opportunities/${t.dataset.id}`, { method: "DELETE" });
