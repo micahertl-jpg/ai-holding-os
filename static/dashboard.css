@@ -453,6 +453,21 @@ select:focus, input:focus {
   text-decoration: none;
 }
 
+.tasks-toggle { margin: 10px 0 0; text-align: center; }
+.tasks-show-all-btn {
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  color: var(--muted);
+  border-radius: 2px;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.tasks-show-all-btn:hover { color: var(--accent); border-color: var(--accent); }
+
 .status {
   font-family: var(--font-mono);
   padding: 2px 7px;
@@ -723,6 +738,32 @@ button { position: relative; overflow: hidden; }
   border-color: var(--red);
   box-shadow: 0 0 8px rgba(255,107,107,0.25);
 }
+
+/* Collapsed by default -- see _renderResearchCard() in
+   dashboard-render.js and renderTradingStrategyVersions(). A list of
+   several fully-researched reports or strategy versions is a lot of
+   paragraph+field-list text to scroll through just to scan titles and
+   confidence levels; the head alone is enough for that, full detail is
+   one click away via .card-toggle-btn. */
+.card-details { display: none; }
+.opportunity-card.expanded .card-details { display: block; }
+
+.card-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  color: var(--muted);
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.card-toggle-btn:hover { color: var(--accent); border-color: var(--accent); }
+.opportunity-card.expanded .card-toggle-btn::after { content: " \2212"; }
+.opportunity-card:not(.expanded) .card-toggle-btn::after { content: " +"; }
 
 .opportunity-summary { font-size: 13px; color: var(--text); margin: 0 0 10px 0; }
 
