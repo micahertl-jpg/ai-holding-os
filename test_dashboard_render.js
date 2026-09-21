@@ -800,6 +800,73 @@ test("renderLiveTradingTrades escapes rationale to prevent HTML injection", () =
   assert.ok(!html.includes("<img"));
 });
 
+test("renderBacktestRuns handles the empty case", () => {
+  const html = R.renderBacktestRuns([]);
+  assert.ok(html.includes("No backtest runs yet"));
+});
+
+test("renderBacktestRuns shows the best candidate marked and PASS/no status per candidate", () => {
+  const runs = [{
+    train_start_date: "2026-01-01", validation_split_date: "2026-04-01",
+    validation_end_date: "2026-06-01", max_candidates: 2, stopped_early: true,
+    best_candidate_index: 1,
+    candidates: [
+      {
+        rationale: null, validation_meets_bar: false,
+        train_stats: { net_pnl_usd: 50 },
+        validation_stats: { net_pnl_usd: -5, profit_factor: 0.8, win_rate: 0.3,
+                             max_drawdown_pct: 0.12, sell_trades: 25, sample_size_ok: true },
+      },
+      {
+        rationale: "Tightened confidence threshold after a weak train result.",
+        validation_meets_bar: true,
+        train_stats: { net_pnl_usd: 40 },
+        validation_stats: { net_pnl_usd: 30, profit_factor: 2.1, win_rate: 0.6,
+                             max_drawdown_pct: 0.08, sell_trades: 22, sample_size_ok: true },
+      },
+    ],
+  }];
+  const html = R.renderBacktestRuns(runs);
+  assert.ok(html.includes("PASS"));
+  assert.ok(html.includes(">no<") || html.includes(">no<\n") || /class="status status-failed">no</.test(html));
+  assert.ok(html.includes("backtest-best-row"));
+  assert.ok(html.includes("Tightened confidence threshold"));
+  assert.ok(html.includes("(initial strategy, not a proposal)"));
+  assert.ok(html.includes("60%")); // win rate formatted as a percentage
+});
+
+test("renderBacktestRuns formats an infinite profit_factor and a thin sample size", () => {
+  const runs = [{
+    train_start_date: "2026-01-01", validation_split_date: "2026-02-01",
+    validation_end_date: "2026-02-15", max_candidates: 1, stopped_early: false,
+    best_candidate_index: 0,
+    candidates: [{
+      rationale: null, validation_meets_bar: false,
+      train_stats: { net_pnl_usd: 5 },
+      validation_stats: { net_pnl_usd: 5, profit_factor: Infinity, win_rate: 1.0,
+                           max_drawdown_pct: 0.0, sell_trades: 2, sample_size_ok: false },
+    }],
+  }];
+  const html = R.renderBacktestRuns(runs);
+  assert.ok(html.includes("∞"));
+  assert.ok(html.includes("(thin)"));
+  assert.ok(html.includes("none passed"));
+});
+
+test("renderBacktestRuns escapes rationale to prevent HTML injection", () => {
+  const runs = [{
+    train_start_date: "2026-01-01", validation_split_date: "2026-02-01",
+    validation_end_date: "2026-02-15", max_candidates: 1, stopped_early: false,
+    best_candidate_index: 0,
+    candidates: [{
+      rationale: "<img src=x onerror=alert(1)>", validation_meets_bar: false,
+      train_stats: {}, validation_stats: { sample_size_ok: false },
+    }],
+  }];
+  const html = R.renderBacktestRuns(runs);
+  assert.ok(!html.includes("<img"));
+});
+
 test("renderGlobalStats sums agents/tasks across all businesses and formats real revenue", () => {
   const overview = {
     businesses: [{ id: "biz_1" }, { id: "biz_2" }],

@@ -691,6 +691,102 @@ the whole loop against Alpaca's own paper endpoint first (the default —
 real network behavior, zero real-money risk), and only then set
 `ALPACA_BASE_URL` to the live one.
 
+## Strategy Backtesting — status (tests against real history, no real/paper money)
+
+A separate feature for evaluating a strategy — or searching for a
+better one — against REAL historical daily prices, before ever
+spending real/paper wall-clock time waiting for live cycles to
+accumulate, and before ever considering Live Trading above. Full
+walkthrough and the reasoning behind it in DEPLOY.md's "Strategy
+Backtesting" section.
+
+**What's new:**
+- `market_data.py` — `get_daily_history(symbol, start_date, end_date)`
+  on both `AlphaVantageClient` (real, via Alpha Vantage's
+  `TIME_SERIES_DAILY`) and `MockMarketDataClient` (deterministic
+  synthetic bars, always tagged `mock=True`, for offline tests).
+- `tasks/backtest.py` — `run_backtest()` steps day-by-day through real
+  historical bars, calling the *exact same*
+  `decide_trades()`/`apply_risk_limits()` pair from
+  `tasks/trading_cycle.py`, completely unchanged — a backtest is "what
+  this strategy would have really decided," not a separate simulation
+  with its own rules. Refuses to run against any mock historical data.
+  `compute_backtest_stats()` extends
+  `trading_strategy_review.compute_stats()` with `profit_factor` (gross
+  wins ÷ gross losses — the real tell for whether a high win rate is
+  actually making money), real `max_drawdown_pct` over the whole run,
+  and a `sample_size_ok` flag for when there simply aren't enough
+  trades yet to trust the numbers.
+- `tasks/strategy_backtest_search.py` — a BOUNDED, train/validation-
+  checked search, built specifically to avoid "keep tweaking
+  parameters until some target is hit" (a direct path to overfitting a
+  strategy to noise in whatever window it was tuned against).
+  `meets_bar()` is the actual pass/fail check, evaluated only against
+  held-out VALIDATION stats, and never uses win rate alone: it requires
+  a real sample size, positive net P&L, a profit_factor with real
+  margin above break-even, and a bounded max drawdown.
+  `run_strategy_search()` tries at most `max_candidates` strategies
+  (reusing `trading_strategy_review.propose_strategy_update()`
+  unchanged for each proposal) and stops the moment one clears the bar
+  — "none of these were good enough" is reported plainly, never hidden
+  or routed around. Never activates anything automatically.
+- Schema: `backtest_runs` (both `schema.sql` and `schema_postgres.sql`)
+  — every candidate tried, with its full train/validation stats, kept
+  deliberately separate from `paper_trades`/`live_trades`/
+  `trading_snapshots` (a backtest never writes to any of them).
+- `executor.py`: `_handle_strategy_backtest_search`, registered under
+  task type `strategy_backtest_search` (`permission_level_required=2`,
+  recommend-only, same tier as `ops_maintenance_review`).
+- New endpoints: `POST /businesses/{id}/trading/backtest` (triggers a
+  bounded search over a given train/validation date range) and
+  `GET /businesses/{id}/trading/backtest-runs`.
+- A new dashboard panel: a date-range form and a list of past runs,
+  each candidate shown with its validation P&L/profit factor/win
+  rate/drawdown/trade count, a PASS/no badge, and the best candidate
+  starred — never an auto-activate button, since promoting a strategy
+  is always the owner's own explicit call via the existing
+  strategy-override endpoint.
+
+**What was actually verified in THIS build:**
+- `python3 -m py_compile` on every new/changed `.py` file; `node -e
+  "require(...)"` on the changed dashboard JS files.
+- The full offline suite: 4 new `test_market_data_offline.py` cases (real-
+  shaped history parsing/date-filtering, rate-limit handling, mock
+  history tagging), 8 new `test_backtest_offline.py` cases (an exact
+  buy-then-sell sequence across real historical days with the exact
+  realized P&L asserted, refusing mock data, every
+  `compute_backtest_stats` edge case including zero-loss/zero-trade),
+  6 new `test_strategy_backtest_search_offline.py` cases (every
+  `meets_bar` boundary, stopping early on a passing candidate, never
+  exceeding `max_candidates`, ranking by real validation P&L rather
+  than train performance or win rate), and 5 new DB-integration
+  `test_executor_offline.py` cases (a real backtest run saved as a
+  report, confirming it never touches `paper_trades`/`live_trades`/
+  `trading_snapshots`, missing task input, a real historical-data fetch
+  failure, no active strategy). Every pre-existing test in this repo
+  still passes unchanged.
+- Schema applied cleanly and verified on both SQLite and a real local
+  Postgres database.
+
+**What was NOT verified** (this sandbox has no general internet access
+at all — confirmed by a direct connectivity test to Alpha Vantage's own
+host during this build, which failed to even establish a connection):
+- Any actual network call to Alpha Vantage's historical-data endpoint —
+  only ever exercised against `MockMarketDataClient`/a same-shaped test
+  double reporting `mock=False`.
+- A real backtest search run against real historical prices and a real
+  model, end to end.
+- The new dashboard panel's form and results table clicked through in a
+  real browser by a human.
+
+**To verify it yourself**, with `ANTHROPIC_API_KEY` and
+`ALPHAVANTAGE_API_KEY` both set: open the dashboard, pick a business
+with a paper trading portfolio, fill in a train start date, a
+validation split date, and a validation end date in the Backtest panel
+(a few months total is plenty to start), and click **Run Backtest
+Search**. Within a few minutes you should see a real run appear with
+one or more candidates and their real train/validation stats.
+
 ## App Development — status
 
 The fourth business vertical: app-idea feasibility and technical
@@ -1205,6 +1301,11 @@ next.
   loudly with a clear error instead of trading on fabricated prices —
   this is intentional, not a bug, but it means the feature does nothing
   visible until the key is set.
+- **For Strategy Backtesting:** nothing beyond the `ALPHAVANTAGE_API_KEY`
+  you already set above — it reuses the same key for historical data.
+  Recommended before ever touching Live Trading below: see DEPLOY.md's
+  "Strategy Backtesting" section and try it against a few months of
+  real history first.
 - **For Live Trading (REAL MONEY, optional, off by default):** nothing
   to do unless you want this — paper trading above needs none of it.
   See `DEPLOY.md`'s "Live Trading — REAL MONEY" section for the full

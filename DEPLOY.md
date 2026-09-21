@@ -248,6 +248,50 @@ what is and isn't covered. Treat the real Alpaca connection as
 unverified until you've watched it place and fill one small order
 yourself.
 
+## Strategy Backtesting — test against real history before risking real cash
+
+Before ever enabling Live Trading (above), use this to see how the
+current strategy — or a bounded search for a better one — would have
+performed against REAL past market data, without spending a single day
+of real/paper time waiting for cycles to accumulate. From the
+dashboard's Backtest panel (or `POST /businesses/{id}/trading/backtest`
+directly), pick a **train window** (what the search tunes against) and
+a separate, later **validation window** (what actually judges a
+candidate — never shown to the model while it's proposing changes).
+
+**Why this exists rather than just "keep tweaking until it looks
+good":** a strategy tuned and judged on the exact same historical data
+will often look great in that test and fall apart on anything new —
+classic overfitting. Splitting train from validation, and only ever
+judging a candidate's real quality on the validation window, is the
+standard defense. The search itself is bounded too — it tries at most
+`max_candidates` strategies (default 5, capped at 10) and stops the
+moment one clears the bar; "none of these were good enough" is a
+normal, expected result, not a bug to route around. And the bar itself
+is never win rate alone: `tasks/strategy_backtest_search.py`'s
+`meets_bar()` requires a real sample size, positive net P&L, a
+profit_factor with real margin above break-even (not just "wins more
+than it loses"), and a bounded max drawdown.
+
+**Requires `ALPHAVANTAGE_API_KEY`** (same key the paper-trading
+vertical uses) — without it, `market_data.py` returns clearly-labeled
+mock historical data and the backtest refuses to run against it,
+exactly like live/paper trading refuse to trade on a mock quote.
+
+**Real cost, stated plainly:** each simulated trading day is one real
+LLM call — the same cost as one real trading_cycle task. A backtest
+search over N historical days with `max_candidates` tries costs
+roughly `N × max_candidates` LLM calls. Keep date ranges reasonable
+(a few months is usually plenty to start) rather than backtesting
+years of history in one call.
+
+**Nothing here is ever auto-activated.** A backtest run only ever
+saves a report (`backtest_runs` table) of every candidate tried, with
+its full train/validation stats. If a candidate looks genuinely good,
+promote it yourself via the existing
+`POST /businesses/{id}/trading/strategy-override` endpoint — same
+versioned, bounds-checked path as any other strategy change.
+
 ## After deploying, verify for real (don't just assume it works)
 1. Open `https://your-url/dashboard` — does it load?
 2. Create a business, an agent, a task — does the same flow that

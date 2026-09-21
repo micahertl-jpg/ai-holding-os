@@ -634,6 +634,10 @@ button { position: relative; overflow: hidden; }
 }
 .btn-danger:hover { background: rgba(255,107,107,0.12); box-shadow: 0 0 10px rgba(255,107,107,0.3); }
 
+/* ---------- Backtesting ---------- */
+
+.backtest-best-row { background: rgba(67,209,122,0.08); }
+
 .opportunities-list { display: flex; flex-direction: column; gap: 14px; }
 
 .opportunity-card {

@@ -236,6 +236,30 @@
         required.</p>
     </section>
 
+    <section class="panel panel-backtest">
+      <h3>Strategy Backtesting — tests against real historical data, no real or paper money moves</h3>
+      <form id="trigger-backtest-form" class="inline-form">
+        <input name="train_start_date" type="date" required title="Train window start date">
+        <input name="validation_split_date" type="date" required
+               title="Validation window start date (train window ends the day before)">
+        <input name="validation_end_date" type="date" required title="Validation window end date">
+        <input name="max_candidates" type="number" min="1" max="10" value="5"
+               title="Max candidate strategies to try (bounded, never open-ended)">
+        <button type="submit" class="btn-small">Run Backtest Search</button>
+      </form>
+      <div id="backtest-runs"></div>
+      <p class="panel-note">Reuses the exact same decision/risk-limit logic as paper trading, run
+        against real historical daily prices instead of live quotes. Every candidate is scored on
+        a held-out VALIDATION window it was never tuned against — the defense against a strategy
+        that looks great on the data it was shaped by and nowhere else; a candidate's real bar is
+        never win rate alone, but net P&amp;L, profit factor, sample size, and max drawdown
+        together. Bounded to at most max_candidates tries — "none of these were good enough yet"
+        is a normal, expected result, not a bug. Nothing here is ever auto-activated; promote a
+        candidate yourself via the strategy override, below. Requires
+        <code>ALPHAVANTAGE_API_KEY</code>; each simulated day is one real LLM call, so cost scales
+        with (days) &times; (candidates tried).</p>
+    </section>
+
     <section class="panel">
       <h3>Scheduled Jobs (recurring tasks)</h3>
       <div id="jobs-table"></div>

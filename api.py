@@ -523,6 +523,14 @@ class EnableLiveTradingRequest(BaseModel):
     cycle_interval_seconds: int = 14400    # 4 hours, same default as paper
 
 
+class TriggerBacktestSearchRequest(BaseModel):
+    train_start_date: str          # "YYYY-MM-DD" -- start of the TRAIN window
+    validation_split_date: str     # bars before this are TRAIN, on/after are VALIDATION
+    validation_end_date: str       # "YYYY-MM-DD" -- end of the VALIDATION window
+    starting_cash_usd: float = 10000.0
+    max_candidates: int = 5
+
+
 # ---------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------
@@ -773,6 +781,15 @@ def business_dashboard(business_id: str):
         "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version DESC",
         (business_id,))]
     live_trading = _live_trading_view(business_id)
+    backtest_runs_rows = db.query(
+        "SELECT * FROM backtest_runs WHERE business_id=? ORDER BY created_at DESC LIMIT 5",
+        (business_id,),
+    )
+    backtest_runs = []
+    for r in backtest_runs_rows:
+        d = row_to_dict(r)
+        d["candidates"] = json.loads(d.pop("candidates_json"))
+        backtest_runs.append(d)
     return {
         "business": row_to_dict(biz),
         "agents": agents,
@@ -789,6 +806,7 @@ def business_dashboard(business_id: str):
         "trading_trades": trading_trades,
         "trading_strategy_versions": trading_strategy_versions,
         "live_trading": live_trading,
+        "backtest_runs": backtest_runs,
     }
 
 
@@ -1530,6 +1548,71 @@ def trigger_live_trading_cycle(business_id: str, department: Optional[str] = Non
         permission_level_required=4, task_type="live_trading_cycle",
     )
     return {"task_id": task_id}
+
+
+# ---------------------------------------------------------------------
+# Backtesting & bounded strategy search against REAL historical price
+# data (see tasks/backtest.py, tasks/strategy_backtest_search.py,
+# executor.py's _handle_strategy_backtest_search). Recommend-only, no
+# real or paper money touched -- see that handler's docstring. Requires
+# ALPHAVANTAGE_API_KEY to be configured; without it, market_data.py
+# returns mock historical data and the search refuses to run rather
+# than backtest against fabricated prices.
+# ---------------------------------------------------------------------
+
+@app.post("/businesses/{business_id}/trading/backtest")
+def trigger_strategy_backtest_search(business_id: str, req: TriggerBacktestSearchRequest,
+                                      department: Optional[str] = None):
+    """Triggers one bounded backtest/strategy-search task right now.
+    Each simulated day is a real LLM call (same cost as one live/paper
+    cycle), so the total cost scales with (train+validation days) x
+    max_candidates -- real USD either way, same as every other task
+    type. Never auto-promotes anything; review results via GET
+    .../trading/backtest-runs and promote a candidate (if any) through
+    the existing strategy-override endpoint yourself."""
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    if not state["db"].query_one("SELECT id FROM paper_portfolios WHERE business_id=?", (business_id,)):
+        raise HTTPException(status_code=404, detail="create a paper trading portfolio first -- "
+                                                      "a backtest reuses its active strategy")
+    if not (1 <= req.max_candidates <= 10):
+        raise HTTPException(status_code=400, detail="max_candidates must be between 1 and 10")
+    if req.train_start_date >= req.validation_split_date:
+        raise HTTPException(status_code=400,
+                             detail="train_start_date must be before validation_split_date")
+    if req.validation_split_date >= req.validation_end_date:
+        raise HTTPException(status_code=400,
+                             detail="validation_split_date must be before validation_end_date")
+
+    task_id = state["orchestrator"].create_task(
+        business_id, "Backtest and search for a better trading strategy against real "
+                     "historical price data", department=department,
+        permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={
+            "train_start_date": req.train_start_date,
+            "validation_split_date": req.validation_split_date,
+            "validation_end_date": req.validation_end_date,
+            "starting_cash_usd": req.starting_cash_usd,
+            "max_candidates": req.max_candidates,
+        },
+    )
+    return {"task_id": task_id}
+
+
+@app.get("/businesses/{business_id}/trading/backtest-runs")
+def list_backtest_runs(business_id: str):
+    if not state["businesses"].get(business_id):
+        raise HTTPException(status_code=404, detail="business not found")
+    rows = state["db"].query(
+        "SELECT * FROM backtest_runs WHERE business_id=? ORDER BY created_at DESC LIMIT 20",
+        (business_id,),
+    )
+    runs = []
+    for r in rows:
+        d = row_to_dict(r)
+        d["candidates"] = json.loads(d.pop("candidates_json"))
+        runs.append(d)
+    return runs
 
 
 # ---------------------------------------------------------------------

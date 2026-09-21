@@ -127,6 +127,7 @@
     setHtmlIfChanged("live-trading-status", R.renderLiveTrading(data.live_trading));
     setHtmlIfChanged("live-trading-trades",
       R.renderLiveTradingTrades(data.live_trading ? data.live_trading.trades : []));
+    setHtmlIfChanged("backtest-runs", R.renderBacktestRuns(data.backtest_runs));
   }
 
   async function refresh() {
@@ -467,6 +468,26 @@
         await refresh();
       } catch (e) {
         showError("Failed to trigger live trading cycle: " + e.message);
+      }
+    });
+
+    document.getElementById("trigger-backtest-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const f = ev.target;
+      try {
+        await api(`/businesses/${currentBusinessId}/trading/backtest`, {
+          method: "POST",
+          body: JSON.stringify({
+            train_start_date: f.train_start_date.value,
+            validation_split_date: f.validation_split_date.value,
+            validation_end_date: f.validation_end_date.value,
+            max_candidates: parseInt(f.max_candidates.value, 10) || 5,
+          }),
+        });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger backtest search: " + e.message);
       }
     });
 

@@ -21,6 +21,7 @@ code, so that shape is checked explicitly below rather than trusting a
 parsed as if it were quote data.
 """
 
+import datetime
 import json
 import os
 import urllib.request
@@ -92,6 +93,67 @@ class AlphaVantageClient:
             "mock": False,
         }
 
+    def get_daily_history(self, symbol: str, start_date: str, end_date: str) -> list:
+        """Returns real historical daily bars for symbol, inclusive of
+        start_date/end_date (both "YYYY-MM-DD"), oldest first: a list of
+        {"date", "open", "high", "low", "close", "volume", "mock": False}.
+        Used by tasks/backtest.py to test a strategy against real past
+        price action rather than live quotes. Raises MarketDataError on
+        any failure -- never fabricates a historical bar. outputsize=full
+        is used (not the default "compact" 100 points) so an arbitrary
+        date range can be requested; Alpha Vantage's free tier still
+        serves 20+ years of daily history for this endpoint."""
+        url = (f"{ALPHAVANTAGE_API_URL}?function=TIME_SERIES_DAILY&symbol="
+               f"{urllib.request.quote(symbol)}&outputsize=full&apikey={self.api_key}")
+        req = urllib.request.Request(url, headers={"User-Agent": "ai-holding-os-trading/0.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
+                raw = resp.read().decode("utf-8")
+        except (urllib.error.URLError, urllib.error.HTTPError) as e:
+            raise MarketDataError(f"failed to fetch daily history for {symbol}: {e}") from e
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise MarketDataError(f"non-JSON response fetching daily history for {symbol}: {e}") from e
+
+        if "Note" in data or "Information" in data:
+            raise MarketDataError(
+                f"Alpha Vantage returned a rate-limit/info message instead of history "
+                f"data for {symbol}: {data.get('Note') or data.get('Information')}"
+            )
+
+        series = data.get("Time Series (Daily)")
+        if not series:
+            raise MarketDataError(
+                f"no 'Time Series (Daily)' field in Alpha Vantage response for {symbol}: {data}"
+            )
+
+        bars = []
+        for date_str, values in series.items():
+            if date_str < start_date or date_str > end_date:
+                continue
+            try:
+                bars.append({
+                    "date": date_str,
+                    "open": float(values["1. open"]),
+                    "high": float(values["2. high"]),
+                    "low": float(values["3. low"]),
+                    "close": float(values["4. close"]),
+                    "volume": int(float(values["5. volume"])),
+                    "mock": False,
+                })
+            except (KeyError, ValueError) as e:
+                raise MarketDataError(f"malformed daily bar for {symbol} on {date_str}: {values}") from e
+
+        bars.sort(key=lambda b: b["date"])
+        if not bars:
+            raise MarketDataError(
+                f"no daily bars found for {symbol} in range {start_date}..{end_date} "
+                f"(check the date range and that the symbol/dates are valid)"
+            )
+        return bars
+
 
 class MockMarketDataClient:
     """Explicit stand-in used ONLY when no real API key/network is
@@ -113,6 +175,31 @@ class MockMarketDataClient:
             "as_of": "MOCK",
             "mock": True,
         }
+
+    def get_daily_history(self, symbol: str, start_date: str, end_date: str) -> list:
+        """Deterministic synthetic daily bars (a simple oscillation
+        around self.prices[symbol]/default_price) for offline tests --
+        never meant to resemble real market behavior. Every bar is
+        tagged mock=True so tasks/backtest.py refuses to backtest
+        against it outside of an explicit test, same rule get_quote()
+        already follows for live paper/live trading."""
+        base_price = self.prices.get(symbol, self.default_price)
+        start = datetime.date.fromisoformat(start_date)
+        end = datetime.date.fromisoformat(end_date)
+        bars = []
+        d = start
+        day_index = 0
+        while d <= end:
+            if d.weekday() < 5:  # markets aren't open on weekends
+                price = base_price * (1 + 0.01 * ((day_index % 10) - 5))
+                bars.append({
+                    "date": d.isoformat(), "open": price, "high": price * 1.01,
+                    "low": price * 0.99, "close": price, "volume": 1000000,
+                    "mock": True,
+                })
+                day_index += 1
+            d += datetime.timedelta(days=1)
+        return bars
 
 
 def get_default_client():
