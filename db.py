@@ -76,6 +76,7 @@ def new_id(prefix: str) -> str:
 _COLUMN_MIGRATIONS = [
     # (table, column, type_and_default_ddl)
     ("paper_portfolios", "live_trading_enabled", "INTEGER DEFAULT 0"),
+    ("opportunities", "launched_business_id", "TEXT REFERENCES businesses(id)"),
 ]
 
 

@@ -476,7 +476,8 @@
   // several researched concepts turns into a lot of scrolling if every
   // card is fully expanded at once; the head (title + confidence) is
   // enough to scan the list, full detail is one click away.
-  function _renderResearchCard(title, confidence, summary, fields, urls, removeAction, removeId, removeTitle) {
+  function _renderResearchCard(title, confidence, summary, fields, urls, removeAction, removeId,
+                                removeTitle, extraHeadHtml) {
     const confEsc = escapeHtml(confidence || "unknown");
     const statusClass = confEsc === "high" ? "idle" : confEsc === "medium" ? "awaiting_approval" : "failed";
     const fieldsHtml = fields
@@ -491,6 +492,7 @@
             <strong>${escapeHtml(title)}</strong>
             <span class="opportunity-head-right">
               <span class="status status-${statusClass}">confidence: ${confEsc}</span>
+              ${extraHeadHtml || ""}
               <button type="button" class="card-toggle-btn">Details</button>
               <button class="btn-remove-card" data-action="${removeAction}" data-id="${escapeHtml(removeId)}"
                 title="${escapeHtml(removeTitle)}">Remove</button>
@@ -517,17 +519,29 @@
       return '<p class="empty">No opportunities researched yet.</p>';
     }
     const cards = opportunities
-      .map((o) => _renderResearchCard(
-        o.topic, o.confidence_level, o.summary,
-        [
-          ["Market size", o.market_size], ["Competition", o.competition],
-          ["Startup cost", o.startup_cost], ["Revenue potential", o.revenue_potential],
-          ["Time to market", o.time_to_market], ["Operational complexity", o.operational_complexity],
-          ["Legal/regulatory risk", o.legal_regulatory_risk], ["Capital requirements", o.capital_requirements],
-          ["Downside risk", o.downside_risk],
-        ],
-        _referenceUrls(o.reference_urls_used), "delete-opportunity", o.id, "Remove this researched opportunity",
-      ))
+      .map((o) => {
+        // The one action that turns research into a real business (see
+        // POST .../opportunities/{id}/launch) -- once launched, the
+        // launch button is replaced by a plain badge so the same
+        // opportunity can never be launched twice from here.
+        const launchHtml = o.launched_business_id
+          ? '<span class="status status-idle" title="A business already exists for this opportunity">launched</span>'
+          : `<button type="button" class="btn-small" data-action="launch-opportunity"
+              data-business-id="${escapeHtml(o.business_id)}" data-opportunity-id="${escapeHtml(o.id)}"
+              data-topic="${escapeHtml(o.topic)}">Launch Business</button>`;
+        return _renderResearchCard(
+          o.topic, o.confidence_level, o.summary,
+          [
+            ["Market size", o.market_size], ["Competition", o.competition],
+            ["Startup cost", o.startup_cost], ["Revenue potential", o.revenue_potential],
+            ["Time to market", o.time_to_market], ["Operational complexity", o.operational_complexity],
+            ["Legal/regulatory risk", o.legal_regulatory_risk], ["Capital requirements", o.capital_requirements],
+            ["Downside risk", o.downside_risk],
+          ],
+          _referenceUrls(o.reference_urls_used), "delete-opportunity", o.id, "Remove this researched opportunity",
+          launchHtml,
+        );
+      })
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
   }
