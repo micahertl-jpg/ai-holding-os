@@ -180,12 +180,14 @@
           <td><span class="status status-${escapeHtml(t.status)}">${escapeHtml(t.status)}</span></td>
           <td>${escapeHtml(t.priority)}</td>
           <td>${fmtArc(t.cost_arc)}</td>
+          <td class="task-result-cell">${t.result ? escapeHtml(t.result) : ""}</td>
         </tr>`
       )
       .join("");
     return `
       <table class="data-table">
-        <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th></tr></thead>
+        <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th>
+          <th>Result / Error</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
   }
