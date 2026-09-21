@@ -115,20 +115,22 @@ class OpsMaintenanceReviewError(Exception):
     pass
 
 
-def _parse_db_timestamp(value):
+def parse_db_timestamp(value):
     """created_at/next_run_at/etc. come back as a naive UTC string from
     SQLite (TEXT columns) but a real timezone-aware datetime from
     Postgres (TIMESTAMPTZ columns) via psycopg2 -- this normalizes both
     to a naive UTC datetime so age-in-hours math works identically on
     either backend, the same cross-backend concern db.py's `?`->`%s`
-    translation layer exists for elsewhere."""
+    translation layer exists for elsewhere. Not underscore-prefixed:
+    api.py's delete_abandoned_order() reuses this (via age_hours) rather
+    than duplicating the same cross-backend timestamp handling."""
     if isinstance(value, datetime):
         return value.replace(tzinfo=None) if value.tzinfo else value
     return datetime.strptime(value, TIMESTAMP_FORMAT)
 
 
-def _age_hours(now, value):
-    return (now - _parse_db_timestamp(value)).total_seconds() / 3600.0
+def age_hours(now, value):
+    return (now - parse_db_timestamp(value)).total_seconds() / 3600.0
 
 
 def collect_system_metrics(db, now: datetime = None) -> dict:
@@ -141,21 +143,21 @@ def collect_system_metrics(db, now: datetime = None) -> dict:
     stuck_tasks = []
     for row in db.query("SELECT id, objective, status, created_at FROM tasks "
                          "WHERE status IN ('queued','assigned')"):
-        age = _age_hours(now, row["created_at"])
+        age = age_hours(now, row["created_at"])
         if age >= STUCK_TASK_THRESHOLD_HOURS:
             stuck_tasks.append({"id": row["id"], "objective": row["objective"],
                                  "status": row["status"], "age_hours": round(age, 1)})
 
     stale_approvals = []
     for row in db.query("SELECT id, created_at FROM approvals WHERE status='pending'"):
-        age = _age_hours(now, row["created_at"])
+        age = age_hours(now, row["created_at"])
         if age >= STALE_APPROVAL_THRESHOLD_HOURS:
             stale_approvals.append({"id": row["id"], "age_hours": round(age, 1)})
 
     silent_scheduled_jobs = []
     for row in db.query("SELECT id, name, interval_seconds, next_run_at FROM scheduled_jobs "
                          "WHERE enabled=1"):
-        overdue = _age_hours(now, row["next_run_at"])
+        overdue = age_hours(now, row["next_run_at"])
         threshold = max(SILENT_JOB_MIN_GRACE_HOURS,
                          (row["interval_seconds"] / 3600.0) * SILENT_JOB_GRACE_MULTIPLIER)
         if overdue >= threshold:
@@ -165,7 +167,7 @@ def collect_system_metrics(db, now: datetime = None) -> dict:
     stuck_orders = []
     for row in db.query("SELECT id, status, created_at FROM orders "
                          "WHERE status IN ('pending_payment','paid')"):
-        age = _age_hours(now, row["created_at"])
+        age = age_hours(now, row["created_at"])
         if age >= STUCK_ORDER_THRESHOLD_HOURS:
             stuck_orders.append({"id": row["id"], "status": row["status"], "age_hours": round(age, 1)})
 
@@ -179,7 +181,7 @@ def collect_system_metrics(db, now: datetime = None) -> dict:
     )
     recent_error_count = sum(
         1 for row in recent_rows
-        if _age_hours(now, row["created_at"]) <= RECENT_ERROR_WINDOW_HOURS
+        if age_hours(now, row["created_at"]) <= RECENT_ERROR_WINDOW_HOURS
         and ("_failed" in row["action"] or "_error" in row["action"])
     )
 

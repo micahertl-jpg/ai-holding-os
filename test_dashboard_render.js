@@ -352,6 +352,36 @@ test("renderOrdersTable shows a dash, not a broken link, when an order has no st
   assert.ok(!html.includes("View in Stripe"));
 });
 
+test("renderOrdersTable only shows a Remove button for a stuck (24h+) pending_payment order", () => {
+  const stuckOrder = {
+    id: "ord_stuck", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
+    created_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+  };
+  const freshOrder = {
+    id: "ord_fresh", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "pending_payment",
+    created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+  };
+  const paidOrder = {
+    id: "ord_paid", product_type: "research_opportunity", topic: "x",
+    customer_email: "y@example.com", price_usd_cents: 1900, status: "paid",
+    created_at: new Date(Date.now() - 999 * 60 * 60 * 1000).toISOString(),
+  };
+
+  const stuckHtml = R.renderOrdersTable([stuckOrder]);
+  assert.ok(stuckHtml.includes('data-action="delete-abandoned-order"'));
+  assert.ok(stuckHtml.includes('data-id="ord_stuck"'));
+
+  const freshHtml = R.renderOrdersTable([freshOrder]);
+  assert.ok(!freshHtml.includes('data-action="delete-abandoned-order"'),
+    "a pending order that isn't stuck yet gets no Remove button");
+
+  const paidHtml = R.renderOrdersTable([paidOrder]);
+  assert.ok(!paidHtml.includes('data-action="delete-abandoned-order"'),
+    "a paid order, however old, never gets a Remove button here");
+});
+
 test("renderOrdersTable handles the empty case", () => {
   assert.ok(R.renderOrdersTable([]).includes("No store orders yet"));
   assert.ok(R.renderOrdersTable(null).includes("No store orders yet"));
