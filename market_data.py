@@ -99,12 +99,21 @@ class AlphaVantageClient:
         {"date", "open", "high", "low", "close", "volume", "mock": False}.
         Used by tasks/backtest.py to test a strategy against real past
         price action rather than live quotes. Raises MarketDataError on
-        any failure -- never fabricates a historical bar. outputsize=full
-        is used (not the default "compact" 100 points) so an arbitrary
-        date range can be requested; Alpha Vantage's free tier still
-        serves 20+ years of daily history for this endpoint."""
+        any failure -- never fabricates a historical bar.
+
+        Uses outputsize=compact (the last ~100 trading days, roughly
+        4-5 calendar months) rather than "full". outputsize=full is now
+        a premium-only parameter on Alpha Vantage's free tier -- found
+        live, the hard way: an earlier version of this code requested
+        "full" on the assumption free accounts still got 20+ years of
+        history, and every real call failed with "The outputsize=full
+        parameter value is a premium feature." A requested date range
+        older than what "compact" covers simply returns fewer bars for
+        the earlier portion (or, if the WHOLE range predates it,
+        MarketDataError via the "no daily bars found" check below) --
+        never a fabricated bar to fill the gap."""
         url = (f"{ALPHAVANTAGE_API_URL}?function=TIME_SERIES_DAILY&symbol="
-               f"{urllib.request.quote(symbol)}&outputsize=full&apikey={self.api_key}")
+               f"{urllib.request.quote(symbol)}&outputsize=compact&apikey={self.api_key}")
         req = urllib.request.Request(url, headers={"User-Agent": "ai-holding-os-trading/0.1"})
         try:
             with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
