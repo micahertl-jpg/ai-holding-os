@@ -26,6 +26,7 @@ def test_public_paths_are_recognized():
                  "/store/terms", "/store/business-idea-research",
                  "/store/roblox-game-idea-research", "/store/app-feasibility-report",
                  "/store/real-estate-investment-research",
+                 "/googlef1542a77e61568bf.html",
                  "/static/store.html", "/static/store.css",
                  "/static/store.js", "/static/store-success.html",
                  "/static/store-success.js", "/static/store-legal.html",

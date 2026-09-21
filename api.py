@@ -333,6 +333,16 @@ def storefront_landing():
     return FileResponse(str(STATIC_DIR / "store.html"))
 
 
+@app.get("/googlef1542a77e61568bf.html")
+def google_site_verification():
+    """Google Search Console site-ownership verification file (HTML
+    file method): must be served byte-for-byte, at exactly this path
+    off the site root, for Google to accept the verification. Filename
+    and content are both exactly what Search Console generated -- never
+    edit either. See DEPLOY.md."""
+    return FileResponse(str(STATIC_DIR / "googlef1542a77e61568bf.html"))
+
+
 @app.get("/robots.txt")
 def robots_txt():
     """Points crawlers at the one page actually worth indexing and away
