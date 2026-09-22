@@ -1329,6 +1329,16 @@ next.
   loudly with a clear error instead of trading on fabricated prices —
   this is intentional, not a bug, but it means the feature does nothing
   visible until the key is set.
+  **Free-tier quota:** Alpha Vantage's free key allows 25 requests/day.
+  Each trading cycle uses one request per watchlist/held symbol, so
+  watchlist size x cycles/day must stay under 25 (the default —
+  6-hour cycles, a 5-symbol watchlist — uses 20/day, leaving headroom
+  for a manual trigger or backtest search the same day). Exceeding the
+  quota surfaces as `TradingCycleError: missing live quotes for
+  currently-held symbols [...]` with Alpha Vantage's own rate-limit text
+  in the message. Fix an already-running job's cadence without
+  disabling/recreating it via the "Edit Interval" button on its row in
+  the Scheduled Jobs panel (or `POST /scheduled-jobs/{job_id}/set-interval`).
 - **For Strategy Backtesting:** nothing beyond the `ALPHAVANTAGE_API_KEY`
   you already set above — it reuses the same key for historical data.
   Recommended before ever touching Live Trading below: see DEPLOY.md's

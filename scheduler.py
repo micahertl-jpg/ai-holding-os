@@ -77,6 +77,14 @@ class JobRegistry:
         self.db.audit("owner", "set_scheduled_job_enabled", "scheduled_job", job_id,
                        {"enabled": enabled})
 
+    def set_interval(self, job_id, interval_seconds):
+        if interval_seconds < 30:
+            raise ValueError("interval_seconds must be at least 30")
+        self.db.execute("UPDATE scheduled_jobs SET interval_seconds=? WHERE id=?",
+                         (interval_seconds, job_id))
+        self.db.audit("owner", "set_scheduled_job_interval", "scheduled_job", job_id,
+                       {"interval_seconds": interval_seconds})
+
 
 def tick(db, orchestrator, jobs: JobRegistry, now: datetime = None):
     """Runs one scheduler pass. Finds every enabled job whose

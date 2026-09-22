@@ -299,6 +299,12 @@
                     data-set-enabled="${enabled ? "false" : "true"}">
               ${enabled ? "Disable" : "Enable"}
             </button>
+            <button class="btn-small btn-job-edit-interval"
+                    data-action="set-job-interval"
+                    data-job-id="${escapeHtml(j.id)}"
+                    data-current-interval="${escapeHtml(j.interval_seconds)}">
+              Edit Interval
+            </button>
           </td>
         </tr>`;
       })

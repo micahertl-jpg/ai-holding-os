@@ -420,7 +420,7 @@
         await api(`/businesses/${currentBusinessId}/trading/enable-auto-trading`, {
           method: "POST",
           body: JSON.stringify({
-            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 14400,
+            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 21600,
             review_interval_seconds: parseInt(f.review_interval_seconds.value, 10) || 86400,
           }),
         });
@@ -470,7 +470,7 @@
           method: "POST",
           body: JSON.stringify({
             confirm_real_money: true,
-            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 14400,
+            cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 21600,
           }),
         });
         f.reset();
@@ -581,6 +581,25 @@
           await api(`/scheduled-jobs/${t.dataset.jobId}/set-enabled`, {
             method: "POST",
             body: JSON.stringify({ enabled }),
+          });
+          await refresh();
+        } else if (action === "set-job-interval") {
+          const current = t.dataset.currentInterval;
+          const input = window.prompt(
+            "New interval in seconds between runs of this job (minimum 30). " +
+              "For a trading_cycle job, each run uses one market-data request per watchlist/held " +
+              "symbol -- keep (86400 / interval) x symbol count under your provider's daily quota.",
+            current
+          );
+          if (input === null) return;
+          const intervalSeconds = parseInt(input, 10);
+          if (!Number.isFinite(intervalSeconds) || intervalSeconds < 30) {
+            showError("Interval must be a number of seconds, at least 30.");
+            return;
+          }
+          await api(`/scheduled-jobs/${t.dataset.jobId}/set-interval`, {
+            method: "POST",
+            body: JSON.stringify({ interval_seconds: intervalSeconds }),
           });
           await refresh();
         } else if (action === "delete-abandoned-order") {
