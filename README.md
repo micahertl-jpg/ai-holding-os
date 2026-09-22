@@ -1309,6 +1309,13 @@ make, so this task type always has `cost_arc=0.0`.
   of whether the business itself is new, so this correctly backfills
   onto a deployment that was already running before this feature
   existed.
+- `POST /owner-digest/send` + a "Send Owner Digest Now" button
+  (System Health panel, next to "Run Ops Review Now") — same
+  on-demand pattern as `trigger_ops_review()`. Added after a real
+  deployment's digest failed on a Resend "domain not verified" error:
+  once the owner fixed their Resend/DNS setup, there was no way to
+  confirm it actually worked without waiting up to
+  `OWNER_DIGEST_INTERVAL_SECONDS` for the next scheduled run.
 
 **What was actually verified in this session:**
 - 12 new checks in `test_owner_digest_offline.py`: an empty database
@@ -1332,18 +1339,29 @@ make, so this task type always has `cost_arc=0.0`.
   — a database seeded to look like a deployment from *before* this
   feature existed gets the `owner_digest` job backfilled without
   touching its existing business/agent/ops-review job.
+- 3 new `test_manual_triggers_offline.py` checks calling
+  `trigger_ops_review()`/`trigger_owner_digest()` directly: each
+  creates a real task of the right `task_type` under the System
+  Operations business, and both reuse the same business rather than
+  creating a duplicate.
 - Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
   passes.
+- Live-verified against a real Postgres DB + running server + a real
+  browser via Playwright: clicked "Send Owner Digest Now", confirmed a
+  real `owner_digest` task was created and ran through the real
+  executor pipeline (failing with the expected `OWNER_EMAIL not
+  configured` message, since this sandbox has no real email
+  credentials), with zero console errors.
 
 **What was NOT verified** (needs a real `OWNER_EMAIL` + `RESEND_API_KEY`,
 same limitation as every other real-email-sending path in this project):
 - An actual digest email landing in a real inbox with real content.
 
 **To verify it yourself:** set `OWNER_EMAIL`/`RESEND_API_KEY`/
-`RESEND_FROM_EMAIL`, then either wait for `OWNER_DIGEST_INTERVAL_SECONDS`
-after startup or manually create one `owner_digest` task via the
-dashboard's Scheduled Jobs panel — a real email should arrive
-summarizing pending approvals, system health, revenue, new research,
+`RESEND_FROM_EMAIL`, then click "Send Owner Digest Now" on the
+dashboard's System Health panel (or wait for
+`OWNER_DIGEST_INTERVAL_SECONDS` after startup) — a real email should
+arrive summarizing pending approvals, system health, revenue, new research,
 and trading P&L across every business.
 
 ## Owner Chat — status (the conversational layer, "personal assistant" feature)

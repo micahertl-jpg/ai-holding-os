@@ -851,6 +851,24 @@ def trigger_ops_review():
     return {"task_id": task_id}
 
 
+@app.post("/owner-digest/send")
+def trigger_owner_digest():
+    """Manually trigger one owner_digest task right now, outside its
+    scheduled job -- same on-demand pattern as trigger_ops_review()
+    above, for the same reason: confirming a just-fixed OWNER_EMAIL/
+    RESEND_API_KEY/RESEND_FROM_EMAIL configuration actually works
+    shouldn't require waiting up to OWNER_DIGEST_INTERVAL_SECONDS for
+    the next scheduled run."""
+    business_id = ensure_ops_business_provisioned(
+        state["db"], state["businesses"], state["agents"], state["banker"], state["jobs"],
+    )
+    task_id = state["orchestrator"].create_task(
+        business_id, "Compile and email the owner a digest across all businesses",
+        permission_level_required=1, task_type="owner_digest",
+    )
+    return {"task_id": task_id}
+
+
 # ---------------------------------------------------------------------
 # Businesses
 # ---------------------------------------------------------------------
