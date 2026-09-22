@@ -1150,6 +1150,74 @@ def test_ops_maintenance_review_broken_owner_alert_does_not_fail_the_task():
     os.remove(TEST_DB_PATH)
 
 
+def test_owner_digest_task_sends_a_real_email_and_completes():
+    db, orch, biz_id, agent_id = _setup()
+    approvals = ApprovalQueue(db)
+    approvals.request("launch_business", "Launch the pet grooming idea", business_id=biz_id)
+    task_id = orch.create_task(biz_id, "Compile and email the owner a digest across all businesses",
+                                permission_level_required=1, task_type="owner_digest")
+
+    with patch.object(executor, "OWNER_EMAIL", "owner@example.com"), \
+         patch("executor.send_email") as mock_send:
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+    assert "Owner digest emailed to owner@example.com" in task["result"]
+    assert task["cost_arc"] == 0.0, "owner_digest never calls a model, so it has no real cost"
+    assert mock_send.call_count == 1
+    call_args = mock_send.call_args[0]
+    assert call_args[0] == "owner@example.com"
+    assert "1 approval" in call_args[1]  # subject
+    assert "Launch the pet grooming idea" in call_args[2]  # html body
+    print("PASS: an owner_digest task sends a real digest email and completes with zero cost")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_owner_digest_fails_loudly_with_no_owner_email_configured():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(biz_id, "Compile and email the owner a digest across all businesses",
+                                permission_level_required=1, task_type="owner_digest")
+
+    with patch.object(executor, "OWNER_EMAIL", None), \
+         patch("executor.send_email") as mock_send:
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "failed: OWNER_EMAIL is not configured -- "
+                                   "there is no address to send the daily digest to. Set "
+                                   "OWNER_EMAIL (see README ACTION REQUIRED) and this will "
+                                   "start sending.")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "failed"
+    assert mock_send.call_count == 0
+    print("PASS: owner_digest fails loudly (never silently no-ops) with no OWNER_EMAIL configured")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_owner_digest_propagates_a_real_email_send_failure_as_a_task_failure():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(biz_id, "Compile and email the owner a digest across all businesses",
+                                permission_level_required=1, task_type="owner_digest")
+
+    from emailer import EmailError
+    with patch.object(executor, "OWNER_EMAIL", "owner@example.com"), \
+         patch("executor.send_email", side_effect=EmailError("Resend is down")):
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "failed: Resend is down")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "failed", \
+        "unlike the ops review's best-effort alert, the digest email IS the whole point of " \
+        "this task -- a failed send must fail the task, never silently 'complete' with " \
+        "nothing actually sent"
+    print("PASS: a real email send failure fails the owner_digest task itself, not swallowed")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_summarize_urls_task_gets_executed_and_completed()
     test_research_opportunity_task_gets_executed_and_saved()
@@ -1185,4 +1253,7 @@ if __name__ == "__main__":
     test_ops_maintenance_review_task_gets_executed_and_saved()
     test_ops_maintenance_review_alerts_owner_on_warning_severity()
     test_ops_maintenance_review_broken_owner_alert_does_not_fail_the_task()
+    test_owner_digest_task_sends_a_real_email_and_completes()
+    test_owner_digest_fails_loudly_with_no_owner_email_configured()
+    test_owner_digest_propagates_a_real_email_send_failure_as_a_task_failure()
     print("\nAll executor.py offline tests passed.")

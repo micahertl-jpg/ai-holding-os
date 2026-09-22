@@ -1264,6 +1264,88 @@ buy the "Real Estate Investment Research Report" through
 `/static/store.html` with a real (or Stripe test-mode) card and confirm
 the emailed report arrives with real content.
 
+## Owner Digest — status ("personal assistant" feature, no customer)
+
+A daily email summarizing what needs the owner's attention across
+every business, so a decision doesn't sit unnoticed just because
+nobody opened the dashboard that day. Deliberately code-only, no model
+call: every line in the email is either a real query result or a
+direct restatement of the latest ops review's already-synthesized
+report — composing a digest is not a judgment call a model needs to
+make, so this task type always has `cost_arc=0.0`.
+
+**What's new:**
+- `tasks/owner_digest.py` — `collect_owner_digest()` computes REAL
+  numbers from the database: pending approvals (with business name,
+  description, risk level, age), the latest ops-maintenance report's
+  severity/summary, real revenue collected since the last digest, new
+  research completed per vertical since the last digest, and each
+  paper trading portfolio's P&L from its latest recorded snapshot
+  (never a live quote fetch — reuses `trading_snapshots`, which every
+  `trading_cycle` already records, so composing a digest never spends
+  a market-data provider's request quota). `find_window_start()`
+  anchors each digest to the most recently *completed* digest task, so
+  "since your last digest" is exact, not a guess — falling back to a
+  24h lookback only for the very first digest ever sent.
+  `format_digest_email()` is pure string formatting (HTML-escaped),
+  no I/O.
+- `executor.py`'s `owner_digest` handler sends the email via the same
+  `emailer.py`/`OWNER_EMAIL` this codebase already uses for a failed
+  storefront order or a warning/critical ops report — but unlike those
+  best-effort alerts, sending IS this task's entire purpose, so a
+  missing `OWNER_EMAIL` or a real Resend send failure **fails the task
+  loudly**, never silently "completes" having sent nothing.
+- **No owner setup step**, same as Ops/Maintenance: a recurring
+  `owner_digest` scheduled job (default every 24h,
+  `OWNER_DIGEST_INTERVAL_SECONDS`) is created automatically under the
+  same internal "System Operations" business the first time the app
+  starts.
+- Fixed a real gap this surfaced: `ensure_ops_business_provisioned()`
+  used to return immediately once the System Operations business
+  already existed — meaning a job type added later (like this one)
+  would never get scheduled on an already-running deployment, only a
+  brand-new install would ever see it. Job provisioning is now
+  idempotent **per job type** (`_ensure_scheduled_job()`), independent
+  of whether the business itself is new, so this correctly backfills
+  onto a deployment that was already running before this feature
+  existed.
+
+**What was actually verified in this session:**
+- 12 new checks in `test_owner_digest_offline.py`: an empty database
+  produces honest zeros (never fabricated); pending approvals carry
+  their real business name/description/age and exclude decided ones;
+  the digest surfaces the *latest* ops report, not an older one;
+  revenue and new-research counts are scoped correctly to the window;
+  trading P&L uses the latest snapshot (a portfolio with no cycle yet
+  is skipped, not fabricated); `find_window_start()` anchors to the
+  latest *completed* digest, ignoring a more recent failed one; the
+  email subject reflects the real approval count; HTML-escaping of
+  business names/descriptions.
+- 3 new `test_executor_offline.py` checks: a real digest email sends
+  and the task completes with zero cost; a missing `OWNER_EMAIL` fails
+  the task loudly; a real `EmailError` from `send_email` fails the
+  task (unlike the ops review's best-effort alert).
+- 3 new `test_ops_business_provisioning_offline.py` checks calling
+  `ensure_ops_business_provisioned()` directly: the first call creates
+  the business/agent/both jobs; a second call (a restart) is a
+  complete no-op; and — the actual regression this was built to catch
+  — a database seeded to look like a deployment from *before* this
+  feature existed gets the `owner_digest` job backfilled without
+  touching its existing business/agent/ops-review job.
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+
+**What was NOT verified** (needs a real `OWNER_EMAIL` + `RESEND_API_KEY`,
+same limitation as every other real-email-sending path in this project):
+- An actual digest email landing in a real inbox with real content.
+
+**To verify it yourself:** set `OWNER_EMAIL`/`RESEND_API_KEY`/
+`RESEND_FROM_EMAIL`, then either wait for `OWNER_DIGEST_INTERVAL_SECONDS`
+after startup or manually create one `owner_digest` task via the
+dashboard's Scheduled Jobs panel — a real email should arrive
+summarizing pending approvals, system health, revenue, new research,
+and trading P&L across every business.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done, verified live against
@@ -1362,10 +1444,13 @@ next.
   `DEPLOY.md`'s Storefront section for the full checklist. Already done
   and confirmed working if you've made a real purchase; also consider
   setting the optional `OWNER_EMAIL` so a failed order (needs a manual
-  Stripe refund) — and now a warning/critical Ops/Maintenance finding —
-  reaches you by email, not just the dashboard.
-- **Nothing needed for Ops/Maintenance** — it provisions and starts
-  reviewing this system's own health automatically on first deploy.
+  Stripe refund), a warning/critical Ops/Maintenance finding, and the
+  daily Owner Digest all reach you by email, not just the dashboard.
+  Without `OWNER_EMAIL` set, the Owner Digest task fails loudly (there's
+  no address to send it to) every time it's due — harmless, but visible
+  as a repeatedly-failed task until it's set.
+- **Nothing needed for Ops/Maintenance or the Owner Digest** — both
+  provision themselves and start running automatically on first deploy.
 - **For the Real Estate product specifically:** once you've made a real
   (or Stripe test-mode) purchase of it through the storefront and
   confirmed the emailed report arrives with real content, it's fully

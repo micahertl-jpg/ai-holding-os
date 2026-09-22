@@ -49,6 +49,7 @@ from tasks.strategy_backtest_search import (
 from tasks.ops_maintenance_review import (
     collect_system_metrics, analyze_system_health, OpsMaintenanceReviewError,
 )
+from tasks.owner_digest import find_window_start, collect_owner_digest, format_digest_email
 import market_data
 from alpaca_client import get_default_client as get_default_alpaca_client, AlpacaError
 from db import new_id
@@ -101,6 +102,12 @@ REWARD_ARC_PER_SUMMARIZED_URL = 3.0
 TRADING_CYCLE_BASE_REWARD_ARC = 5.0
 TRADING_PNL_REWARD_ARC_PER_USD = 2.0
 TRADING_PNL_REWARD_ARC_CAP = 50.0
+
+# owner_digest never calls a model (see tasks/owner_digest.py) so it has
+# no real USD cost to charge (cost_arc is always 0.0) and no confidence
+# level to scale a reward off of -- a small flat reward for successfully
+# composing and sending it, well below any model-driven task's reward.
+OWNER_DIGEST_REWARD_ARC = 2.0
 
 
 def _require_affordable(task_row, db, cost_arc):
@@ -962,6 +969,29 @@ def _handle_ops_maintenance_review(task_row, client, db):
     return result_text, cost_arc, reward_arc
 
 
+# ---------------------------------------------------------------------
+# Owner Digest — the "personal assistant" feature: a scheduled job that
+# compiles and emails the owner a cross-business summary, so pending
+# decisions and what's happened don't require opening the dashboard.
+# See tasks/owner_digest.py. No model call, so no LLM cost either way.
+# ---------------------------------------------------------------------
+
+def _handle_owner_digest(task_row, client, db):
+    if not OWNER_EMAIL:
+        raise RuntimeError(
+            "OWNER_EMAIL is not configured -- there is no address to send the daily digest "
+            "to. Set OWNER_EMAIL (see README ACTION REQUIRED) and this will start sending."
+        )
+    window_start = find_window_start(db)
+    digest = collect_owner_digest(db, window_start=window_start)
+    subject, body = format_digest_email(digest)
+    send_email(OWNER_EMAIL, subject, body)
+    db.audit("executor", "owner_digest_sent", "task", task_row["id"],
+              {"pending_approval_count": len(digest["pending_approvals"])})
+    result_text = f"Owner digest emailed to {OWNER_EMAIL}: {subject}"
+    return result_text, 0.0, OWNER_DIGEST_REWARD_ARC
+
+
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).
 # 'manual' is deliberately absent — those tasks are never auto-executed.
 HANDLERS = {
@@ -975,6 +1005,7 @@ HANDLERS = {
     "live_trading_cycle": _handle_live_trading_cycle,
     "strategy_backtest_search": _handle_strategy_backtest_search,
     "ops_maintenance_review": _handle_ops_maintenance_review,
+    "owner_digest": _handle_owner_digest,
 }
 
 
