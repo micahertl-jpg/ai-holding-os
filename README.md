@@ -390,7 +390,13 @@ tasks doing nothing.
   deployments) means an opportunity can only ever be launched once —
   the card shows a "launched" badge instead of the button afterward,
   and a second attempt is refused with a pointer to the business that
-  already exists.
+  already exists. The same launch action exists on every other
+  research vertical too — Roblox Game Development, App Development
+  Feasibility, and Real Estate all have their own `.../{id}/launch`
+  endpoint and "Launch Business" button, sharing one
+  `_launch_business_from_research()` helper and one
+  `LaunchBusinessRequest` model in `api.py` rather than four copies of
+  the same logic.
 
 **What was actually verified in the sandbox that built this** (still no
 PyPI/API-key access there):

@@ -527,7 +527,10 @@ class ResearchOpportunityRequest(BaseModel):
     budget_arc: float = 0.0
 
 
-class LaunchOpportunityRequest(BaseModel):
+class LaunchBusinessRequest(BaseModel):
+    """Shared by every research vertical's launch endpoint (opportunities/
+    roblox-trends/app-feasibility/real-estate) -- see
+    _launch_business_from_research()'s docstring."""
     name: Optional[str] = None
 
 
@@ -1068,41 +1071,55 @@ def list_opportunities(business_id: str):
                                "ORDER BY created_at DESC", (business_id,))]
 
 
-@app.post("/businesses/{business_id}/opportunities/{opportunity_id}/launch")
-def launch_opportunity(business_id: str, opportunity_id: str, req: LaunchOpportunityRequest):
-    """Turns a researched opportunity into a real, standalone business --
-    the one owner-initiated action that closes the loop between
-    'research says this might be worth doing' and an actual business
-    existing to do it. Creates a new business seeded with the
-    opportunity's topic/summary as its founding objective; never moves
-    money, never auto-adds agents, never auto-activates anything --
-    same as every other business the owner creates via POST /businesses,
-    just pre-filled from real research instead of a blank form. Can only
-    ever launch once per opportunity (see launched_business_id): a
-    second attempt is refused with a pointer to the business that
-    already exists, rather than spawning duplicates."""
+def _launch_business_from_research(business_id, table, record_id, title_field, req,
+                                    kind_label, audit_action):
+    """Shared by every research vertical's launch endpoint -- the one
+    owner-initiated action that closes the loop between 'research says
+    this might be worth doing' and an actual business existing to do
+    it. Creates a new business seeded with the record's title/summary
+    as its founding objective; never moves money, never auto-adds
+    agents, never auto-activates anything -- same as every other
+    business the owner creates via POST /businesses, just pre-filled
+    from real research instead of a blank form. Can only ever launch
+    once per record (see launched_business_id, retrofitted onto all
+    four research tables via db.py's _COLUMN_MIGRATIONS): a second
+    attempt is refused with a pointer to the business that already
+    exists, rather than spawning duplicates.
+
+    `table` is always one of a small, hardcoded set of literal strings
+    this module itself passes in (never request-derived), same as
+    tasks/ops_maintenance_review.py's GROWTH_WATCH_TABLES pattern --
+    interpolating it into SQL here is safe for that reason."""
     if not state["businesses"].get(business_id):
         raise HTTPException(status_code=404, detail="business not found")
     db = state["db"]
-    opp = db.query_one("SELECT * FROM opportunities WHERE id=? AND business_id=?",
-                        (opportunity_id, business_id))
-    if not opp:
-        raise HTTPException(status_code=404, detail="opportunity not found")
-    if opp["launched_business_id"]:
+    record = db.query_one(f"SELECT * FROM {table} WHERE id=? AND business_id=?",
+                           (record_id, business_id))
+    if not record:
+        raise HTTPException(status_code=404, detail=f"{kind_label} not found")
+    if record["launched_business_id"]:
         raise HTTPException(
             status_code=400,
-            detail=f"this opportunity was already launched as business {opp['launched_business_id']!r}",
+            detail=f"this {kind_label} was already launched as business "
+                   f"{record['launched_business_id']!r}",
         )
-    name = req.name or opp["topic"]
-    objective = f"Founded from a researched business opportunity: {opp['topic']}."
-    if opp["summary"]:
-        objective += f" {opp['summary']}"
+    title = record[title_field]
+    name = req.name or title
+    objective = f"Founded from a researched {kind_label}: {title}."
+    if record["summary"]:
+        objective += f" {record['summary']}"
     new_business_id = state["businesses"].create(name, "venture", objective, 0.0)
-    db.execute("UPDATE opportunities SET launched_business_id=? WHERE id=?",
-               (new_business_id, opportunity_id))
-    db.audit("owner", "opportunity_launched", "opportunity", opportunity_id,
+    db.execute(f"UPDATE {table} SET launched_business_id=? WHERE id=?",
+               (new_business_id, record_id))
+    db.audit("owner", audit_action, table, record_id,
               {"business_id": business_id, "new_business_id": new_business_id})
     return {"business_id": new_business_id}
+
+
+@app.post("/businesses/{business_id}/opportunities/{opportunity_id}/launch")
+def launch_opportunity(business_id: str, opportunity_id: str, req: LaunchBusinessRequest):
+    return _launch_business_from_research(business_id, "opportunities", opportunity_id, "topic",
+                                           req, "business opportunity", "opportunity_launched")
 
 
 @app.delete("/businesses/{business_id}/opportunities/{opportunity_id}")
@@ -1149,6 +1166,12 @@ def list_roblox_trends(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM roblox_trends WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.post("/businesses/{business_id}/roblox-trends/{trend_id}/launch")
+def launch_roblox_trend(business_id: str, trend_id: str, req: LaunchBusinessRequest):
+    return _launch_business_from_research(business_id, "roblox_trends", trend_id, "concept",
+                                           req, "Roblox concept", "roblox_trend_launched")
 
 
 @app.delete("/businesses/{business_id}/roblox-trends/{trend_id}")
@@ -1200,6 +1223,12 @@ def list_app_feasibility_assessments(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM app_feasibility_assessments WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.post("/businesses/{business_id}/app-feasibility/{assessment_id}/launch")
+def launch_app_feasibility_assessment(business_id: str, assessment_id: str, req: LaunchBusinessRequest):
+    return _launch_business_from_research(business_id, "app_feasibility_assessments", assessment_id,
+                                           "concept", req, "app idea", "app_feasibility_launched")
 
 
 @app.delete("/businesses/{business_id}/app-feasibility/{assessment_id}")
@@ -1254,6 +1283,13 @@ def list_real_estate_assessments(business_id: str):
     return [row_to_dict(r) for r in
             state["db"].query("SELECT * FROM real_estate_assessments WHERE business_id=? "
                                "ORDER BY created_at DESC", (business_id,))]
+
+
+@app.post("/businesses/{business_id}/real-estate/{assessment_id}/launch")
+def launch_real_estate_assessment(business_id: str, assessment_id: str, req: LaunchBusinessRequest):
+    return _launch_business_from_research(business_id, "real_estate_assessments", assessment_id,
+                                           "property_or_market", req, "real estate opportunity",
+                                           "real_estate_launched")
 
 
 @app.delete("/businesses/{business_id}/real-estate/{assessment_id}")

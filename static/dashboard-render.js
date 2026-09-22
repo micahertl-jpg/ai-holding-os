@@ -548,6 +548,19 @@
         </div>`;
   }
 
+  // Shared by every research vertical's card renderer -- once launched
+  // (see POST .../{vertical}/{id}/launch), the button is replaced by a
+  // plain badge so the same record can never be launched twice from
+  // here. `launchAction` is the data-action the dashboard.js dispatcher
+  // routes on (e.g. "launch-opportunity"); `launchedBusinessId` is the
+  // record's own launched_business_id field.
+  function _launchButtonHtml(launchAction, id, title, launchedBusinessId) {
+    return launchedBusinessId
+      ? '<span class="status status-idle" title="A business already exists for this">launched</span>'
+      : `<button type="button" class="btn-small" data-action="${escapeHtml(launchAction)}"
+          data-id="${escapeHtml(id)}" data-title="${escapeHtml(title)}">Launch Business</button>`;
+  }
+
   function _referenceUrls(raw) {
     try {
       return raw ? JSON.parse(raw) : [];
@@ -562,15 +575,7 @@
     }
     const cards = opportunities
       .map((o) => {
-        // The one action that turns research into a real business (see
-        // POST .../opportunities/{id}/launch) -- once launched, the
-        // launch button is replaced by a plain badge so the same
-        // opportunity can never be launched twice from here.
-        const launchHtml = o.launched_business_id
-          ? '<span class="status status-idle" title="A business already exists for this opportunity">launched</span>'
-          : `<button type="button" class="btn-small" data-action="launch-opportunity"
-              data-business-id="${escapeHtml(o.business_id)}" data-opportunity-id="${escapeHtml(o.id)}"
-              data-topic="${escapeHtml(o.topic)}">Launch Business</button>`;
+        const launchHtml = _launchButtonHtml("launch-opportunity", o.id, o.topic, o.launched_business_id);
         return _renderResearchCard(
           o.topic, o.confidence_level, o.summary,
           [
@@ -602,6 +607,7 @@
           ["Similar successful games", t.similar_successful_games], ["Risk factors", t.risk_factors],
         ],
         _referenceUrls(t.reference_urls_used), "delete-roblox-trend", t.id, "Remove this researched concept",
+        _launchButtonHtml("launch-roblox-trend", t.id, t.concept, t.launched_business_id),
       ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
@@ -621,6 +627,7 @@
           ["Key technical risks", a.key_technical_risks], ["Similar existing apps", a.similar_existing_apps],
         ],
         _referenceUrls(a.reference_urls_used), "delete-app-feasibility", a.id, "Remove this feasibility assessment",
+        _launchButtonHtml("launch-app-feasibility", a.id, a.concept, a.launched_business_id),
       ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;
@@ -639,6 +646,7 @@
           ["Price trend assessment", a.price_trend_assessment], ["Risk factors", a.risk_factors],
         ],
         _referenceUrls(a.reference_urls_used), "delete-real-estate", a.id, "Remove this assessment",
+        _launchButtonHtml("launch-real-estate", a.id, a.property_or_market, a.launched_business_id),
       ))
       .join("");
     return `<div class="opportunities-list">${cards}</div>`;

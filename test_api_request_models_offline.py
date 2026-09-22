@@ -39,19 +39,21 @@ def test_every_research_request_model_has_budget_arc():
           "-- the exact field a real edit once silently detached from ResearchOpportunityRequest")
 
 
-def test_launch_opportunity_request_only_has_the_fields_it_needs():
-    """Regression-specific: LaunchOpportunityRequest must NOT have
-    inherited budget_arc from the edit that caused this bug -- it never
-    needed that field (launching a business never sets a starting ARC
+def test_launch_business_request_only_has_the_fields_it_needs():
+    """Regression-specific: LaunchBusinessRequest (renamed from
+    LaunchOpportunityRequest once every research vertical gained a
+    launch endpoint sharing this same model) must NOT have inherited
+    budget_arc from the edit that caused this bug -- it never needed
+    that field (launching a business never sets a starting ARC
     budget), so its presence here would itself be a sign the same class
     of mistake happened again."""
-    instance = api.LaunchOpportunityRequest()
+    instance = api.LaunchBusinessRequest()
     assert instance.name is None
     assert not hasattr(instance, "budget_arc")
-    print("PASS: LaunchOpportunityRequest only has the fields it actually needs")
+    print("PASS: LaunchBusinessRequest only has the fields it actually needs")
 
 
 if __name__ == "__main__":
     test_every_research_request_model_has_budget_arc()
-    test_launch_opportunity_request_only_has_the_fields_it_needs()
+    test_launch_business_request_only_has_the_fields_it_needs()
     print("\nAll api.py request-model offline tests passed.")

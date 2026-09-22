@@ -212,6 +212,10 @@ CREATE TABLE IF NOT EXISTS roblox_trends (
     confidence_level TEXT,            -- low|medium|high — see research_roblox_trend.py
     summary TEXT,
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    -- Set once, by POST .../roblox-trends/{id}/launch, when the owner
+    -- turns this researched concept into a real business. NULL means
+    -- "not launched yet". Same pattern as opportunities.launched_business_id.
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -408,6 +412,10 @@ CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
     confidence_level TEXT,            -- low|medium|high — see research_app_feasibility.py
     summary TEXT,
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    -- Set once, by POST .../app-feasibility/{id}/launch, when the owner
+    -- turns this researched idea into a real business. NULL means "not
+    -- launched yet". Same pattern as opportunities.launched_business_id.
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -453,5 +461,10 @@ CREATE TABLE IF NOT EXISTS real_estate_assessments (
     confidence_level TEXT,            -- low|medium|high — see research_real_estate.py
     summary TEXT,
     reference_urls_used TEXT,         -- JSON array of URLs that actually fetched
+    -- Set once, by POST .../real-estate/{id}/launch, when the owner
+    -- turns this researched opportunity into a real business. NULL
+    -- means "not launched yet". Same pattern as
+    -- opportunities.launched_business_id.
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TEXT DEFAULT (datetime('now'))
 );

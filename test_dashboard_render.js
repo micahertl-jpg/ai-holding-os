@@ -546,10 +546,60 @@ test("renderOpportunitiesTable shows a Launch Business button for an unlaunched 
   }];
   const html = R.renderOpportunitiesTable(opportunities);
   assert.ok(html.includes('data-action="launch-opportunity"'));
-  assert.ok(html.includes('data-business-id="biz_1"'));
-  assert.ok(html.includes('data-opportunity-id="opp_1"'));
-  assert.ok(html.includes('data-topic="AI-powered recipe apps"'));
+  assert.ok(html.includes('data-id="opp_1"'));
+  assert.ok(html.includes('data-title="AI-powered recipe apps"'));
   assert.ok(!html.includes(">launched<"));
+});
+
+test("renderRobloxTrendsTable/renderAppFeasibilityTable/renderRealEstateTable each show their own " +
+     "Launch Business button, wired to their own launch action and title", () => {
+  const robloxHtml = R.renderRobloxTrendsTable([{
+    id: "trend_1", concept: "A cozy farming sim", confidence_level: "medium",
+    summary: "x", launched_business_id: null,
+  }]);
+  assert.ok(robloxHtml.includes('data-action="launch-roblox-trend"'));
+  assert.ok(robloxHtml.includes('data-id="trend_1"'));
+  assert.ok(robloxHtml.includes('data-title="A cozy farming sim"'));
+
+  const appHtml = R.renderAppFeasibilityTable([{
+    id: "app_1", concept: "A habit tracker app", confidence_level: "medium",
+    summary: "x", launched_business_id: null,
+  }]);
+  assert.ok(appHtml.includes('data-action="launch-app-feasibility"'));
+  assert.ok(appHtml.includes('data-id="app_1"'));
+  assert.ok(appHtml.includes('data-title="A habit tracker app"'));
+
+  const realEstateHtml = R.renderRealEstateTable([{
+    id: "re_1", property_or_market: "123 Main St", confidence_level: "medium",
+    summary: "x", launched_business_id: null,
+  }]);
+  assert.ok(realEstateHtml.includes('data-action="launch-real-estate"'));
+  assert.ok(realEstateHtml.includes('data-id="re_1"'));
+  assert.ok(realEstateHtml.includes('data-title="123 Main St"'));
+});
+
+test("renderRobloxTrendsTable/renderAppFeasibilityTable/renderRealEstateTable show a launched badge, " +
+     "not a button, once launched", () => {
+  const robloxHtml = R.renderRobloxTrendsTable([{
+    id: "trend_1", concept: "x", confidence_level: "medium", summary: "x",
+    launched_business_id: "biz_2",
+  }]);
+  assert.ok(!robloxHtml.includes('data-action="launch-roblox-trend"'));
+  assert.ok(robloxHtml.includes(">launched<"));
+
+  const appHtml = R.renderAppFeasibilityTable([{
+    id: "app_1", concept: "x", confidence_level: "medium", summary: "x",
+    launched_business_id: "biz_2",
+  }]);
+  assert.ok(!appHtml.includes('data-action="launch-app-feasibility"'));
+  assert.ok(appHtml.includes(">launched<"));
+
+  const realEstateHtml = R.renderRealEstateTable([{
+    id: "re_1", property_or_market: "x", confidence_level: "medium", summary: "x",
+    launched_business_id: "biz_2",
+  }]);
+  assert.ok(!realEstateHtml.includes('data-action="launch-real-estate"'));
+  assert.ok(realEstateHtml.includes(">launched<"));
 });
 
 test("renderOpportunitiesTable shows a launched badge instead of the button once launched", () => {

@@ -13,6 +13,19 @@
   let refreshInFlight = false;
   const AUTO_REFRESH_INTERVAL_MS = 5000;
 
+  // Maps each research vertical's "launch-*" data-action (see
+  // dashboard-render.js's _launchButtonHtml) to its API path segment --
+  // every one of these hits the exact same POST
+  // /businesses/{id}/{segment}/{record_id}/launch shape, so one
+  // dispatcher branch below handles all four instead of repeating the
+  // same prompt/confirm/api() sequence per vertical.
+  const LAUNCH_ACTION_API_PATHS = {
+    "launch-opportunity": "opportunities",
+    "launch-roblox-trend": "roblox-trends",
+    "launch-app-feasibility": "app-feasibility",
+    "launch-real-estate": "real-estate",
+  };
+
   // Revenue trend chart state -- purely a display concern over orders
   // already fetched by loadDashboard(), so switching the range or
   // selecting a bar never needs a network round-trip.
@@ -621,30 +634,29 @@
             }),
           });
           await refresh();
-        } else if (action === "launch-opportunity") {
-          const bizId = t.dataset.businessId;
-          const oppId = t.dataset.opportunityId;
-          const topic = t.dataset.topic;
+        } else if (LAUNCH_ACTION_API_PATHS[action]) {
+          if (!currentBusinessId) return;
+          const title = t.dataset.title;
           const name = window.prompt(
-            `Name for the new business, launched from this researched opportunity:\n"${topic}"`,
-            topic,
+            `Name for the new business, launched from this researched record:\n"${title}"`,
+            title,
           );
           if (name === null) return; // cancelled
           if (!window.confirm(
             `Create a new business "${name}"? This is a real business record (agents, tasks, ARC ` +
             "budget all start from zero) -- nothing about the research is copied over except its " +
-            "topic and summary as the founding objective."
+            "title and summary as the founding objective."
           )) {
             return;
           }
-          const result = await api(`/businesses/${bizId}/opportunities/${oppId}/launch`, {
-            method: "POST",
-            body: JSON.stringify({ name: name || undefined }),
-          });
+          const result = await api(
+            `/businesses/${currentBusinessId}/${LAUNCH_ACTION_API_PATHS[action]}/${t.dataset.id}/launch`,
+            { method: "POST", body: JSON.stringify({ name: name || undefined }) },
+          );
           // Land the owner on the new business's (empty) dashboard --
           // same pattern as the create-business form below -- so the
           // launch visibly did something real, not just a silent flag
-          // flip on the opportunity card.
+          // flip on the research card.
           currentBusinessId = result.business_id;
           await loadBusinessList();
           document.getElementById("business-select").value = currentBusinessId;
