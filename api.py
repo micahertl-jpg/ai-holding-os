@@ -518,6 +518,10 @@ class SetJobEnabledRequest(BaseModel):
     enabled: bool
 
 
+class SetJobIntervalRequest(BaseModel):
+    interval_seconds: int
+
+
 class ResearchOpportunityRequest(BaseModel):
     topic: str
     reference_urls: List[str] = []
@@ -580,7 +584,15 @@ class TradingStrategyOverrideRequest(BaseModel):
 class EnableAutoTradingRequest(BaseModel):
     starting_cash_usd: float = 10000.0
     watchlist: List[str] = []
-    cycle_interval_seconds: int = 14400    # 4 hours
+    # 6 hours -- one Alpha Vantage GLOBAL_QUOTE request per watchlist/held
+    # symbol per cycle, so a default 5-symbol watchlist at this interval
+    # is 4 cycles/day x 5 = 20 requests/day, staying under Alpha Vantage's
+    # free-tier cap of 25/day with headroom for a manual trigger or
+    # backtest search the same day. The previous 4-hour default (6
+    # cycles/day) exceeded the cap on its own. Use
+    # POST /scheduled-jobs/{job_id}/set-interval to adjust an
+    # already-created job.
+    cycle_interval_seconds: int = 21600
     review_interval_seconds: int = 86400   # 24 hours
 
 
@@ -588,7 +600,7 @@ class EnableLiveTradingRequest(BaseModel):
     # Deliberately no default of True -- the owner must actively set
     # this exact field on every call to turn on real-money trading.
     confirm_real_money: bool = False
-    cycle_interval_seconds: int = 14400    # 4 hours, same default as paper
+    cycle_interval_seconds: int = 21600    # 6 hours, same reasoning as paper
 
 
 class TriggerBacktestSearchRequest(BaseModel):
@@ -1033,6 +1045,22 @@ def set_job_enabled(job_id: str, req: SetJobEnabledRequest):
     if state["jobs"].get(job_id) is None:
         raise HTTPException(status_code=404, detail="scheduled job not found")
     state["jobs"].set_enabled(job_id, req.enabled)
+    return {"status": "updated"}
+
+
+@app.post("/scheduled-jobs/{job_id}/set-interval")
+def set_job_interval(job_id: str, req: SetJobIntervalRequest):
+    """Lets the owner fix a job's cadence after creation -- e.g. a
+    trading_cycle job whose watchlist size x daily fire count exceeds a
+    market-data provider's free-tier request quota -- without disabling
+    and recreating it (which, for auto-trading, would also mean a
+    second agent/portfolio setup)."""
+    if state["jobs"].get(job_id) is None:
+        raise HTTPException(status_code=404, detail="scheduled job not found")
+    try:
+        state["jobs"].set_interval(job_id, req.interval_seconds)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "updated"}
 
 

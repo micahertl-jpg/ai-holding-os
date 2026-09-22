@@ -183,8 +183,8 @@
         <button type="submit" class="btn-small">Create Paper Portfolio</button>
       </form>
       <form id="enable-auto-trading-form" class="inline-form">
-        <input name="cycle_interval_seconds" type="number" min="30" value="14400"
-               title="Seconds between trading cycles (default 14400 = 4 hours)">
+        <input name="cycle_interval_seconds" type="number" min="30" value="21600"
+               title="Seconds between trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
         <input name="review_interval_seconds" type="number" min="30" value="86400"
                title="Seconds between strategy reviews (default 86400 = 24 hours)">
         <button type="submit" class="btn-small">Enable Auto-Trading</button>
@@ -215,8 +215,8 @@
           <input name="confirm_real_money" type="checkbox" required>
           I understand this places real orders with real cash
         </label>
-        <input name="cycle_interval_seconds" type="number" min="30" value="14400"
-               title="Seconds between live trading cycles (default 14400 = 4 hours)">
+        <input name="cycle_interval_seconds" type="number" min="30" value="21600"
+               title="Seconds between live trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
         <button type="submit" class="btn-small btn-danger">Enable Live Trading</button>
       </form>
       <div class="inline-form">

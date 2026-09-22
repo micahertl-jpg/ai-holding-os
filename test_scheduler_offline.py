@@ -92,6 +92,38 @@ def main():
     assert len(created_reenabled) == 1, created_reenabled
     print("PASS: re-enabling a job allows it to fire again")
 
+    # --- set_interval rejects the same floor as create() ---
+    try:
+        jobs.set_interval(job_id, 5)
+        raise AssertionError("expected ValueError for interval_seconds < 30")
+    except ValueError as e:
+        print(f"PASS: set_interval rejects interval_seconds < 30 ({e})")
+
+    # --- set_interval does not retroactively move an already-due
+    # next_run_at (it was computed under the old interval and stays
+    # valid); the NEW interval only governs the next_run_at computed
+    # the next time the job actually fires ---
+    before = jobs.get(job_id)
+    jobs.set_interval(job_id, 7200)
+    after = jobs.get(job_id)
+    assert after["interval_seconds"] == 7200
+    assert after["next_run_at"] == before["next_run_at"], \
+        "set_interval must not retroactively change an already-computed next_run_at"
+    t3 = t2 + timedelta(hours=1)   # exactly when the OLD 1h interval already made it due
+    created_at_old_schedule = tick(db, orch, jobs, now=t3)
+    assert len(created_at_old_schedule) == 1, created_at_old_schedule
+    print("PASS: set_interval doesn't retroactively delay a fire already due under the old interval")
+
+    # --- but the fire that just happened now schedules its NEXT
+    # next_run_at using the NEW interval ---
+    t3_plus_1h = t3 + timedelta(hours=1)   # only 1h of the new 2h interval elapsed
+    created_too_soon = tick(db, orch, jobs, now=t3_plus_1h)
+    assert created_too_soon == [], created_too_soon
+    t3_plus_2h = t3 + timedelta(hours=2)   # now the new 2h interval has fully elapsed
+    created_at_new_interval = tick(db, orch, jobs, now=t3_plus_2h)
+    assert len(created_at_new_interval) == 1, created_at_new_interval
+    print("PASS: set_interval's new interval takes effect starting from the job's next fire")
+
     db.close()
     os.remove(TEST_DB_PATH)
     print("\nAll scheduler.tick() offline checks passed.")
