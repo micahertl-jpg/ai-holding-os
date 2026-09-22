@@ -123,7 +123,7 @@ and `send_email()` raises rather than pretending an email went out).
 
 Optional: `STORE_PRICE_OPPORTUNITY_CENTS` / `STORE_PRICE_ROBLOX_CENTS` /
 `STORE_PRICE_APP_FEASIBILITY_CENTS` / `STORE_PRICE_REAL_ESTATE_CENTS`
-override the default $19.00 price per report (each is a number of
+override the default $9.00 price per report (each is a number of
 cents, e.g. `2900` for $29.00).
 
 Optional: **`OWNER_EMAIL`** — your own address. Refunds are never

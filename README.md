@@ -972,7 +972,7 @@ the code:
 
 The system's first path to real-world revenue: `static/store.html` (a
 public, unauthenticated page, deliberately separate in look from the
-owner's internal `/dashboard`) lets a customer pay **$19** via a real
+owner's internal `/dashboard`) lets a customer pay **$9** via a real
 Stripe Checkout Session for one of three products — a research report
 from Opportunity Discovery, Roblox Game Development, or App Development
 Feasibility — and get it emailed to them, usually within a minute.
@@ -1160,7 +1160,7 @@ appraisal.
   hard failure (never a fabricated fallback) on invalid or incomplete
   model output. Because real estate is uniquely jurisdiction-sensitive
   (zoning, disclosure law, rent control, broker/appraiser licensing all
-  vary by state/country) and a $19 report here could plausibly
+  vary by state/country) and a $9 report here could plausibly
   influence a much larger financial decision than any other vertical's
   report, the model is explicitly instructed to flag — never resolve —
   anything jurisdiction-specific as needing a licensed real estate
@@ -1181,9 +1181,8 @@ appraisal.
   yield, price trend assessment, and risk factors, with a Remove
   button), mirroring the other research panels exactly.
 - **Storefront**: a fourth product, "Real Estate Investment Research
-  Report" ($5 — priced lower than the other three's $19 default,
-  `STORE_PRICE_REAL_ESTATE_CENTS` to override either way), added to
-  `PRODUCT_CATALOG`, `fulfillment.py`'s report-email builder, and
+  Report" ($9, same as the other three — `STORE_PRICE_REAL_ESTATE_CENTS`
+  to override), added to `PRODUCT_CATALOG`, `fulfillment.py`'s report-email builder, and
   `store-legal.html`'s disclaimer (a dedicated paragraph stating this
   is not an appraisal and not the advice of a licensed professional).
 - **A real, separate bug found and fixed while wiring this up**: the

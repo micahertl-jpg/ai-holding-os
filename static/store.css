@@ -1,20 +1,25 @@
-/* store.css — the public, customer-facing storefront. Deliberately a
-   plain, trustworthy "normal business" look, not the internal
-   dashboard's sci-fi HUD theme — a stranger about to pay a real credit
-   card should land somewhere that reads as an ordinary, legitimate
-   store, not a command console. */
+/* store.css — the public, customer-facing storefront. Modern and
+   inviting, but still a "legitimate store" a stranger will trust with
+   a real credit card — not the internal dashboard's sci-fi HUD theme.
+   Every animation here is a one-time entrance/hover effect, never a
+   distracting infinite loop on anything load-bearing (the price, the
+   button, the form), and everything respects prefers-reduced-motion. */
 
 :root {
-  --bg: #f7f7f5;
+  --bg: #f6f7fb;
   --panel-bg: #ffffff;
-  --text: #1a1a1a;
-  --text-muted: #6b6b6b;
-  --border: #e2e2e0;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --text: #17172b;
+  --text-muted: #6b6b80;
+  --border: #e5e5f0;
+  --accent: #4f46e5;
+  --accent-2: #7c3aed;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
   --success: #15803d;
   --error: #b91c1c;
-  --radius: 10px;
+  --radius: 14px;
+  --shadow-card: 0 1px 2px rgba(23,23,43,0.04), 0 8px 24px rgba(23,23,43,0.05);
+  --shadow-card-hover: 0 4px 10px rgba(79,70,229,0.08), 0 16px 36px rgba(79,70,229,0.14);
 }
 
 * { box-sizing: border-box; }
@@ -27,31 +32,96 @@ body {
   line-height: 1.5;
 }
 
+/* ---------- entrance animations ---------- */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes blobDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(3%, -4%) scale(1.06); }
+  66% { transform: translate(-3%, 2%) scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- header ---------- */
+
 .store-header {
-  padding: 32px 24px 16px;
+  position: relative;
+  padding: 44px 24px 20px;
   text-align: center;
   max-width: 720px;
   margin: 0 auto;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Soft, slow-drifting gradient blobs behind the hero -- purely
+   decorative, blurred well past the point of forming a "shape" so
+   they read as ambient light rather than a distracting animation. */
+.store-header::before,
+.store-header::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.35;
+  animation: blobDrift 16s ease-in-out infinite;
+}
+.store-header::before {
+  top: -160px;
+  left: 50%;
+  margin-left: -260px;
+  background: radial-gradient(circle, var(--accent), transparent 70%);
+}
+.store-header::after {
+  top: -140px;
+  left: 50%;
+  margin-left: 20px;
+  background: radial-gradient(circle, var(--accent-2), transparent 70%);
+  animation-delay: -8s;
 }
 
 .store-header h1 {
-  font-size: 1.6rem;
-  margin: 0 0 8px;
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--text) 30%, var(--accent) 70%, var(--accent-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fadeInUp 0.6s ease both;
 }
 
 .store-header p {
   color: var(--text-muted);
   margin: 0;
+  font-size: 1.02rem;
+  animation: fadeInUp 0.6s ease 0.08s both;
 }
 
 .how-it-works {
   max-width: 720px;
-  margin: 20px auto 0;
+  margin: 24px auto 0;
   padding: 0 24px;
   list-style: none;
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(3, 1fr);
+  animation: fadeInUp 0.6s ease 0.14s both;
 }
 
 .how-it-works li {
@@ -64,16 +134,17 @@ body {
 
 .step-num {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: white;
   font-size: 0.78rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 2px 8px rgba(79,70,229,0.35);
 }
 
 @media (max-width: 640px) {
@@ -84,28 +155,49 @@ body {
 
 .store-disclaimer {
   max-width: 720px;
-  margin: 16px auto 0;
+  margin: 20px auto 0;
   padding: 12px 16px;
   background: #fffbeb;
   border: 1px solid #fde68a;
   border-radius: var(--radius);
   font-size: 0.85rem;
   color: #78350f;
+  animation: fadeInUp 0.6s ease 0.2s both;
 }
 
 .products {
   max-width: 720px;
-  margin: 24px auto;
+  margin: 28px auto;
   padding: 0 24px;
   display: grid;
   gap: 20px;
 }
 
+/* ---------- product cards ---------- */
+
 .product-card {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 22px;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  animation: fadeInUp 0.5s ease both;
+}
+
+/* Staggered entrance as the product grid renders -- store.js inserts
+   all cards at once, so this delay is what makes them feel like they
+   arrive one after another instead of popping in together. */
+.products .product-card:nth-child(1) { animation-delay: 0.06s; }
+.products .product-card:nth-child(2) { animation-delay: 0.14s; }
+.products .product-card:nth-child(3) { animation-delay: 0.22s; }
+.products .product-card:nth-child(4) { animation-delay: 0.3s; }
+.products .product-card:nth-child(n+5) { animation-delay: 0.36s; }
+
+.product-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--accent);
 }
 
 /* Applied briefly when a visitor arrives from an SEO landing page's
@@ -122,10 +214,14 @@ body {
 }
 
 .product-price {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--accent);
+  font-size: 1.4rem;
+  font-weight: 800;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   margin: 4px 0 10px;
+  display: inline-block;
 }
 
 .product-description {
@@ -143,28 +239,47 @@ body {
 .order-form input {
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.95rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.order-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .order-form button {
-  padding: 11px 16px;
+  padding: 12px 16px;
   border: none;
-  border-radius: 6px;
-  background: var(--accent);
+  border-radius: 8px;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  background-size: 140% 140%;
+  background-position: 0% 50%;
   color: white;
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 4px 14px rgba(79,70,229,0.3);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background-position 0.35s ease;
 }
 
 .order-form button:hover {
-  background: var(--accent-hover);
+  background-position: 100% 50%;
+  box-shadow: 0 6px 18px rgba(79,70,229,0.4);
+  transform: translateY(-1px);
+}
+
+.order-form button:active {
+  transform: translateY(0);
 }
 
 .order-form button:disabled {
   background: #94a3b8;
+  box-shadow: none;
   cursor: not-allowed;
+  transform: none;
 }
 
 .terms-agree {
@@ -199,7 +314,7 @@ body {
   text-align: center;
   color: var(--text-muted);
   font-size: 0.8rem;
-  padding: 24px;
+  padding: 28px 24px;
 }
 
 .status-page {
@@ -209,7 +324,9 @@ body {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
   text-align: center;
+  animation: fadeInUp 0.5s ease both;
 }
 
 .status-page h1 {
@@ -229,9 +346,9 @@ body {
   margin-top: 20px;
 }
 
-/* SEO content pages (see the seo-*.html files) -- same "ordinary,
-   legitimate store" visual language as the rest of store.css, laid out
-   as a readable article rather than a product grid. */
+/* SEO content pages (see the seo-*.html files) -- same visual
+   language as the rest of store.css, laid out as a readable article
+   rather than a product grid. */
 .breadcrumb {
   max-width: 720px;
   margin: 16px auto 0;
@@ -249,7 +366,11 @@ body {
   padding: 8px 24px 40px;
 }
 
-.seo-article h1 { font-size: 1.6rem; margin: 8px 0 12px; }
+.seo-article h1 {
+  font-size: 1.7rem;
+  margin: 8px 0 12px;
+  letter-spacing: -0.01em;
+}
 .seo-article h2 { font-size: 1.2rem; margin: 32px 0 10px; }
 .seo-article p { color: var(--text); }
 .seo-article ul { padding-left: 20px; color: var(--text); }
@@ -259,6 +380,7 @@ body {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
   padding: 18px 20px;
   margin: 16px 0;
   font-size: 0.9rem;
@@ -282,16 +404,24 @@ body {
 
 .cta-button {
   display: inline-block;
-  background: var(--accent);
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  background-size: 140% 140%;
+  background-position: 0% 50%;
   color: #fff;
   padding: 14px 28px;
   border-radius: var(--radius);
   text-decoration: none;
   font-weight: 700;
   margin: 12px 0 24px;
+  box-shadow: 0 4px 14px rgba(79,70,229,0.3);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background-position 0.35s ease;
 }
 
-.cta-button:hover { background: var(--accent-hover); }
+.cta-button:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 6px 18px rgba(79,70,229,0.4);
+  transform: translateY(-1px);
+}
 
 .related-reports {
   display: flex;
@@ -307,9 +437,14 @@ body {
   border: 1px solid var(--border);
   padding: 8px 12px;
   border-radius: 8px;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
 }
 
-.related-reports a:hover { background: var(--panel-bg); }
+.related-reports a:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
 
 .cross-sell a {
   color: var(--accent);

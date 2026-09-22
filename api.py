@@ -86,7 +86,7 @@ PRODUCT_CATALOG = {
             "appraiser, or attorney, not resolved here. Delivered by email, usually "
             "within a minute of payment."
         ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "500")),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_REAL_ESTATE_CENTS", "900")),
     },
     "research_opportunity": {
         "name": "Business Opportunity Research Report",
@@ -96,7 +96,7 @@ PRODUCT_CATALOG = {
             "each framed as an estimate with an explicit confidence level. Delivered "
             "by email, usually within a minute of payment."
         ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_OPPORTUNITY_CENTS", "1900")),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_OPPORTUNITY_CENTS", "900")),
     },
     "research_roblox_trend": {
         "name": "Roblox Concept Trend Research Report",
@@ -106,7 +106,7 @@ PRODUCT_CATALOG = {
             "and more, each framed as an estimate with an explicit confidence level. "
             "Delivered by email, usually within a minute of payment."
         ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_ROBLOX_CENTS", "1900")),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_ROBLOX_CENTS", "900")),
     },
     "research_app_feasibility": {
         "name": "App Feasibility & Planning Report",
@@ -119,7 +119,7 @@ PRODUCT_CATALOG = {
             "dedicated legal/compliance review, not resolved here. Delivered by "
             "email, usually within a minute of payment."
         ),
-        "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "1900")),
+        "price_usd_cents": int(os.environ.get("STORE_PRICE_APP_FEASIBILITY_CENTS", "900")),
     },
 }
 
