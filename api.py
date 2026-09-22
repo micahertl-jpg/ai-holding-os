@@ -48,6 +48,8 @@ import dashboard_auth
 from rate_limiter import RateLimiter
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
 from tasks.ops_maintenance_review import STUCK_ORDER_THRESHOLD_HOURS, age_hours as _order_age_hours
+from llm_client import get_default_client
+from owner_chat import answer_message
 from db import new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -793,6 +795,28 @@ def overview():
         "global_arc": global_arc,
         "latest_ops_report": latest_ops_report,
     }
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+# ---------------------------------------------------------------------
+# Owner Chat — the conversational layer (see owner_chat.py). Same
+# "synchronous, read-only, no task/agent/ARC involved" shape as
+# /overview above: a dashboard convenience, not a business action.
+# Deliberately v1-scoped to read-only questions -- see owner_chat.py's
+# module docstring for why an action-shaped message (e.g. "launch the
+# pet grooming idea") is routed to a plain "I can't do that yet" reply
+# rather than attempted.
+# ---------------------------------------------------------------------
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="message must not be empty")
+    answer = answer_message(state["db"], req.message, get_default_client())
+    return {"answer": answer}
 
 
 # ---------------------------------------------------------------------

@@ -668,6 +668,45 @@ button { position: relative; overflow: hidden; }
   line-height: 1.6;
 }
 
+/* ---------- Ask (owner chat) ---------- */
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+}
+.chat-log:empty::before {
+  content: "Ask a question below — e.g. \"what needs my approval?\" or \"how's my trading doing?\"";
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+.chat-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg-alt);
+}
+.chat-entry-you { border-color: var(--accent-dim); }
+.chat-entry-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.chat-entry-you .chat-entry-label { color: var(--accent); }
+.chat-entry-text {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 /* ---------- Live Trading (real money) ---------- */
 
 .panel-live-trading::before {
