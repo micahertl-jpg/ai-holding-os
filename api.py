@@ -171,37 +171,71 @@ _dashboard_login_rate_limiter = RateLimiter(
 OPS_BUSINESS_NAME = "System Operations"
 OPS_BUSINESS_TYPE = "ops_maintenance"
 OPS_REVIEW_INTERVAL_SECONDS = int(os.environ.get("OPS_REVIEW_INTERVAL_SECONDS", "86400"))  # 24h
+# The owner digest (see tasks/owner_digest.py) lives under the same
+# internal System Operations business -- it's cross-business and
+# system-wide, same reasoning as the ops review job itself.
+OWNER_DIGEST_INTERVAL_SECONDS = int(os.environ.get("OWNER_DIGEST_INTERVAL_SECONDS", "86400"))  # 24h
+
+
+def _ensure_scheduled_job(db, jobs, business_id, task_type, name, objective,
+                           interval_seconds, permission_level_required):
+    """Idempotent per (business_id, task_type): creates the job the
+    first time this runs, a no-op on every later call. Split out from
+    ensure_ops_business_provisioned() so adding a NEW system-wide job
+    type (like owner_digest, added after ops review already shipped)
+    still gets provisioned on an already-running deployment -- without
+    this, the early-return on 'the ops business already exists' below
+    would silently skip creating any job type introduced later,
+    exactly the trap a fresh install wouldn't reveal."""
+    existing = db.query_one(
+        "SELECT id FROM scheduled_jobs WHERE business_id=? AND task_type=?",
+        (business_id, task_type),
+    )
+    if existing:
+        return existing["id"]
+    job_id = jobs.create(business_id, name, objective, interval_seconds=interval_seconds,
+                          permission_level_required=permission_level_required, task_type=task_type)
+    db.audit("system", "scheduled_job_provisioned", "scheduled_job", job_id, {"task_type": task_type})
+    return job_id
 
 
 def ensure_ops_business_provisioned(db, businesses, agents, banker, jobs):
-    """Idempotent: creates the internal 'System Operations' business, an
-    Ops Monitor agent, and a recurring ops_maintenance_review scheduled
-    job the first time this runs; a no-op on every later call (every
-    startup after the first, and /ops/review's own defensive re-check).
-    Returns the business_id either way, so callers never need a second
-    lookup."""
+    """Idempotent: creates the internal 'System Operations' business and
+    an Ops Monitor agent the first time this runs (a no-op on every
+    later call -- every startup after the first, and /ops/review's own
+    defensive re-check), then ensures every system-wide scheduled job
+    (ops_maintenance_review, owner_digest) exists under it, each
+    independently idempotent via _ensure_scheduled_job() above. Returns
+    the business_id either way, so callers never need a second lookup."""
     existing = db.query_one("SELECT id FROM businesses WHERE type=?", (OPS_BUSINESS_TYPE,))
     if existing:
-        return existing["id"]
+        business_id = existing["id"]
+    else:
+        business_id = businesses.create(
+            OPS_BUSINESS_NAME, OPS_BUSINESS_TYPE,
+            "Monitor this system's own infrastructure and produce maintenance "
+            "recommendations for the owner -- never acts on its own findings.",
+        )
+        agent_id = agents.create(
+            business_id, "Ops Monitor", role="Systems Maintenance Analyst",
+            department="ops", model="unassigned", permission_level=2,
+        )
+        agents.set_status(agent_id, "idle")
+        banker.allocate(business_id, agent_id, 100.0,
+                         reason="starting ARC runway for automated ops/maintenance reviews")
+        db.audit("system", "ops_business_provisioned", "business", business_id, {})
 
-    business_id = businesses.create(
-        OPS_BUSINESS_NAME, OPS_BUSINESS_TYPE,
-        "Monitor this system's own infrastructure and produce maintenance "
-        "recommendations for the owner -- never acts on its own findings.",
-    )
-    agent_id = agents.create(
-        business_id, "Ops Monitor", role="Systems Maintenance Analyst",
-        department="ops", model="unassigned", permission_level=2,
-    )
-    agents.set_status(agent_id, "idle")
-    banker.allocate(business_id, agent_id, 100.0,
-                     reason="starting ARC runway for automated ops/maintenance reviews")
-    jobs.create(
-        business_id, "System health review", "Review this system's own infrastructure health",
+    _ensure_scheduled_job(
+        db, jobs, business_id, task_type="ops_maintenance_review",
+        name="System health review", objective="Review this system's own infrastructure health",
         interval_seconds=OPS_REVIEW_INTERVAL_SECONDS, permission_level_required=2,
-        task_type="ops_maintenance_review",
     )
-    db.audit("system", "ops_business_provisioned", "business", business_id, {})
+    _ensure_scheduled_job(
+        db, jobs, business_id, task_type="owner_digest",
+        name="Owner daily digest",
+        objective="Compile and email the owner a digest across all businesses",
+        interval_seconds=OWNER_DIGEST_INTERVAL_SECONDS, permission_level_required=1,
+    )
     return business_id
 
 
