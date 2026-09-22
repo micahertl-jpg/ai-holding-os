@@ -41,6 +41,19 @@
       </div>
     </section>
 
+    <section class="panel panel-chat no-tilt" id="chat-section">
+      <h3>Ask</h3>
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="inline-form">
+        <input id="chat-input" name="message" type="text" autocomplete="off" required
+               placeholder="Ask about approvals, trading P&amp;L, system health, or a researched idea...">
+        <button type="submit" class="btn-small">Ask</button>
+      </form>
+      <p class="panel-note">Read-only for now — answers real, current data across every
+        business, but can't yet take actions (launch a business, approve something, delete
+        anything). Use the dashboard for those.</p>
+    </section>
+
     <section class="panel panel-approvals" id="global-approvals-section">
       <h3>Owner Approvals Awaiting Decision — all businesses</h3>
       <div id="global-approvals-list"></div>

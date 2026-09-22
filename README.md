@@ -1346,6 +1346,90 @@ dashboard's Scheduled Jobs panel — a real email should arrive
 summarizing pending approvals, system health, revenue, new research,
 and trading P&L across every business.
 
+## Owner Chat — status (the conversational layer, "personal assistant" feature)
+
+Free-text Q&A: the owner types a question into a new "Ask" panel on
+the dashboard and gets a real answer, without navigating any other
+panel. Deliberately v1-scoped to READ-ONLY questions — see
+`owner_chat.py`'s module docstring for the full reasoning, but in
+short: turning "launch the pet grooming idea" into a real action needs
+its own resolve-the-exact-record-then-confirm safety design, which is
+a deliberate, separate, later decision, not something to fold into a
+first version whose whole point is proving the read-only plumbing
+works safely.
+
+**What's new:**
+- `owner_chat.py` — `classify_intent()` is the ONLY LLM call in this
+  feature, and it never sees real business data and never composes
+  the actual answer: it just classifies the owner's message into one
+  of a fixed set of intents (`overview`, `pending_approvals`,
+  `ops_health`, `trading_status`, `research_search`, `unclear`) via
+  strict JSON — same hard-failure-never-guess discipline as every
+  other classifier in this codebase. Its system prompt explicitly
+  tells the model it has NO ability to act; an action-shaped request
+  (e.g. "launch X", "approve Y", "delete Z") is routed to `unclear`
+  along with anything off-topic or ambiguous. Once classified, CODE
+  (never the model) runs the real query and composes the
+  natural-language answer from the real result — reusing
+  `tasks/owner_digest.py`'s `collect_owner_digest()` for the
+  approvals/ops-health/trading-P&L pieces, plus a new
+  `search_research()` that does a real (never fuzzy/semantic) SQL
+  `LIKE` search across all four research verticals' title/summary
+  fields, so a match is always something the owner's own words
+  actually appear in.
+- A classification failure (invalid JSON, or the model inventing an
+  intent outside the fixed set) degrades to the same friendly "I can't
+  do that yet, here's what I can help with" reply a genuinely unclear
+  message gets — a chat turn never surfaces a raw error the way a
+  failed scheduled task legitimately can.
+- `POST /chat` — synchronous, not a scheduled/queued task: a chat turn
+  should feel like asking a question, not submitting a form and
+  refreshing later. Never touches the agent/task/ARC economy, same
+  "synchronous, read-only, no task involved" shape as `/overview`.
+- A new "Ask" panel on the dashboard (placed first, above Owner
+  Approvals) — a scrollable log of the conversation plus a text input,
+  business-independent since answers span every business.
+
+**What was actually verified in this session:**
+- 17 new checks in `test_owner_chat_offline.py`: `classify_intent()`
+  accepts every valid intent and raises on invalid JSON or a
+  model-invented intent outside the fixed set; `collect_chat_overview()`
+  and `search_research()` against a real SQLite database (matches by
+  title OR summary across every vertical, correctly reports launched
+  status, returns nothing for an empty query); every `format_*()`
+  function's empty/populated cases; and `answer_message()`'s full
+  orchestration, including both ways a message degrades to the safe
+  "I can't do that yet" reply (a classification failure, and an
+  action-shaped request the model itself routes to `unclear`).
+- 2 new `test_chat_endpoint_offline.py` checks calling `api.chat()`
+  directly: a real end-to-end answer computed from the real (empty)
+  database, and a blank message rejected with 400 before ever calling
+  the model.
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+- Live-verified against a real Postgres DB + running server + a real
+  browser via Playwright: the "Ask" panel renders correctly, a
+  question and an action-shaped request ("launch the pet grooming
+  idea") both round-trip through the real `/chat` endpoint and render
+  in the log with zero console errors, the input clears and
+  re-enables after each answer, and — with no real `ANTHROPIC_API_KEY`
+  in this sandbox (same limitation as every other LLM-driven feature
+  here) — confirmed the graceful "I can't do that yet" degradation
+  path end-to-end rather than a raw error.
+
+**What was NOT verified** (needs a real `ANTHROPIC_API_KEY`, same as
+every other LLM-driven task type in this project):
+- An actual question correctly classified and answered against real
+  business data via the real Anthropic API.
+
+**To verify it yourself:** open `/dashboard` with a real
+`ANTHROPIC_API_KEY` set, and ask the "Ask" panel something like "what
+needs my approval?" or "how's my trading doing?" — a real,
+data-grounded answer should appear within a few seconds. Try an
+action-shaped message too (e.g. "launch the pet grooming idea") and
+confirm it gets a clear "I can't do that yet" reply rather than
+anything actually happening.
+
 ## Next real steps, in order
 1. ~~Wire one real LLM call~~ — done, verified live.
 2. ~~Stand up Postgres + a thin REST API~~ — done, verified live against

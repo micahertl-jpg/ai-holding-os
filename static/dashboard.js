@@ -87,6 +87,25 @@
     setTimeout(() => el.classList.add("hidden"), 6000);
   }
 
+  // Uses textContent (never innerHTML) for both the label and body --
+  // an answer can quote real user-entered text (a research topic, an
+  // approval description), so this must never be treated as HTML.
+  function appendChatEntry(log, who, text) {
+    const entry = document.createElement("div");
+    entry.className = `chat-entry chat-entry-${who}`;
+    const label = document.createElement("span");
+    label.className = "chat-entry-label";
+    label.textContent = who === "you" ? "You" : "Assistant";
+    const body = document.createElement("span");
+    body.className = "chat-entry-text";
+    body.textContent = text;
+    entry.appendChild(label);
+    entry.appendChild(body);
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+    return body;
+  }
+
   // The dashboard polls every AUTO_REFRESH_INTERVAL_MS regardless of
   // whether anything actually changed. Blindly reassigning innerHTML
   // on every poll destroys and recreates every child node even when
@@ -528,6 +547,31 @@
         await refresh();
       } catch (e) {
         showError("Failed to trigger ops review: " + e.message);
+      }
+    });
+
+    document.getElementById("chat-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      // Business-independent, same as ops review above -- chat answers
+      // span every business. Never calls refresh(): a chat turn never
+      // mutates anything, so there's nothing new for the rest of the
+      // dashboard to pick up.
+      const f = ev.target;
+      const message = f.message.value.trim();
+      if (!message) return;
+      const log = document.getElementById("chat-log");
+      appendChatEntry(log, "you", message);
+      f.reset();
+      f.message.disabled = true;
+      const answerEl = appendChatEntry(log, "assistant", "Thinking...");
+      try {
+        const result = await api("/chat", { method: "POST", body: JSON.stringify({ message }) });
+        answerEl.textContent = result.answer;
+      } catch (e) {
+        answerEl.textContent = "Sorry, something went wrong: " + e.message;
+      } finally {
+        f.message.disabled = false;
+        f.message.focus();
       }
     });
 
