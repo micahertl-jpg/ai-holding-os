@@ -1051,6 +1051,17 @@ storefront:
   `rate_limiter.py` — no new dependency, since this runs as a single
   `uvicorn` process with no distributed state to coordinate.
 
+**Static asset caching** — found for real when a storefront redesign
+didn't visually show up for a returning visitor until they
+hard-refreshed: Starlette's plain `StaticFiles` sets no `Cache-Control`
+at all, so a browser's own (much longer, inconsistent across browsers)
+heuristic caching was the only thing controlling how long it held onto
+e.g. `store.css`. `api.py`'s `CachedStaticFiles` (wraps the `/static`
+mount) now sets `Cache-Control: public, max-age=300` on every static
+asset, so a future deploy that changes a CSS/JS/image file reaches an
+already-visited browser's next request within 5 minutes, without
+forcing a re-fetch on every single page load either.
+
 ## Ops/Maintenance — status (fifth business vertical, no customer)
 
 The project spec's sixth planned vertical, scoped after clarifying with

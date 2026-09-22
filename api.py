@@ -307,10 +307,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Holding Company OS — Core API", version="0.1.0", lifespan=lifespan)
 
+# Starlette's StaticFiles sets no Cache-Control at all by default, which
+# means the ONLY thing controlling how long a browser holds onto e.g.
+# store.css is that browser's own (often much longer, and inconsistent
+# across browsers) heuristic caching -- found for real when a storefront
+# redesign didn't visually show up for a returning visitor until they
+# hard-refreshed. A short, explicit max-age means a deploy that changes a
+# static asset reaches an already-visited browser's next request within
+# STATIC_CACHE_MAX_AGE_SECONDS, without forcing every request to
+# re-fetch the file on every page load either.
+STATIC_CACHE_MAX_AGE_SECONDS = 300  # 5 minutes
+
+
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = f"public, max-age={STATIC_CACHE_MAX_AGE_SECONDS}"
+        return response
+
+
 # Serves dashboard.css/dashboard.js/dashboard-render.js at /static/... ,
 # same-origin as the JSON API below, so the dashboard's fetch() calls
 # need no CORS configuration.
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", CachedStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
