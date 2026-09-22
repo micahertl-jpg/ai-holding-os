@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS roblox_trends (
     confidence_level TEXT,
     summary TEXT,
     reference_urls_used TEXT,
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -315,6 +316,7 @@ CREATE TABLE IF NOT EXISTS app_feasibility_assessments (
     confidence_level TEXT,
     summary TEXT,
     reference_urls_used TEXT,
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -347,5 +349,6 @@ CREATE TABLE IF NOT EXISTS real_estate_assessments (
     confidence_level TEXT,
     summary TEXT,
     reference_urls_used TEXT,
+    launched_business_id TEXT REFERENCES businesses(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );

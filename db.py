@@ -77,6 +77,9 @@ _COLUMN_MIGRATIONS = [
     # (table, column, type_and_default_ddl)
     ("paper_portfolios", "live_trading_enabled", "INTEGER DEFAULT 0"),
     ("opportunities", "launched_business_id", "TEXT REFERENCES businesses(id)"),
+    ("roblox_trends", "launched_business_id", "TEXT REFERENCES businesses(id)"),
+    ("app_feasibility_assessments", "launched_business_id", "TEXT REFERENCES businesses(id)"),
+    ("real_estate_assessments", "launched_business_id", "TEXT REFERENCES businesses(id)"),
 ]
 
 
