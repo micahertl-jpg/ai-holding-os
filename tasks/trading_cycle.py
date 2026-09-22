@@ -304,9 +304,18 @@ def run_trading_cycle(cash_usd, positions, strategy_params, recent_trades_summar
         p["symbol"] for p in positions if p["quantity"] > 0 and p["symbol"] not in quotes
     )
     if held_missing:
+        # The real reason each quote fetch failed (e.g. Alpha Vantage's
+        # exact rate-limit message) was already captured in
+        # quote_errors above -- surfacing it here, instead of just
+        # naming the symbol, is the difference between the owner
+        # immediately seeing "rate limited, try again later" and
+        # having to go dig through logs (or ask) to find out why a
+        # symbol they've traded before suddenly has no quote.
+        reasons = "; ".join(f"{sym}: {quote_errors.get(sym, 'no error captured')}"
+                             for sym in held_missing)
         raise TradingCycleError(
             f"missing live quotes for currently-held symbols {held_missing}; "
-            f"refusing to trade without knowing their current value"
+            f"refusing to trade without knowing their current value ({reasons})"
         )
 
     mocked = sorted(sym for sym, q in quotes.items() if q.get("mock"))

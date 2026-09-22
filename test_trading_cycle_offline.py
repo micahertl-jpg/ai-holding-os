@@ -326,8 +326,15 @@ def test_run_trading_cycle_refuses_when_a_held_symbols_quote_is_missing():
         assert False, "expected TradingCycleError"
     except TradingCycleError as e:
         assert "IBM" in str(e)
+        # The real underlying reason (e.g. Alpha Vantage's exact
+        # rate-limit text) must be in the message too, not just the
+        # symbol name -- otherwise the owner sees "missing quotes" with
+        # no way to tell a rate limit apart from a delisted symbol or a
+        # network failure without digging through logs.
+        assert "no data for IBM" in str(e)
     print("PASS: run_trading_cycle refuses to proceed if it can't get a fresh quote for a "
-          "currently-held symbol -- equity would otherwise be silently wrong")
+          "currently-held symbol -- equity would otherwise be silently wrong -- and the error "
+          "includes the real underlying reason, not just the symbol name")
 
 
 def test_run_trading_cycle_succeeds_end_to_end_with_real_shaped_inputs():
