@@ -71,6 +71,12 @@
         Runs automatically every
         <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
         the approvals panel above.</p>
+      <button id="trigger-owner-digest-btn" type="button" class="btn-small">Send Owner Digest Now</button>
+      <p class="panel-note">Emails <code>OWNER_EMAIL</code> a summary of pending approvals,
+        system health, revenue, new research, and trading P&amp;L across every business. Runs
+        automatically every <code>OWNER_DIGEST_INTERVAL_SECONDS</code> (default 24h); requires
+        <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
+        configured, or it fails loudly rather than sending nothing silently.</p>
     </section>
 
     <section class="panel panel-scanner">
