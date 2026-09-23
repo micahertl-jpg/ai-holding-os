@@ -296,7 +296,122 @@ def test_delete_research_items_removes_only_the_targeted_row():
     os.remove(DELETE_TEST_DB_PATH)
 
 
+AUDIT_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_audit_enrichment.db")
+
+
+def test_audit_actor_name_enrichment():
+    """Mirrors GET /audit's actor_name resolution (added for the
+    dashboard's live activity feed): a batch lookup of agents whose id
+    appears as an audit_log row's actor, NOT a JOIN (this codebase's
+    queries are otherwise all single-table). Proves a real agent id
+    resolves to its name, while 'owner'/'system'/an unrecognized id
+    correctly get no fabricated name back."""
+    if os.path.exists(AUDIT_TEST_DB_PATH):
+        os.remove(AUDIT_TEST_DB_PATH)
+    db = Database(AUDIT_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    agents = AgentRegistry(db)
+
+    biz_id = businesses.create("Audit Test Co", "test", "x", 0.0)
+    agent_id = agents.create(biz_id, "Nova", role="researcher", permission_level=1)
+
+    db.audit("owner", "create_business", "business", biz_id, {})
+    db.audit(agent_id, "complete_task", "task", "task_1", {})
+    db.audit("system", "scheduled_job_fired", "scheduled_job", "job_1", {})
+    db.audit("agent_does_not_exist", "complete_task", "task", "task_2", {})
+
+    # --- mirrors GET /audit's post-query enrichment step exactly ---
+    rows = [dict(r) for r in db.query(
+        "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (10,)
+    )]
+    actor_ids = sorted({r["actor"] for r in rows if r["actor"] not in (None, "owner", "system")})
+    actor_names = {}
+    if actor_ids:
+        placeholders = ",".join(["?"] * len(actor_ids))
+        for a in db.query(f"SELECT id, name FROM agents WHERE id IN ({placeholders})", tuple(actor_ids)):
+            actor_names[a["id"]] = a["name"]
+    for r in rows:
+        r["actor_name"] = actor_names.get(r["actor"])
+
+    by_action = {r["action"]: r for r in rows}
+    assert by_action["create_business"]["actor_name"] is None
+    assert by_action["scheduled_job_fired"]["actor_name"] is None
+    assert by_action["complete_task"]["actor_name"] == "Nova", (
+        "a real agent id in audit_log.actor must resolve to that agent's real name"
+    )
+    # The row with the bogus actor id also has action='complete_task' --
+    # find it specifically by target_id since by_action collapses same-
+    # action rows to the last one seen.
+    bogus_row = next(r for r in rows if r["target_id"] == "task_2")
+    assert bogus_row["actor_name"] is None, (
+        "an actor id matching no real agent must never get a fabricated name"
+    )
+
+    db.close()
+    os.remove(AUDIT_TEST_DB_PATH)
+    print("PASS: /audit's actor_name enrichment resolves real agents, and never "
+          "fabricates a name for owner/system/an unknown actor id")
+
+
+EVOLUTION_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_trading_evolution.db")
+
+
+def test_trading_strategy_evolution_rollup():
+    """Mirrors GET /overview's new trading_strategy_evolution field: a
+    real cross-business rollup over trading_strategy_versions, the
+    honest version of "AI evolution" this codebase actually has (self-
+    improvement is scoped to the trading strategy review loop only)."""
+    if os.path.exists(EVOLUTION_TEST_DB_PATH):
+        os.remove(EVOLUTION_TEST_DB_PATH)
+    db = Database(EVOLUTION_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+
+    biz_a = businesses.create("Trader A", "test", "x", 0.0)
+    biz_b = businesses.create("Trader B", "test", "x", 0.0)
+    biz_c = businesses.create("Never Traded Co", "test", "x", 0.0)
+
+    def insert_version(business_id, version, source, active, rationale="test rationale"):
+        db.execute(
+            "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, "
+            "rationale, confidence_level, source, active) VALUES (?, ?, ?, '{}', ?, 'medium', ?, ?)",
+            (f"strat_{business_id}_{version}", business_id, version, rationale, source,
+             1 if active else 0),
+        )
+
+    insert_version(biz_a, 1, "system", active=False)
+    insert_version(biz_a, 2, "strategy_review", active=True)
+    insert_version(biz_b, 1, "system", active=True)
+
+    # --- mirrors GET /overview's new aggregate queries exactly ---
+    total_versions = db.query_one("SELECT COUNT(*) as c FROM trading_strategy_versions")["c"]
+    active_count = db.query_one(
+        "SELECT COUNT(*) as c FROM trading_strategy_versions WHERE active=1"
+    )["c"]
+    businesses_with_trading = db.query_one(
+        "SELECT COUNT(DISTINCT business_id) as c FROM trading_strategy_versions"
+    )["c"]
+    latest_version = db.query_one(
+        "SELECT created_at, rationale, source FROM trading_strategy_versions "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+
+    assert total_versions == 3
+    assert active_count == 2, "one active version per business that has ever traded"
+    assert businesses_with_trading == 2, (
+        f"exactly biz_a and biz_b, never biz_c ({biz_c}) which has no strategy versions at all"
+    )
+    assert latest_version is not None
+    assert latest_version["source"] in ("system", "strategy_review")
+
+    db.close()
+    os.remove(EVOLUTION_TEST_DB_PATH)
+    print("PASS: /overview's trading_strategy_evolution rollup counts real versions "
+          "across businesses, and never counts a business that has never traded")
+
+
 if __name__ == "__main__":
     main()
     test_overview_aggregation_spans_all_businesses()
+    test_audit_actor_name_enrichment()
+    test_trading_strategy_evolution_rollup()
     test_delete_research_items_removes_only_the_targeted_row()

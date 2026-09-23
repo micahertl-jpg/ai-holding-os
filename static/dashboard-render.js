@@ -1001,11 +1001,23 @@
   // and going clockwise -- shared math for both the orbital node badges
   // and the web-lines connecting them back to the hub, so the two can
   // never drift out of sync with each other.
-  function pointOnRing(index, count, radiusPct) {
-    const angle = (index / count) * 2 * Math.PI - Math.PI / 2;
+  function pointOnRing(index, count, radiusPct, angleOverrideRad) {
+    const angle = angleOverrideRad !== undefined
+      ? angleOverrideRad
+      : (index / count) * 2 * Math.PI - Math.PI / 2;
     return {
       x: 50 + Math.cos(angle) * radiusPct,
       y: 50 + Math.sin(angle) * radiusPct,
+    };
+  }
+
+  // Offsets a point from an already-placed node by a small percentage
+  // distance at a given angle -- used to hang a business node's own
+  // mini breakdown nodes near it without needing separate ring math.
+  function pointNear(center, angleRad, distancePct) {
+    return {
+      x: center.x + Math.cos(angleRad) * distancePct,
+      y: center.y + Math.sin(angleRad) * distancePct,
     };
   }
 
@@ -1182,6 +1194,278 @@
       </div>`;
   }
 
+  // ---------- Header: system status + pending-approvals badge ----------
+
+  function renderHeaderStatus(overview) {
+    const report = overview && overview.latest_ops_report;
+    const severity = report ? report.overall_severity : null;
+    if (severity === "warning") {
+      return '<div class="header-status header-status-amber"><span class="header-status-dot"></span>ATTENTION NEEDED</div>';
+    }
+    if (severity === "critical") {
+      return '<div class="header-status header-status-red"><span class="header-status-dot"></span>CRITICAL</div>';
+    }
+    return '<div class="header-status header-status-green"><span class="header-status-dot"></span>SYSTEM ONLINE</div>';
+  }
+
+  function renderHeaderApprovalsBadge(approvals) {
+    const count = (approvals || []).length;
+    if (count === 0) return "";
+    return `<a class="header-approvals-badge" href="#global-approvals-section">` +
+      `<span class="header-approvals-count">${escapeHtml(count)}</span> PENDING APPROVAL${count === 1 ? "" : "S"}</a>`;
+  }
+
+  // ---------- Command Metrics panel ----------
+
+  // Every status the schema declares (registry.AGENT_STATUSES) -- most
+  // read 0 today since only idle/working/paused/retired are ever
+  // actually set by running code, but showing all 11 here is
+  // future-proofed and never hides a status just because it's unused
+  // yet.
+  const ALL_AGENT_STATUSES = [
+    "created", "initializing", "active", "working", "idle",
+    "waiting", "improving", "paused", "failed", "quarantined", "retired",
+  ];
+
+  function renderStatBlock(label, entries) {
+    const cells = entries
+      .map(
+        ([k, v]) => `
+        <div class="arc-stat"><span class="label">${escapeHtml(k)}</span><span class="value">${escapeHtml(v)}</span></div>`
+      )
+      .join("");
+    return `
+      <div class="stat-block">
+        <div class="stat-block-label">${escapeHtml(label)}</div>
+        <div class="arc-summary">${cells}</div>
+      </div>`;
+  }
+
+  function renderCommandStatRow(overview) {
+    const counts = computeOverviewCounts(overview);
+    const revenue = (overview.real_revenue_usd_cents || 0) / 100;
+    const pendingApprovals = overview.pending_approvals || [];
+    const pendingUsd = pendingApprovals.reduce(
+      (sum, p) => sum + Number(p.amount_usd || 0), 0
+    );
+    const agentsByStatus = overview.agents_by_status || {};
+    const businesses = overview.businesses || [];
+    const businessesByStatus = businesses.reduce((acc, b) => {
+      const s = b.status || "unknown";
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {});
+
+    const topRow = `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Businesses</span><span class="value">${counts.totalBusinesses}</span></div>
+        <div class="arc-stat"><span class="label">Agents</span><span class="value">${counts.totalAgents}</span></div>
+        <div class="arc-stat"><span class="label">Open Tasks</span><span class="value">${counts.openTasks}</span></div>
+        <div class="arc-stat"><span class="label">Real Revenue Collected</span><span class="value">${fmtUsd(revenue)}</span></div>
+        <div class="arc-stat"><span class="label">Pending Approval Value</span><span class="value">${fmtUsd(pendingUsd)}</span></div>
+      </div>`;
+
+    // Bars (not another grid of boxes) for the 11-way agent-status
+    // breakdown -- matches the instrument-panel mix of stat cards +
+    // gauges + bar charts the original Command Center Overview panel
+    // already uses, instead of one more wall of identical small boxes.
+    const agentMax = Math.max(1, ...ALL_AGENT_STATUSES.map((s) => agentsByStatus[s] || 0));
+    const agentBars = ALL_AGENT_STATUSES.map((s) => {
+      const count = agentsByStatus[s] || 0;
+      const pct = Math.round((count / agentMax) * 100);
+      return `
+        <div class="stat-bar-row">
+          <span class="stat-bar-label">${escapeHtml(s)}</span>
+          <div class="stat-bar-track">
+            <div class="stat-bar-fill" style="width:${pct}%; background:${statusColorVar(s)};"></div>
+          </div>
+          <span class="stat-bar-count">${escapeHtml(count)}</span>
+        </div>`;
+    }).join("");
+    const agentsBlock = `
+      <div class="stat-block">
+        <div class="stat-block-label">Agents</div>
+        <div class="stat-bars">${agentBars}</div>
+      </div>`;
+
+    const businessesBlock = renderStatBlock("Businesses", Object.entries(businessesByStatus));
+
+    return topRow + agentsBlock + businessesBlock;
+  }
+
+  // ---------- Live Activity Feed ----------
+
+  // Known audit_log action strings mapped to a human-readable phrase --
+  // anything not in this map still shows (de-underscored), never
+  // hidden, so a future action type is never silently dropped from the
+  // feed.
+  const AUDIT_ACTION_LABELS = {
+    create_business: "created business",
+    create_agent: "created agent",
+    create_task: "created task",
+    complete_task: "completed task",
+    fail_task: "task failed",
+    assign_task: "assigned task",
+    allocate_arc: "allocated ARC",
+    approve_action: "approved action",
+    reject_action: "rejected action",
+    pause_agent: "paused agent",
+    retire_agent: "retired agent",
+    ops_maintenance_reviewed: "ops review completed",
+    owner_digest_sent: "owner digest sent",
+    trading_cycle: "ran trading cycle",
+    trading_strategy_review: "ran strategy review",
+    live_trading_cycle: "ran live trading cycle",
+    enable_live_trading: "enabled live trading",
+    disable_live_trading: "disabled live trading",
+  };
+
+  const AUDIT_ACTION_ALERT = new Set(["fail_task", "reject_action", "disable_live_trading"]);
+
+  function _actionLabel(action) {
+    return AUDIT_ACTION_LABELS[action] || String(action || "").replace(/_/g, " ");
+  }
+
+  function _actorLabel(event) {
+    if (event.actor === "owner") return "OWNER";
+    return event.actor_name || event.actor || "system";
+  }
+
+  function _relativeTime(isoString) {
+    const then = Date.parse(isoString);
+    if (Number.isNaN(then)) return "";
+    const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.round(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.round(diffHr / 24);
+    return `${diffDay}d ago`;
+  }
+
+  function renderActivityFeed(events) {
+    if (!events || events.length === 0) {
+      return '<p class="empty">No system activity recorded yet.</p>';
+    }
+    return events
+      .map((e) => {
+        const label = _actionLabel(e.action);
+        const alert = AUDIT_ACTION_ALERT.has(e.action);
+        const actor = _actorLabel(e);
+        return `
+        <div class="activity-row${alert ? " activity-row-alert" : ""}">
+          <div class="activity-desc">
+            <span class="activity-actor">${escapeHtml(actor)}</span>
+            <span class="activity-action">${escapeHtml(label)}</span>
+          </div>
+          <span class="activity-time">${escapeHtml(_relativeTime(e.created_at))}</span>
+        </div>`;
+      })
+      .join("");
+  }
+
+  // ---------- System Core: business ring + per-business breakdown ----------
+
+  // Places each business node at the angular MIDPOINT between two
+  // consecutive metric-ring nodes -- exactly half of one metric step
+  // (360/7/2 = ~25.71deg) from both neighbors, by construction, so a
+  // business node can never land on (or too close to) a metric node
+  // regardless of how many businesses exist. Slots cycle every 7
+  // businesses, same as the metric ring itself.
+  const METRIC_RING_NODE_COUNT = 7;
+  const METRIC_RING_ANGLE_STEP = (2 * Math.PI) / METRIC_RING_NODE_COUNT;
+
+  function businessRingAngle(index) {
+    const slot = index % METRIC_RING_NODE_COUNT;
+    return -Math.PI / 2 + METRIC_RING_ANGLE_STEP * (slot + 0.5);
+  }
+
+  // A distinctly larger radius than the metric ring (not the same
+  // ring) -- radial separation, on top of the angular gap-midpoint
+  // placement above, so business nodes fan out into the hub's own
+  // open space instead of crowding the metric ring's existing nodes.
+  const BUSINESS_RING_RADIUS_PCT = 50;
+  const BUSINESS_MINI_NODE_DISTANCE_PCT = 6;
+  const BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD = 0.4;
+
+  function renderBusinessRing(businesses) {
+    if (!businesses || businesses.length === 0) return "";
+
+    const positioned = businesses.map((b, i) => {
+      const angle = businessRingAngle(i);
+      const pos = pointOnRing(0, 1, BUSINESS_RING_RADIUS_PCT, angle);
+      return Object.assign({}, b, pos, { angle });
+    });
+
+    let mainLines = "";
+    let miniLines = "";
+    let nodeDivs = "";
+
+    positioned.forEach((p, i) => {
+      const alert = Number(p.pending_approval_count || 0) > 0;
+      const agentPos = pointNear(p, p.angle - BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD, BUSINESS_MINI_NODE_DISTANCE_PCT);
+      const taskPos = pointNear(p, p.angle + BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD, BUSINESS_MINI_NODE_DISTANCE_PCT);
+      const agentCount = p.agent_count || 0;
+      const taskCount = p.open_task_count || 0;
+
+      mainLines += `
+        <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.15).toFixed(2)}s" />`;
+
+      miniLines += `
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}" x2="${agentPos.x.toFixed(2)}" y2="${agentPos.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.08 + 0.05).toFixed(2)}s" />
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}" x2="${taskPos.x.toFixed(2)}" y2="${taskPos.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.08 + 0.1).toFixed(2)}s" />`;
+
+      nodeDivs += `
+        <div class="core-node core-node-business${alert ? " core-node-alert" : ""}"
+          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08).toFixed(2)}s" title="${escapeHtml(p.name)}">
+          <span class="core-node-value">${escapeHtml(p.name)}</span>
+          <span class="core-node-label">${escapeHtml(p.status)}</span>
+        </div>
+        <div class="core-node core-node-mini" style="left:${agentPos.x.toFixed(2)}%;top:${agentPos.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.05).toFixed(2)}s">
+          <span class="core-node-value">${escapeHtml(agentCount)}</span>
+          <span class="core-node-label">AGT</span>
+        </div>
+        <div class="core-node core-node-mini" style="left:${taskPos.x.toFixed(2)}%;top:${taskPos.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.1).toFixed(2)}s">
+          <span class="core-node-value">${escapeHtml(taskCount)}</span>
+          <span class="core-node-label">TASK</span>
+        </div>`;
+    });
+
+    return `
+      <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${mainLines}${miniLines}</svg>
+      ${nodeDivs}`;
+  }
+
+  // ---------- Trading Strategy Evolution (global summary) ----------
+
+  function renderTradingStrategyEvolution(evo) {
+    if (!evo || !evo.total_versions) {
+      return '<p class="empty">No trading strategy history yet.</p>';
+    }
+    const latest = evo.latest_version;
+    const latestHtml = latest
+      ? `
+        <div class="approval-card">
+          <div class="approval-desc">
+            <strong>${escapeHtml(latest.source)}</strong>
+            <div>${escapeHtml(latest.rationale)}</div>
+            <div class="panel-note">Versioned ${escapeHtml(latest.created_at)}</div>
+          </div>
+        </div>`
+      : "";
+    return `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Total Versions</span><span class="value">${escapeHtml(evo.total_versions)}</span></div>
+        <div class="arc-stat"><span class="label">Active Strategies</span><span class="value">${escapeHtml(evo.active_count)}</span></div>
+        <div class="arc-stat"><span class="label">Businesses Trading</span><span class="value">${escapeHtml(evo.businesses_with_trading)}</span></div>
+      </div>
+      ${latestHtml}`;
+  }
+
   const api = {
     escapeHtml,
     fmtArc,
@@ -1221,6 +1505,14 @@
     renderLiveTrading,
     renderLiveTradingTrades,
     renderBacktestRuns,
+    pointNear,
+    renderHeaderStatus,
+    renderHeaderApprovalsBadge,
+    renderCommandStatRow,
+    renderActivityFeed,
+    businessRingAngle,
+    renderBusinessRing,
+    renderTradingStrategyEvolution,
   };
 
   if (typeof module !== "undefined" && module.exports) {

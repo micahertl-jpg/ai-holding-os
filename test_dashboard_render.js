@@ -1351,4 +1351,231 @@ test("computeOverviewCounts matches the shape renderGlobalStats relies on", () =
   assert.strictEqual(counts.totalTasks, 5);
 });
 
+// ---------- Command-center redesign additions ----------
+
+test("renderHeaderStatus reads SYSTEM ONLINE when there's no ops report yet, or it's ok", () => {
+  assert.ok(R.renderHeaderStatus({ latest_ops_report: null }).includes("SYSTEM ONLINE"));
+  assert.ok(R.renderHeaderStatus({ latest_ops_report: { overall_severity: "ok" } }).includes("SYSTEM ONLINE"));
+});
+
+test("renderHeaderStatus flips to amber/red based on the real latest ops report severity", () => {
+  const warn = R.renderHeaderStatus({ latest_ops_report: { overall_severity: "warning" } });
+  assert.ok(warn.includes("header-status-amber"));
+  assert.ok(warn.includes("ATTENTION NEEDED"));
+  const critical = R.renderHeaderStatus({ latest_ops_report: { overall_severity: "critical" } });
+  assert.ok(critical.includes("header-status-red"));
+  assert.ok(critical.includes("CRITICAL"));
+});
+
+test("renderHeaderApprovalsBadge is empty when nothing is pending, never a fake zero badge", () => {
+  assert.strictEqual(R.renderHeaderApprovalsBadge([]), "");
+  assert.strictEqual(R.renderHeaderApprovalsBadge(null), "");
+});
+
+test("renderHeaderApprovalsBadge shows the real pending count and links to the approval center", () => {
+  const html = R.renderHeaderApprovalsBadge([{ id: "a1" }, { id: "a2" }]);
+  assert.ok(html.includes(">2<"));
+  assert.ok(html.includes('href="#global-approvals-section"'));
+});
+
+test("renderCommandStatRow shows all 11 agent statuses even when most are zero, never hiding one", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 0, pending_approvals: [], global_arc: {},
+    agents_by_status: { idle: 2 }, businesses: [],
+  });
+  for (const status of ["created", "initializing", "active", "working", "idle", "waiting",
+                         "improving", "paused", "failed", "quarantined", "retired"]) {
+    assert.ok(html.includes(`>${status}<`), `stat row must show the "${status}" agent status, even at 0`);
+  }
+});
+
+test("renderCommandStatRow sums real USD awaiting approval from pending_approvals, never fabricates it", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 250000, // $2500.00
+    pending_approvals: [{ amount_usd: 50 }, { amount_usd: 125.5 }, { amount_usd: null }],
+    global_arc: {}, agents_by_status: {}, businesses: [],
+  });
+  assert.ok(html.includes("$2500.00") || html.includes("$2,500.00"));
+  assert.ok(html.includes("$175.50"), "must sum only the real amount_usd values, treating null as 0");
+});
+
+test("renderCommandStatRow counts businesses by their real status only (active/paused/retired)", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 0, pending_approvals: [], global_arc: {}, agents_by_status: {},
+    businesses: [{ status: "active" }, { status: "active" }, { status: "paused" }, { status: "retired" }],
+  });
+  const cells = html.split('<div class="stat-block-label">Businesses</div>')[1];
+  assert.ok(cells.includes(">active<"));
+  assert.ok(/active[\s\S]{0,80}>2</.test(cells), "2 active businesses should render as 2, not fabricated");
+});
+
+test("renderActivityFeed handles the empty case", () => {
+  assert.ok(R.renderActivityFeed([]).includes("No system activity recorded yet"));
+  assert.ok(R.renderActivityFeed(null).includes("No system activity recorded yet"));
+});
+
+test("renderActivityFeed shows a real agent's resolved name, falling back to the raw actor id for an unknown one", () => {
+  const events = [
+    { id: 1, actor: "owner", actor_name: null, action: "create_business",
+      target_type: "business", created_at: "2026-09-20 14:30:00" },
+    { id: 2, actor: "agt_123", actor_name: "Nova", action: "complete_task",
+      target_type: "task", created_at: "2026-09-20 14:31:00" },
+    { id: 3, actor: "agt_gone", actor_name: null, action: "complete_task",
+      target_type: "task", created_at: "2026-09-20 14:32:00" },
+  ];
+  const html = R.renderActivityFeed(events);
+  assert.ok(html.includes("OWNER"));
+  assert.ok(html.includes("created business"));
+  assert.ok(html.includes("Nova"));
+  assert.ok(html.includes("agt_gone"), "an actor id with no resolved name still shows the raw id, never hidden");
+});
+
+test("renderActivityFeed falls back to the raw action string for an action not in the label map", () => {
+  const html = R.renderActivityFeed([
+    { id: 1, actor: "system", actor_name: null, action: "some_future_action_xyz",
+      target_type: "widget", created_at: "2026-09-20 14:30:00" },
+  ]);
+  assert.ok(html.includes("some future action xyz"), "unknown action falls back to a de-underscored raw string, never hidden");
+});
+
+test("renderActivityFeed escapes actor/action/target text to prevent HTML injection", () => {
+  const html = R.renderActivityFeed([
+    { id: 1, actor: "agt_1", actor_name: '<script>alert(1)</script>', action: "create_business",
+      target_type: "business", created_at: "2026-09-20 14:30:00" },
+  ]);
+  assert.ok(!html.includes("<script>"));
+});
+
+test("renderBusinessRing returns nothing for an empty business list (no empty ring drawn)", () => {
+  assert.strictEqual(R.renderBusinessRing([]), "");
+  assert.strictEqual(R.renderBusinessRing(null), "");
+});
+
+test("renderBusinessRing places one node + one line per real business, using core-node-business styling", () => {
+  const businesses = [
+    { id: "biz_1", name: "Trading Co", status: "active", pending_approval_count: 0 },
+    { id: "biz_2", name: "Roblox Studio", status: "paused", pending_approval_count: 2 },
+  ];
+  const html = R.renderBusinessRing(businesses);
+  assert.strictEqual((html.match(/class="core-node core-node-business/g) || []).length, 2);
+  assert.strictEqual((html.match(/<line class="web-line"/g) || []).length, 2);
+  assert.ok(html.includes("Trading Co"));
+  assert.ok(html.includes("Roblox Studio"));
+  // A business with a real pending approval gets the same alert treatment
+  // the metric ring already uses, not a fabricated new visual language.
+  assert.ok(html.includes("core-node-alert"));
+});
+
+test("renderBusinessRing escapes a business name to prevent HTML injection", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "<img src=x onerror=alert(1)>", status: "active", pending_approval_count: 0 },
+  ]);
+  assert.ok(!html.includes("<img"));
+});
+
+test("renderBusinessRing gives each business its own agent/task breakdown as separate mini nodes", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Trading Co", status: "active", pending_approval_count: 0,
+      agent_count: 3, open_task_count: 2 },
+  ]);
+  assert.strictEqual((html.match(/class="core-node core-node-mini"/g) || []).length, 2,
+    "one mini node for agents, one for open tasks -- a real breakdown, not a fabricated extra stat");
+  assert.strictEqual((html.match(/<line class="web-line web-line-mini"/g) || []).length, 2,
+    "each mini node gets its own connecting line back to the business node, not the hub");
+  assert.ok(html.includes(">3<"), "the real agent_count value must appear");
+  assert.ok(html.includes(">2<"), "the real open_task_count value must appear");
+  assert.ok(html.includes("AGT"));
+  assert.ok(html.includes("TASK"));
+});
+
+test("renderBusinessRing shows 0 for a business's mini breakdown rather than omitting it", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Empty Co", status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0 },
+  ]);
+  assert.strictEqual((html.match(/class="core-node core-node-mini"/g) || []).length, 2,
+    "a business with zero agents/tasks still gets its breakdown nodes, honestly showing 0");
+});
+
+test("renderBusinessRing's first business never lands on the same angle as the metric ring's first node", () => {
+  // Regression test: both rings' index-0 node used to sit at exactly
+  // -90deg (straight up) regardless of node count, since pointOnRing's
+  // angle formula always starts there -- with only a 5-point radius
+  // gap between the two rings, the first business and the "Businesses"
+  // metric node landed directly on top of each other. The business
+  // ring now carries its own angle offset specifically to avoid this.
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Solo Co", status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0 },
+  ]);
+  const match = html.match(/class="core-node core-node-business"\s+style="left:(-?[\d.]+)%;top:(-?[\d.]+)%/);
+  assert.ok(match, "should find the business node's position");
+  const [, left] = match.map(Number);
+  assert.notStrictEqual(left, 50, "a single business must not sit at left:50% (straight up), " +
+    "the same angle the metric ring's own first node always uses");
+});
+
+test("renderBusinessRing keeps every business node at maximum angular clearance from all 7 fixed metric angles, for any business count 1-9", () => {
+  // Regression test: a plain fixed rotation offset was tried first and
+  // wasn't enough -- with a 30deg offset and 4 businesses, one business
+  // landed only ~8.6deg from the metric ring's "Approvals" node (found
+  // live via screenshot). Each business is now placed at the angular
+  // MIDPOINT between two consecutive metric nodes, which is exactly
+  // half of one metric step (360/7/2 = ~25.71deg) from BOTH neighbors,
+  // by construction -- proven here for every business count from 1
+  // through 9 (past the 7-slot wraparound point), not just today's
+  // live data shape.
+  const METRIC_STEP_DEG = 360 / 7;
+  const EXPECTED_CLEARANCE_DEG = METRIC_STEP_DEG / 2;
+  function angleOf(html, name) {
+    const re = new RegExp(
+      `class="core-node core-node-business[^"]*"\\s+style="left:(-?[\\d.]+)%;top:(-?[\\d.]+)%[^"]*"[^>]*title="${name}`
+    );
+    const m = html.match(re);
+    assert.ok(m, `should find ${name}'s node position`);
+    const [, left, top] = m.map(Number);
+    return Math.atan2(top - 50, left - 50) * (180 / Math.PI);
+  }
+  function angularDistanceDeg(a, b) {
+    let d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+  const metricAnglesDeg = Array.from({ length: 7 }, (_, i) => -90 + i * METRIC_STEP_DEG);
+
+  for (let count = 1; count <= 9; count++) {
+    const businesses = Array.from({ length: count }, (_, i) => ({
+      id: `biz_${i}`, name: `Biz${i}`, status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0,
+    }));
+    const html = R.renderBusinessRing(businesses);
+    for (let i = 0; i < count; i++) {
+      const angle = angleOf(html, `Biz${i}`);
+      const minClearance = Math.min(...metricAnglesDeg.map((m) => angularDistanceDeg(angle, m)));
+      assert.ok(
+        Math.abs(minClearance - EXPECTED_CLEARANCE_DEG) < 0.5,
+        `business ${i} of ${count} should sit ~${EXPECTED_CLEARANCE_DEG.toFixed(2)}deg from its nearest ` +
+        `metric node (max possible clearance), got ${minClearance.toFixed(2)}deg`
+      );
+    }
+  }
+});
+
+test("renderTradingStrategyEvolution handles the no-history-yet case", () => {
+  const html = R.renderTradingStrategyEvolution({ total_versions: 0, active_count: 0,
+    businesses_with_trading: 0, latest_version: null });
+  assert.ok(html.includes("No trading strategy history yet"));
+});
+
+test("renderTradingStrategyEvolution shows the real rollup counts and latest version's rationale", () => {
+  const html = R.renderTradingStrategyEvolution({
+    total_versions: 5, active_count: 2, businesses_with_trading: 2,
+    latest_version: { created_at: "2026-09-20 12:00:00", source: "strategy_review",
+                       rationale: "Tightened position sizing after a losing streak." },
+  });
+  assert.ok(html.includes(">5<"));
+  assert.ok(html.includes(">2<"));
+  assert.ok(html.includes("strategy_review"));
+  assert.ok(html.includes("Tightened position sizing after a losing streak."));
+});
+
 console.log("\nAll dashboard-render.js tests finished.");

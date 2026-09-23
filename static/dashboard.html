@@ -12,19 +12,25 @@
 
   <header class="app-header">
     <div class="app-header-inner">
-      <div class="header-glyph" aria-hidden="true">
-        <svg viewBox="0 0 100 100" width="36" height="36">
-          <circle class="glyph-ring glyph-ring-outer" cx="50" cy="50" r="46" fill="none" />
-          <circle class="glyph-ring glyph-ring-mid" cx="50" cy="50" r="34" fill="none" />
-          <circle class="glyph-core" cx="50" cy="50" r="6" />
-          <line class="glyph-tick" x1="50" y1="2" x2="50" y2="14" />
-          <line class="glyph-tick" x1="50" y1="86" x2="50" y2="98" />
-          <line class="glyph-tick" x1="2" y1="50" x2="14" y2="50" />
-          <line class="glyph-tick" x1="86" y1="50" x2="98" y2="50" />
-        </svg>
+      <div class="header-left">
+        <div class="header-glyph" aria-hidden="true">
+          <svg viewBox="0 0 100 100" width="36" height="36">
+            <circle class="glyph-ring glyph-ring-outer" cx="50" cy="50" r="46" fill="none" />
+            <circle class="glyph-ring glyph-ring-mid" cx="50" cy="50" r="34" fill="none" />
+            <circle class="glyph-core" cx="50" cy="50" r="6" />
+            <line class="glyph-tick" x1="50" y1="2" x2="50" y2="14" />
+            <line class="glyph-tick" x1="50" y1="86" x2="50" y2="98" />
+            <line class="glyph-tick" x1="2" y1="50" x2="14" y2="50" />
+            <line class="glyph-tick" x1="86" y1="50" x2="98" y2="50" />
+          </svg>
+        </div>
+        <h1>AI Holding Company OS<span class="header-sub">Command Center</span></h1>
       </div>
-      <h1>AI Holding Company OS<span class="header-sub">Command Center</span></h1>
-      <span class="sim-tag">SIMULATION — no real money moves</span>
+      <div class="header-center" id="header-status-wrap"></div>
+      <div class="header-right">
+        <div id="header-approvals-wrap"></div>
+        <span class="sim-tag">SIMULATION — no real money moves</span>
+      </div>
     </div>
   </header>
 
@@ -41,6 +47,23 @@
       </div>
     </section>
 
+    <section class="panel panel-approvals" id="global-approvals-section">
+      <h3>Owner Approvals Awaiting Decision — all businesses</h3>
+      <div id="global-approvals-list"></div>
+      <p class="panel-note">Shown here regardless of which business is selected below — an
+        approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
+    </section>
+
+    <section class="panel">
+      <h3>Command Metrics</h3>
+      <div id="command-stat-row"></div>
+    </section>
+
+    <section class="panel">
+      <h3>Live Activity Feed</h3>
+      <div id="activity-feed-list"></div>
+    </section>
+
     <section class="panel panel-chat no-tilt" id="chat-section">
       <h3>Ask</h3>
       <div id="chat-log" class="chat-log"></div>
@@ -52,13 +75,6 @@
       <p class="panel-note">Read-only for now — answers real, current data across every
         business, but can't yet take actions (launch a business, approve something, delete
         anything). Use the dashboard for those.</p>
-    </section>
-
-    <section class="panel panel-approvals" id="global-approvals-section">
-      <h3>Owner Approvals Awaiting Decision — all businesses</h3>
-      <div id="global-approvals-list"></div>
-      <p class="panel-note">Shown here regardless of which business is selected below — an
-        approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
     </section>
 
     <section class="panel">
@@ -129,6 +145,16 @@
       <p class="panel-note">New agents get a starting ARC budget automatically. Use this to
         top up an existing agent's balance — e.g. if task costs have run it down, or you're
         funding an agent created before this feature existed.</p>
+    </section>
+
+    <section class="panel">
+      <h3>Banker — ARC Ledger, All Businesses</h3>
+      <div id="global-arc-summary"></div>
+    </section>
+
+    <section class="panel">
+      <h3>Trading Strategy Evolution — All Businesses</h3>
+      <div id="trading-evolution-summary"></div>
     </section>
 
     <section class="panel panel-opportunities">

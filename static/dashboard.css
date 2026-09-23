@@ -132,6 +132,10 @@ body::after {
   margin: 0 auto;
 }
 
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-center { flex: 1; display: flex; justify-content: center; }
+.header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
 .header-glyph { display: flex; align-items: center; justify-content: center; flex-shrink: 0; animation: hue-drift 10s linear infinite; }
 .glyph-ring { stroke: var(--accent); stroke-width: 1.4; opacity: 0.75; }
 .glyph-ring-outer { stroke-dasharray: 4 6; animation: spin 18s linear infinite; transform-origin: 50px 50px; }
@@ -179,7 +183,6 @@ body::after {
 }
 
 .sim-tag {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: normal;
@@ -196,6 +199,53 @@ body::after {
 @keyframes amber-breathe {
   0%, 100% { box-shadow: 0 0 8px rgba(255,177,94,0.15) inset, 0 0 6px rgba(255,177,94,0.15); }
   50% { box-shadow: 0 0 14px rgba(255,177,94,0.3) inset, 0 0 14px rgba(255,177,94,0.35); }
+}
+
+/* ---------- Header status readout + approvals badge ---------- */
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.header-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.header-status-green { color: var(--green); animation: badge-breathe-green 2.6s ease-in-out infinite; }
+.header-status-amber { color: var(--amber); animation: amber-breathe 1.6s ease-in-out infinite; }
+.header-status-red { color: var(--red); animation: risk-high-breathe 1.4s ease-in-out infinite; }
+
+/* Plain inline text, not another bordered box next to .sim-tag -- the
+   header's own emptiness is part of the reference look, so a real
+   pending-approvals count gets the same light touch as the status
+   readout beside it (text + dot) rather than competing visual weight. */
+.header-approvals-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--amber);
+  text-decoration: none;
+  opacity: 0.9;
+  transition: opacity 0.15s ease;
+}
+.header-approvals-badge:hover { opacity: 1; }
+.header-approvals-count {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  text-shadow: 0 0 6px rgba(255,177,94,0.4);
 }
 
 .error-banner {
@@ -594,6 +644,54 @@ button { position: relative; overflow: hidden; }
   font-family: var(--font-mono);
   color: var(--accent);
   text-shadow: 0 0 12px rgba(79,214,255,0.45);
+}
+
+/* ---------- Command stat blocks (Command Metrics panel) ---------- */
+
+.stat-block { margin-top: 16px; }
+.stat-block:first-child { margin-top: 0; }
+.stat-block-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+/* ---------- Live Activity Feed ---------- */
+
+.activity-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--border-bright);
+  border-radius: 2px;
+  margin-bottom: 6px;
+  background: rgba(0,0,0,0.15);
+  animation: panel-in 0.4s ease backwards;
+  transition: transform 0.2s ease;
+}
+.activity-row:hover { transform: translateX(2px); }
+.activity-row-alert { border-left-color: var(--amber); box-shadow: -2px 0 8px rgba(255,177,94,0.12); }
+.activity-desc { font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+.activity-actor {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.activity-action { color: var(--text); }
+.activity-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 /* ---------- Approvals ---------- */
@@ -1028,8 +1126,8 @@ button { position: relative; overflow: hidden; }
    drifting relative to each other at different viewport sizes. */
 .core-orbital {
   position: relative;
-  width: min(60vw, 560px);
-  height: min(60vw, 560px);
+  width: min(68vw, 660px);
+  height: min(68vw, 660px);
   max-width: 100%;
   margin: 4px auto 12px auto;
 }
@@ -1128,10 +1226,56 @@ button { position: relative; overflow: hidden; }
   50% { box-shadow: 0 0 18px rgba(79,214,255,0.3); }
 }
 
+/* Business ring nodes: the same glowing circular badge as the metric
+   ring, on the same ring radius (gap-midpoint placement keeps them
+   clear of the metric nodes -- see businessRingAngle), tinted iris
+   instead of cyan so a business reads as a distinct kind of node at a
+   glance rather than an eighth metric. */
+.core-node-business {
+  width: 52px;
+  height: 52px;
+  border-color: var(--iris);
+  box-shadow: 0 0 10px rgba(255,143,224,0.16);
+}
+.core-node-business .core-node-value {
+  font-family: var(--font-display);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--iris);
+  text-shadow: 0 0 6px rgba(255,143,224,0.5);
+  letter-spacing: 0.2px;
+}
+.core-node-business .core-node-label { font-size: 6px; }
+.core-node-business.core-node-alert { border-color: var(--amber); box-shadow: 0 0 12px rgba(255,177,94,0.28); }
+.core-node-business.core-node-alert .core-node-value { color: var(--amber); text-shadow: 0 0 6px rgba(255,177,94,0.5); }
+
+/* Mini breakdown nodes: a business's own agent/task counts, hung just
+   off its node -- deliberately tiny and dim (a satellite annotation,
+   not a competing node) so the hierarchy (hub > metric ring > business
+   ring > per-business breakdown) stays legible and the hub keeps the
+   sparse, spacious feel of the reference design instead of every node
+   competing at the same visual weight. */
+.core-node-mini {
+  width: 22px;
+  height: 22px;
+  border-color: var(--border-bright);
+  box-shadow: 0 0 4px rgba(79,214,255,0.08);
+  animation: node-in 0.5s ease both;
+  opacity: 0.85;
+}
+.core-node-mini .core-node-value { font-size: 8px; }
+.core-node-mini .core-node-label { font-size: 4px; }
+
+.web-line-mini { stroke: var(--iris); stroke-width: 0.2; opacity: 0.22; }
+
 @media (max-width: 640px) {
   .core-node { width: 62px; height: 62px; }
   .core-node-value { font-size: 11px; }
   .core-node-label { font-size: 6px; }
+  .core-node-business { width: 40px; height: 40px; }
+  .core-node-business .core-node-value { font-size: 7px; }
+  .core-node-mini { width: 16px; height: 16px; }
+  .core-node-mini .core-node-value { font-size: 6px; }
 }
 
 /* ---------- Revenue trend chart ---------- */
