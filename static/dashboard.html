@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>AI Holding Company OS — Command Center</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
@@ -48,19 +48,57 @@
     </section>
 
     <section class="panel panel-approvals" id="global-approvals-section">
-      <h3>Action Requires Owner Approval — all businesses</h3>
+      <h3>Owner Approvals Awaiting Decision — all businesses</h3>
       <div id="global-approvals-list"></div>
       <p class="panel-note">Shown here regardless of which business is selected below — an
         approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
     </section>
 
-    <section class="stat-row no-tilt" id="command-stat-row"></section>
+    <section class="panel">
+      <h3>Command Metrics</h3>
+      <div id="command-stat-row"></div>
+    </section>
 
     <section class="panel">
-      <h3>Live Activity</h3>
+      <h3>Live Activity Feed</h3>
       <div id="activity-feed-list"></div>
-      <p class="panel-note">A real, unfiltered stream of the audit log — every owner action,
-        agent action, and system decision that matters gets written here. Newest first.</p>
+    </section>
+
+    <section class="panel panel-chat no-tilt" id="chat-section">
+      <h3>Ask</h3>
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="inline-form">
+        <input id="chat-input" name="message" type="text" autocomplete="off" required
+               placeholder="Ask about approvals, trading P&amp;L, system health, or a researched idea...">
+        <button type="submit" class="btn-small">Ask</button>
+      </form>
+      <p class="panel-note">Read-only for now — answers real, current data across every
+        business, but can't yet take actions (launch a business, approve something, delete
+        anything). Use the dashboard for those.</p>
+    </section>
+
+    <section class="panel">
+      <h3>System Health — Ops/Maintenance</h3>
+      <div id="ops-report"></div>
+      <button id="trigger-ops-review-btn" type="button" class="btn-small">Run Ops Review Now</button>
+      <p class="panel-note">Watches this system's own infrastructure (stuck tasks/approvals/
+        orders, silent scheduled jobs, database growth, recent errors, missing optional config)
+        and only ever recommends — it never restarts, deletes, or changes anything on its own.
+        Runs automatically every
+        <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
+        the approvals panel above.</p>
+      <button id="trigger-owner-digest-btn" type="button" class="btn-small">Send Owner Digest Now</button>
+      <p class="panel-note">Emails <code>OWNER_EMAIL</code> a summary of pending approvals,
+        system health, revenue, new research, and trading P&amp;L across every business. Runs
+        automatically every <code>OWNER_DIGEST_INTERVAL_SECONDS</code> (default 24h); requires
+        <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
+        configured, or it fails loudly rather than sending nothing silently.</p>
+    </section>
+
+    <section class="panel panel-scanner">
+      <h3>Command Center Overview</h3>
+      <div id="global-stats"></div>
+      <div id="businesses-overview-table"></div>
     </section>
 
     <section class="panel panel-select no-tilt">
@@ -72,7 +110,7 @@
     <section id="business-header" class="panel"></section>
 
     <section class="panel">
-      <h3>Agent Monitor</h3>
+      <h3>Agents</h3>
       <div id="agents-table"></div>
       <form id="create-agent-form" class="inline-form">
         <input name="name" placeholder="Agent name" required>
@@ -110,56 +148,13 @@
     </section>
 
     <section class="panel">
-      <h3>Businesses — all, at a glance</h3>
-      <div id="global-stats"></div>
-      <div id="businesses-overview-table"></div>
-    </section>
-
-    <section class="panel">
-      <h3>Banker — ARC economy, all businesses</h3>
+      <h3>Banker — ARC Ledger, All Businesses</h3>
       <div id="global-arc-summary"></div>
-      <p class="panel-note">ARC is an internal accounting/reward unit only — it is never
-        convertible to real USD anywhere in this codebase.</p>
     </section>
 
     <section class="panel">
-      <h3>System Health — Ops/Maintenance</h3>
-      <div id="ops-report"></div>
-      <button id="trigger-ops-review-btn" type="button" class="btn-small">Run Ops Review Now</button>
-      <p class="panel-note">Watches this system's own infrastructure (stuck tasks/approvals/
-        orders, silent scheduled jobs, database growth, recent errors, missing optional config)
-        and only ever recommends — it never restarts, deletes, or changes anything on its own.
-        Runs automatically every
-        <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
-        the approvals panel above.</p>
-      <button id="trigger-owner-digest-btn" type="button" class="btn-small">Send Owner Digest Now</button>
-      <p class="panel-note">Emails <code>OWNER_EMAIL</code> a summary of pending approvals,
-        system health, revenue, new research, and trading P&amp;L across every business. Runs
-        automatically every <code>OWNER_DIGEST_INTERVAL_SECONDS</code> (default 24h); requires
-        <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
-        configured, or it fails loudly rather than sending nothing silently.</p>
-    </section>
-
-    <section class="panel">
-      <h3>Trading Strategy Evolution — cross-business</h3>
+      <h3>Trading Strategy Evolution — All Businesses</h3>
       <div id="trading-evolution-summary"></div>
-      <p class="panel-note">Self-improvement in this system is currently scoped to the trading
-        strategy review loop only (see Strategy Versions in the Trading panel below for a
-        single business's full history) — this is that same real data, rolled up across every
-        business that has ever traded.</p>
-    </section>
-
-    <section class="panel panel-chat no-tilt" id="chat-section">
-      <h3>Ask</h3>
-      <div id="chat-log" class="chat-log"></div>
-      <form id="chat-form" class="inline-form">
-        <input id="chat-input" name="message" type="text" autocomplete="off" required
-               placeholder="Ask about approvals, trading P&amp;L, system health, or a researched idea...">
-        <button type="submit" class="btn-small">Ask</button>
-      </form>
-      <p class="panel-note">Read-only for now — answers real, current data across every
-        business, but can't yet take actions (launch a business, approve something, delete
-        anything). Use the dashboard for those.</p>
     </section>
 
     <section class="panel panel-opportunities">

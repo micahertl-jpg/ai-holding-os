@@ -1001,18 +1001,19 @@
   // and going clockwise -- shared math for both the orbital node badges
   // and the web-lines connecting them back to the hub, so the two can
   // never drift out of sync with each other.
-  function pointOnRing(index, count, radiusPct, angleOffsetRad) {
-    const angle = (index / count) * 2 * Math.PI - Math.PI / 2 + (angleOffsetRad || 0);
+  function pointOnRing(index, count, radiusPct, angleOverrideRad) {
+    const angle = angleOverrideRad !== undefined
+      ? angleOverrideRad
+      : (index / count) * 2 * Math.PI - Math.PI / 2;
     return {
       x: 50 + Math.cos(angle) * radiusPct,
       y: 50 + Math.sin(angle) * radiusPct,
     };
   }
 
-  // A point offset a short distance from an already-placed ring node,
-  // in the same 0-100 percentage coordinate space -- used to hang a
-  // small satellite (a mini node breaking down one aspect of the
-  // parent node) just off of it without needing its own ring math.
+  // Offsets a point from an already-placed node by a small percentage
+  // distance at a given angle -- used to hang a business node's own
+  // mini breakdown nodes near it without needing separate ring math.
   function pointNear(center, angleRad, distancePct) {
     return {
       x: center.x + Math.cos(angleRad) * distancePct,
@@ -1069,7 +1070,6 @@
         (p, i) => `
         <div class="core-node${p.alert ? " core-node-alert" : ""}"
           style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08).toFixed(2)}s">
-          <span class="core-node-dot"></span>
           <span class="core-node-value">${escapeHtml(p.value)}</span>
           <span class="core-node-label">${escapeHtml(p.label)}</span>
         </div>`
@@ -1194,329 +1194,252 @@
       </div>`;
   }
 
-  // ---------- Header: system status + approvals badge ----------
+  // ---------- Header: system status + pending-approvals badge ----------
 
   function renderHeaderStatus(overview) {
-    const report = overview.latest_ops_report;
-    const severity = report ? report.overall_severity : "ok";
-    const cls = severity === "critical" ? " header-status-red"
-      : severity === "warning" ? " header-status-amber" : "";
-    const label = severity === "critical" ? "CRITICAL"
-      : severity === "warning" ? "ATTENTION NEEDED" : "SYSTEM ONLINE";
-    return `
-      <div class="header-status${cls}">
-        <span class="header-status-dot"></span>
-        <span>${escapeHtml(label)}</span>
-      </div>`;
+    const report = overview && overview.latest_ops_report;
+    const severity = report ? report.overall_severity : null;
+    if (severity === "warning") {
+      return '<div class="header-status header-status-amber"><span class="header-status-dot"></span>ATTENTION NEEDED</div>';
+    }
+    if (severity === "critical") {
+      return '<div class="header-status header-status-red"><span class="header-status-dot"></span>CRITICAL</div>';
+    }
+    return '<div class="header-status header-status-green"><span class="header-status-dot"></span>SYSTEM ONLINE</div>';
   }
 
-  function renderHeaderApprovalsBadge(pendingApprovals) {
-    const count = (pendingApprovals || []).length;
+  function renderHeaderApprovalsBadge(approvals) {
+    const count = (approvals || []).length;
     if (count === 0) return "";
-    return `
-      <a href="#global-approvals-section" class="header-approvals-badge">
-        <span>${escapeHtml(count)}</span> awaiting approval
-      </a>`;
+    return `<a class="header-approvals-badge" href="#global-approvals-section">` +
+      `<span class="header-approvals-count">${escapeHtml(count)}</span> PENDING APPROVAL${count === 1 ? "" : "S"}</a>`;
   }
 
-  // ---------- Command stat row: Real USD / ARC / Agents / Businesses ----------
+  // ---------- Command Metrics panel ----------
 
-  // Mirrors AGENT_STATUSES in registry.py exactly -- shown in full so
-  // the row stays correct even for a status no running code assigns
-  // yet, rather than only ever showing whichever few happen to have a
-  // nonzero count today.
+  // Every status the schema declares (registry.AGENT_STATUSES) -- most
+  // read 0 today since only idle/working/paused/retired are ever
+  // actually set by running code, but showing all 11 here is
+  // future-proofed and never hides a status just because it's unused
+  // yet.
   const ALL_AGENT_STATUSES = [
     "created", "initializing", "active", "working", "idle",
     "waiting", "improving", "paused", "failed", "quarantined", "retired",
   ];
-  const ALL_BUSINESS_STATUSES = ["active", "paused", "retired"];
-  const ALERT_AGENT_STATUSES = { failed: true, quarantined: true };
 
-  function _statCell(label, value, tone) {
-    return `
-      <div>
-        <div class="stat-cell-label">${escapeHtml(label)}</div>
-        <div class="stat-cell-value${tone ? " tone-" + tone : ""}">${escapeHtml(value)}</div>
-      </div>`;
-  }
-
-  function _statBlock(label, cellsHtml) {
+  function renderStatBlock(label, entries) {
+    const cells = entries
+      .map(
+        ([k, v]) => `
+        <div class="arc-stat"><span class="label">${escapeHtml(k)}</span><span class="value">${escapeHtml(v)}</span></div>`
+      )
+      .join("");
     return `
       <div class="stat-block">
         <div class="stat-block-label">${escapeHtml(label)}</div>
-        <div class="stat-block-cells">${cellsHtml}</div>
+        <div class="arc-summary">${cells}</div>
       </div>`;
   }
 
   function renderCommandStatRow(overview) {
+    const counts = computeOverviewCounts(overview);
     const revenue = (overview.real_revenue_usd_cents || 0) / 100;
     const pendingApprovals = overview.pending_approvals || [];
-    const awaitingUsd = pendingApprovals.reduce(
+    const pendingUsd = pendingApprovals.reduce(
       (sum, p) => sum + Number(p.amount_usd || 0), 0
     );
-
-    const arc = overview.global_arc || {};
-    const earned = Number(arc.earn || 0) + Number(arc.allocation || 0);
-    const spent = Math.abs(Number(arc.spend || 0));
-
     const agentsByStatus = overview.agents_by_status || {};
-    const bizCounts = { active: 0, paused: 0, retired: 0 };
-    (overview.businesses || []).forEach((b) => {
-      if (Object.prototype.hasOwnProperty.call(bizCounts, b.status)) bizCounts[b.status]++;
-    });
+    const businesses = overview.businesses || [];
+    const businessesByStatus = businesses.reduce((acc, b) => {
+      const s = b.status || "unknown";
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {});
 
-    const usdCells =
-      _statCell("Revenue Collected", fmtUsd(revenue), "green") +
-      _statCell("Awaiting Approval", fmtUsd(awaitingUsd), awaitingUsd > 0 ? "amber" : undefined);
+    const topRow = `
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Businesses</span><span class="value">${counts.totalBusinesses}</span></div>
+        <div class="arc-stat"><span class="label">Agents</span><span class="value">${counts.totalAgents}</span></div>
+        <div class="arc-stat"><span class="label">Open Tasks</span><span class="value">${counts.openTasks}</span></div>
+        <div class="arc-stat"><span class="label">Real Revenue Collected</span><span class="value">${fmtUsd(revenue)}</span></div>
+        <div class="arc-stat"><span class="label">Pending Approval Value</span><span class="value">${fmtUsd(pendingUsd)}</span></div>
+      </div>`;
 
-    const arcCells =
-      _statCell("Earned", fmtArc(earned)) +
-      _statCell("Spent", fmtArc(spent));
-
-    const agentCells = ALL_AGENT_STATUSES.map((s) => {
-      const count = agentsByStatus[s] || 0;
-      const tone = ALERT_AGENT_STATUSES[s] && count > 0 ? "red" : undefined;
-      return _statCell(s.replace(/_/g, " "), String(count), tone);
-    }).join("");
-
-    const bizCells = ALL_BUSINESS_STATUSES.map((s) =>
-      _statCell(s, String(bizCounts[s]), s === "active" ? "green" : undefined)
-    ).join("");
-
-    return (
-      _statBlock("Real USD", usdCells) +
-      _statBlock("ARC (internal)", arcCells) +
-      _statBlock("Agents", agentCells) +
-      _statBlock("Businesses", bizCells)
+    const agentsBlock = renderStatBlock(
+      "Agents",
+      ALL_AGENT_STATUSES.map((s) => [s, agentsByStatus[s] || 0])
     );
+    const businessesBlock = renderStatBlock("Businesses", Object.entries(businessesByStatus));
+
+    return topRow + agentsBlock + businessesBlock;
   }
 
-  // ---------- Live Activity feed (backed by GET /audit) ----------
+  // ---------- Live Activity Feed ----------
 
-  // Known audit_log `action` values mapped to a short human label --
-  // gathered directly from every db.audit(...) call site in this
-  // codebase. Anything not in this map falls back to the raw action
-  // string with underscores turned to spaces -- an unrecognized action
-  // is never hidden, just unprettified.
+  // Known audit_log action strings mapped to a human-readable phrase --
+  // anything not in this map still shows (de-underscored), never
+  // hidden, so a future action type is never silently dropped from the
+  // feed.
   const AUDIT_ACTION_LABELS = {
     create_business: "created business",
     create_agent: "created agent",
-    pause_agent: "paused agent",
-    retire_agent: "retired agent",
-    approve_action: "approved request",
-    reject_action: "rejected request",
-    allocate_arc: "allocated ARC",
-    reward_arc: "rewarded ARC",
-    charge_arc: "charged ARC",
-    penalize_arc: "penalized ARC",
     create_task: "created task",
-    assign_task: "assigned task",
     complete_task: "completed task",
     fail_task: "task failed",
-    task_awaiting_approval: "task awaiting approval",
-    task_approved_promoted: "approved task promoted",
-    task_rejected_cancelled: "rejected task cancelled",
-    task_unassigned_no_agent: "task unassigned — no agent available",
-    create_trading_portfolio: "created trading portfolio",
-    enable_auto_trading: "enabled auto-trading",
-    enable_live_trading: "enabled LIVE trading",
+    assign_task: "assigned task",
+    allocate_arc: "allocated ARC",
+    approve_action: "approved action",
+    reject_action: "rejected action",
+    pause_agent: "paused agent",
+    retire_agent: "retired agent",
+    ops_maintenance_reviewed: "ops review completed",
+    owner_digest_sent: "owner digest sent",
+    trading_cycle: "ran trading cycle",
+    trading_strategy_review: "ran strategy review",
+    live_trading_cycle: "ran live trading cycle",
+    enable_live_trading: "enabled live trading",
     disable_live_trading: "disabled live trading",
-    trading_strategy_updated: "trading strategy updated",
-    trading_strategy_overridden: "trading strategy overridden by owner",
-    trading_drawdown_halt: "trading paused — drawdown limit hit",
-    live_trading_halt: "LIVE trading halted",
-    live_order_failed: "live order failed",
-    live_order_unconfirmed: "live order unconfirmed",
-    strategy_backtest_search_completed: "backtest search completed",
-    opportunity_assessed: "researched an opportunity",
-    roblox_trend_assessed: "researched a Roblox concept",
-    app_feasibility_assessed: "assessed app feasibility",
-    real_estate_assessed: "researched real estate",
-    order_paid: "order paid",
-    order_fulfilled: "order fulfilled",
-    order_fulfillment_failed: "order fulfillment failed",
-    ops_maintenance_reviewed: "ran ops review",
-    owner_digest_sent: "sent owner digest",
-    scheduled_job_fired: "scheduled job fired",
-    scheduled_job_provisioned: "scheduled job created",
-    set_scheduled_job_enabled: "toggled scheduled job",
-    set_scheduled_job_interval: "changed job interval",
-    reconcile_stuck_agent: "reconciled a stuck agent",
-    ops_business_provisioned: "provisioned business",
-    set_business_status: "changed business status",
-    delete_abandoned_order: "removed abandoned order",
-    delete_opportunity: "removed opportunity",
-    delete_roblox_trend: "removed Roblox concept",
-    delete_app_feasibility_assessment: "removed feasibility assessment",
-    delete_real_estate_assessment: "removed real estate assessment",
   };
 
-  // Actions that represent something going wrong or needing attention
-  // vs. routine/positive activity -- same severity intent as the rest
-  // of the dashboard's status vocabulary, just applied to a raw action
-  // string instead of a status enum.
-  const AUDIT_ACTION_ALERT = {
-    fail_task: "red", task_unassigned_no_agent: "amber", trading_drawdown_halt: "red",
-    live_trading_halt: "red", live_order_failed: "red", live_order_unconfirmed: "amber",
-    task_awaiting_approval: "amber", reject_action: "amber",
-    order_fulfillment_failed: "red", scheduler_tick_error: "red",
-    executor_pass_error: "red", fulfillment_pass_error: "red",
-    owner_ops_report_alert_failed: "red", order_email_failed: "amber",
-    owner_failed_order_alert_failed: "red",
-  };
+  const AUDIT_ACTION_ALERT = new Set(["fail_task", "reject_action", "disable_live_trading"]);
 
-  function _auditActionLabel(action) {
+  function _actionLabel(action) {
     return AUDIT_ACTION_LABELS[action] || String(action || "").replace(/_/g, " ");
   }
 
-  function _auditActorLabel(entry) {
-    if (entry.actor === "owner") return "OWNER";
-    if (entry.actor === "system") return "SYSTEM";
-    return entry.actor_name || entry.actor || "unknown";
+  function _actorLabel(event) {
+    if (event.actor === "owner") return "OWNER";
+    return event.actor_name || event.actor || "system";
+  }
+
+  function _relativeTime(isoString) {
+    const then = Date.parse(isoString);
+    if (Number.isNaN(then)) return "";
+    const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.round(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.round(diffHr / 24);
+    return `${diffDay}d ago`;
   }
 
   function renderActivityFeed(events) {
     if (!events || events.length === 0) {
       return '<p class="empty">No system activity recorded yet.</p>';
     }
-    const rows = events
+    return events
       .map((e) => {
-        const dotColor = AUDIT_ACTION_ALERT[e.action] === "red" ? "var(--red)"
-          : AUDIT_ACTION_ALERT[e.action] === "amber" ? "var(--amber)"
-          : "var(--accent)";
-        const ts = String(e.created_at || "").slice(5, 16).replace("T", " "); // MM-DD HH:MM
+        const label = _actionLabel(e.action);
+        const alert = AUDIT_ACTION_ALERT.has(e.action);
+        const actor = _actorLabel(e);
         return `
-        <div class="activity-row">
-          <span class="activity-ts">${escapeHtml(ts)}</span>
-          <span class="activity-dot" style="background:${dotColor};color:${dotColor}"></span>
-          <span>
-            <span class="activity-actor">${escapeHtml(_auditActorLabel(e))}</span>
-            <span class="activity-text">${escapeHtml(_auditActionLabel(e.action))}${
-              e.target_type ? ` &middot; ${escapeHtml(e.target_type)}` : ""
-            }</span>
-          </span>
+        <div class="activity-row${alert ? " activity-row-alert" : ""}">
+          <div class="activity-desc">
+            <span class="activity-actor">${escapeHtml(actor)}</span>
+            <span class="activity-action">${escapeHtml(label)}</span>
+          </div>
+          <span class="activity-time">${escapeHtml(_relativeTime(e.created_at))}</span>
         </div>`;
       })
       .join("");
-    return `<div class="activity-feed">${rows}</div>`;
   }
 
-  // ---------- System Core: outer ring of real business nodes ----------
+  // ---------- System Core: business ring + per-business breakdown ----------
 
-  // Second ring around the same hub as renderOrbitalRing's metric
-  // nodes -- real businesses (name, status, pending-approval count),
-  // at a larger radius so the two rings never collide. Returns its own
-  // <line>s + node <div>s in the same shape as renderOrbitalRing, meant
-  // to be concatenated into the same #core-orbital-overlay container.
-  //
-  // Angle placement: a plain rotation offset was tried first and isn't
-  // enough -- it only moves WHICH business ends up near a metric node,
-  // not whether one does (found live: with a fixed 30deg offset, 4
-  // businesses put a different business only ~8.6deg from "Approvals").
-  // The metric ring is always exactly 7 nodes at fixed angles, so
-  // instead each business is placed at the angular MIDPOINT between two
-  // consecutive metric nodes -- the point of maximum possible clearance
-  // from both of them, by construction, for any business count. With
-  // more than 7 businesses, extra ones share a midpoint slot with an
-  // earlier business and step out one extra radius band so they don't
-  // collide with each other either.
-  const METRIC_RING_NODE_COUNT = 7; // renderOrbitalRing's fixed node count
+  // Places each business node at the angular MIDPOINT between two
+  // consecutive metric-ring nodes -- exactly half of one metric step
+  // (360/7/2 = ~25.71deg) from both neighbors, by construction, so a
+  // business node can never land on (or too close to) a metric node
+  // regardless of how many businesses exist. Slots cycle every 7
+  // businesses, same as the metric ring itself.
+  const METRIC_RING_NODE_COUNT = 7;
   const METRIC_RING_ANGLE_STEP = (2 * Math.PI) / METRIC_RING_NODE_COUNT;
-  const BUSINESS_RING_RADIUS_PCT = 50;
-  const BUSINESS_RING_RADIUS_STEP_PCT = 9; // extra radius per lap once businesses > 7
-  const BUSINESS_MINI_ANGLE_SPREAD = 0.5; // rad, how far each mini node fans from its parent's own angle
-  const BUSINESS_MINI_DISTANCE_PCT = 6;
 
   function businessRingAngle(index) {
     const slot = index % METRIC_RING_NODE_COUNT;
     return -Math.PI / 2 + METRIC_RING_ANGLE_STEP * (slot + 0.5);
   }
 
-  // Each business node gets two small satellite nodes of its own --
-  // agent count and open task count -- rather than folding those
-  // numbers into the business node's own label. This is the same
-  // "hub with real nodes orbiting it" idea the System Core itself uses,
-  // just one level down: the business node becomes a small hub for a
-  // real breakdown of what's inside it, instead of one flat label.
+  const BUSINESS_MINI_NODE_DISTANCE_PCT = 9;
+  const BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD = 0.55;
+
   function renderBusinessRing(businesses) {
     if (!businesses || businesses.length === 0) return "";
 
-    // One pass: each business's own ring position, plus its two mini
-    // satellites (agents/tasks), computed once and reused for both the
-    // <line>s and the node <div>s below -- never recomputed, so the
-    // lines can never drift out of sync with the nodes they connect.
     const positioned = businesses.map((b, i) => {
       const angle = businessRingAngle(i);
-      const lap = Math.floor(i / METRIC_RING_NODE_COUNT);
-      const radius = BUSINESS_RING_RADIUS_PCT + lap * BUSINESS_RING_RADIUS_STEP_PCT;
-      const pos = { x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius };
-      const agentPos = pointNear(pos, angle - BUSINESS_MINI_ANGLE_SPREAD, BUSINESS_MINI_DISTANCE_PCT);
-      const taskPos = pointNear(pos, angle + BUSINESS_MINI_ANGLE_SPREAD, BUSINESS_MINI_DISTANCE_PCT);
-      return Object.assign({}, b, pos, { agentPos, taskPos });
+      const pos = pointOnRing(0, 1, ORBITAL_RING_RADIUS_PCT, angle);
+      return Object.assign({}, b, pos, { angle });
     });
 
-    const lines = positioned
-      .map((p, i) => {
-        const delay = (i * 0.08 + 0.3).toFixed(2);
-        return `
-        <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
-          style="animation-delay:${delay}s;opacity:0.25" />
-        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}"
-          x2="${p.agentPos.x.toFixed(2)}" y2="${p.agentPos.y.toFixed(2)}" style="animation-delay:${delay}s" />
-        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}"
-          x2="${p.taskPos.x.toFixed(2)}" y2="${p.taskPos.y.toFixed(2)}" style="animation-delay:${delay}s" />`;
-      })
-      .join("");
+    let mainLines = "";
+    let miniLines = "";
+    let nodeDivs = "";
 
-    const nodes = positioned
-      .map((p, i) => {
-        const alert = Number(p.pending_approval_count || 0) > 0;
-        const dotColor = alert ? "var(--amber)" : p.status === "active" ? "var(--green)" : "var(--muted)";
-        const delay = (i * 0.08 + 0.2).toFixed(2);
-        const miniDelay = (i * 0.08 + 0.4).toFixed(2);
-        return `
+    positioned.forEach((p, i) => {
+      const alert = Number(p.pending_approval_count || 0) > 0;
+      const agentPos = pointNear(p, p.angle - BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD, BUSINESS_MINI_NODE_DISTANCE_PCT);
+      const taskPos = pointNear(p, p.angle + BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD, BUSINESS_MINI_NODE_DISTANCE_PCT);
+      const agentCount = p.agent_count || 0;
+      const taskCount = p.open_task_count || 0;
+
+      mainLines += `
+        <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.15).toFixed(2)}s" />`;
+
+      miniLines += `
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}" x2="${agentPos.x.toFixed(2)}" y2="${agentPos.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.08 + 0.05).toFixed(2)}s" />
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}" x2="${taskPos.x.toFixed(2)}" y2="${taskPos.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.08 + 0.1).toFixed(2)}s" />`;
+
+      nodeDivs += `
         <div class="core-node core-node-business${alert ? " core-node-alert" : ""}"
-          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${delay}s"
-          title="${escapeHtml(p.name)} — ${escapeHtml(p.status)}">
-          <span class="core-node-biz-dot" style="background:${dotColor};color:${dotColor}"></span>
-          <span class="core-node-label">${escapeHtml(p.name)}</span>
+          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08).toFixed(2)}s" title="${escapeHtml(p.name)}">
+          <span class="core-node-value">${escapeHtml(p.name)}</span>
+          <span class="core-node-label">${escapeHtml(p.status)}</span>
         </div>
-        <div class="core-node core-node-mini"
-          style="left:${p.agentPos.x.toFixed(2)}%;top:${p.agentPos.y.toFixed(2)}%;animation-delay:${miniDelay}s"
-          title="${escapeHtml(p.name)} — agents">
-          <span class="core-node-value">${escapeHtml(p.agent_count != null ? p.agent_count : 0)}</span>
+        <div class="core-node core-node-mini" style="left:${agentPos.x.toFixed(2)}%;top:${agentPos.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.05).toFixed(2)}s">
+          <span class="core-node-value">${escapeHtml(agentCount)}</span>
           <span class="core-node-label">AGT</span>
         </div>
-        <div class="core-node core-node-mini"
-          style="left:${p.taskPos.x.toFixed(2)}%;top:${p.taskPos.y.toFixed(2)}%;animation-delay:${miniDelay}s"
-          title="${escapeHtml(p.name)} — open tasks">
-          <span class="core-node-value">${escapeHtml(p.open_task_count != null ? p.open_task_count : 0)}</span>
+        <div class="core-node core-node-mini" style="left:${taskPos.x.toFixed(2)}%;top:${taskPos.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.1).toFixed(2)}s">
+          <span class="core-node-value">${escapeHtml(taskCount)}</span>
           <span class="core-node-label">TASK</span>
         </div>`;
-      })
-      .join("");
+    });
 
     return `
-      <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>
-      ${nodes}`;
+      <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${mainLines}${miniLines}</svg>
+      ${nodeDivs}`;
   }
 
   // ---------- Trading Strategy Evolution (global summary) ----------
 
-  function renderTradingStrategyEvolution(evolution) {
-    if (!evolution || !evolution.total_versions) {
-      return '<p class="empty">No trading strategy history yet — versions appear once a ' +
-        'business starts paper or live trading.</p>';
+  function renderTradingStrategyEvolution(evo) {
+    if (!evo || !evo.total_versions) {
+      return '<p class="empty">No trading strategy history yet.</p>';
     }
-    const latest = evolution.latest_version;
+    const latest = evo.latest_version;
+    const latestHtml = latest
+      ? `
+        <div class="approval-card">
+          <div class="approval-desc">
+            <strong>${escapeHtml(latest.source)}</strong>
+            <div>${escapeHtml(latest.rationale)}</div>
+            <div class="panel-note">Versioned ${escapeHtml(latest.created_at)}</div>
+          </div>
+        </div>`
+      : "";
     return `
-      <div class="evolution-summary">
-        <div class="evolution-row"><span class="k">Strategy versions (all businesses)</span><span class="v">${escapeHtml(evolution.total_versions)}</span></div>
-        <div class="evolution-row"><span class="k">Currently active</span><span class="v">${escapeHtml(evolution.active_count)}</span></div>
-        <div class="evolution-row"><span class="k">Businesses with a trading strategy</span><span class="v">${escapeHtml(evolution.businesses_with_trading)}</span></div>
-        ${latest ? `<div class="evolution-row"><span class="k">Most recent change</span><span class="v">${escapeHtml(latest.created_at)} (${escapeHtml(latest.source)})</span></div>` : ""}
-        ${latest && latest.rationale ? `<div class="evolution-row"><span class="k">Rationale</span><span class="v">${escapeHtml(latest.rationale)}</span></div>` : ""}
-      </div>`;
+      <div class="arc-summary">
+        <div class="arc-stat"><span class="label">Total Versions</span><span class="value">${escapeHtml(evo.total_versions)}</span></div>
+        <div class="arc-stat"><span class="label">Active Strategies</span><span class="value">${escapeHtml(evo.active_count)}</span></div>
+        <div class="arc-stat"><span class="label">Businesses Trading</span><span class="value">${escapeHtml(evo.businesses_with_trading)}</span></div>
+      </div>
+      ${latestHtml}`;
   }
 
   const api = {
@@ -1530,12 +1453,6 @@
     computeOverviewCounts,
     renderSystemCoreCenter,
     renderOrbitalRing,
-    renderBusinessRing,
-    renderHeaderStatus,
-    renderHeaderApprovalsBadge,
-    renderCommandStatRow,
-    renderActivityFeed,
-    renderTradingStrategyEvolution,
     renderBusinessOptions,
     renderAgentOptions,
     renderBusinessHeader,
@@ -1564,6 +1481,14 @@
     renderLiveTrading,
     renderLiveTradingTrades,
     renderBacktestRuns,
+    pointNear,
+    renderHeaderStatus,
+    renderHeaderApprovalsBadge,
+    renderCommandStatRow,
+    renderActivityFeed,
+    businessRingAngle,
+    renderBusinessRing,
+    renderTradingStrategyEvolution,
   };
 
   if (typeof module !== "undefined" && module.exports) {

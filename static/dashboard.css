@@ -33,7 +33,8 @@
   --holo-4: #4fd6ff;
   --glass: rgba(11,26,43,.66);
   --glass-alt: rgba(14,33,53,.62);
-  --font-display: 'Space Grotesk', ui-monospace, monospace;
+  --cut: 14px;
+  --font-display: 'Orbitron', ui-monospace, monospace;
   --font-mono: 'JetBrains Mono', ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Consolas, monospace;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
@@ -67,9 +68,9 @@ body {
 
 /* Whole-page ambient "web" -- a sparse, slowly drifting particle
    network (dashboard-network-bg.js) sitting behind absolutely
-   everything else, including the haze layer below, so the web-like
-   feel carries across the whole dashboard, not just the System Core
-   hub. */
+   everything else, including the haze/scan-sweep layers below, so the
+   web-like feel carries across the whole dashboard, not just the
+   System Core hub. */
 #network-bg {
   position: fixed;
   inset: 0;
@@ -79,27 +80,39 @@ body {
   pointer-events: none;
 }
 
-/* A faint, slowly drifting cyan haze -- purely decorative, fixed and
-   click-through. The vertical scan-sweep beam that used to run here
-   forever is gone entirely: a full-width beam animating regardless of
-   state read as a sci-fi movie prop, not a real instrument. */
+/* Drifting holographic haze + a slow vertical scan sweep, both purely
+   decorative, fixed and click-through. This is what gives the page its
+   "alive" holographic-projection feel instead of a static HUD skin. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  /* Restrained to the one primary hue -- a two-color pink/amber haze
-     read as decorative "gaming" ambience rather than a premium,
-     single-accent HUD. */
   background:
-    radial-gradient(650px 420px at 15% 15%, rgba(79,214,255,0.05), transparent 60%),
-    radial-gradient(750px 480px at 85% 80%, rgba(79,214,255,0.035), transparent 60%);
-  animation: haze-drift 26s ease-in-out infinite alternate;
+    radial-gradient(600px 400px at 15% 20%, rgba(255,143,224,0.06), transparent 60%),
+    radial-gradient(700px 450px at 85% 75%, rgba(255,177,94,0.05), transparent 60%);
+  animation: haze-drift 22s ease-in-out infinite alternate;
+}
+body::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 140px;
+  top: -140px;
+  pointer-events: none;
+  z-index: 2;
+  background: linear-gradient(180deg, transparent, rgba(79,214,255,0.05) 45%, rgba(79,214,255,0.08) 50%, rgba(79,214,255,0.05) 55%, transparent);
+  animation: scan-sweep 9s linear infinite;
 }
 @keyframes haze-drift {
   0% { transform: translate3d(0,0,0) scale(1); }
   100% { transform: translate3d(-2%, 2%, 0) scale(1.05); }
+}
+@keyframes scan-sweep {
+  0% { top: -140px; }
+  100% { top: 100%; }
 }
 
 .app-header, .error-banner, .layout { position: relative; z-index: 3; }
@@ -112,27 +125,18 @@ body::before {
   background: linear-gradient(180deg, rgba(79,214,255,0.05), transparent);
 }
 .app-header-inner {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
   gap: 14px;
   max-width: 1900px;
   margin: 0 auto;
 }
-.header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.header-center { display: flex; justify-content: center; }
-.header-right { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 
-@media (max-width: 900px) {
-  .app-header-inner { grid-template-columns: 1fr; row-gap: 10px; }
-  .header-center, .header-right { justify-content: flex-start; }
-}
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-center { flex: 1; display: flex; justify-content: center; }
+.header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 
-/* A slow, monochrome-cyan rotation reads as "instrument is alive";
-   the earlier hue-rotate cycling through the spectrum read as a
-   decorative rainbow effect rather than system state, so it's gone --
-   the rings keep their (single-color) spin. */
-.header-glyph { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.header-glyph { display: flex; align-items: center; justify-content: center; flex-shrink: 0; animation: hue-drift 10s linear infinite; }
 .glyph-ring { stroke: var(--accent); stroke-width: 1.4; opacity: 0.75; }
 .glyph-ring-outer { stroke-dasharray: 4 6; animation: spin 18s linear infinite; transform-origin: 50px 50px; }
 .glyph-ring-mid { stroke-dasharray: 2 3; opacity: 0.5; animation: spin-rev 12s linear infinite; transform-origin: 50px 50px; }
@@ -142,12 +146,8 @@ body::before {
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes spin-rev { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
 @keyframes pulse { 0%, 100% { opacity: 0.7; r: 6; } 50% { opacity: 1; r: 7.5; } }
+@keyframes hue-drift { 0%, 100% { filter: hue-rotate(0deg); } 50% { filter: hue-rotate(35deg); } }
 
-/* Wordmark: a solid near-white with a soft static cyan glow, not a
-   looping cyan/iris/amber gradient sweep -- expensive and legible
-   beats "holographic," and a title that never stops shifting hue is
-   exactly the kind of decoration-for-its-own-sake the brief asked to
-   dial back. */
 .app-header h1 {
   font-family: var(--font-display);
   font-size: 15px;
@@ -158,8 +158,18 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  color: var(--text);
-  text-shadow: 0 0 18px rgba(79,214,255,0.3);
+  background: linear-gradient(100deg, var(--holo-1), var(--holo-2) 35%, var(--holo-3) 55%, var(--holo-1) 85%);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: holo-text-shift 7s ease-in-out infinite;
+}
+
+@keyframes holo-text-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
 }
 
 .header-sub {
@@ -179,7 +189,7 @@ body::before {
   letter-spacing: 0.5px;
   color: var(--amber);
   border: 1px solid var(--amber);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 3px 8px;
   text-transform: uppercase;
   box-shadow: 0 0 8px rgba(255,177,94,0.15) inset;
@@ -189,6 +199,52 @@ body::before {
 @keyframes amber-breathe {
   0%, 100% { box-shadow: 0 0 8px rgba(255,177,94,0.15) inset, 0 0 6px rgba(255,177,94,0.15); }
   50% { box-shadow: 0 0 14px rgba(255,177,94,0.3) inset, 0 0 14px rgba(255,177,94,0.35); }
+}
+
+/* ---------- Header status readout + approvals badge ---------- */
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.header-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.header-status-green { color: var(--green); animation: badge-breathe-green 2.6s ease-in-out infinite; }
+.header-status-amber { color: var(--amber); animation: amber-breathe 1.6s ease-in-out infinite; }
+.header-status-red { color: var(--red); animation: risk-high-breathe 1.4s ease-in-out infinite; }
+
+.header-approvals-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 2px;
+  padding: 3px 8px;
+  text-decoration: none;
+  box-shadow: 0 0 8px rgba(255,177,94,0.15) inset;
+  animation: amber-breathe 3.2s ease-in-out infinite;
+  transition: transform 0.15s ease;
+}
+.header-approvals-badge:hover { transform: translateY(-1px); }
+.header-approvals-count {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
 }
 
 .error-banner {
@@ -227,34 +283,73 @@ body::before {
   margin: 0 auto;
 }
 
-/* Thin-border glass panel, minimal radius -- not the angular cut-corner
-   console bezel this used to be. The cut-corner clip-path read as
-   "sci-fi gaming HUD"; a plain, thin-bordered rectangle with a soft
-   glass blur reads as an expensive, restrained instrument panel
-   instead, closer to the reference design. */
+/* Angular cut-corner glass bezel — Command Core's console-panel shape,
+   replacing the previous rounded-corner + L-bracket treatment. Every
+   panel becomes a translucent, blurred "glass" surface with a thin
+   animated cyan sheen along its top edge and a fainter iris (magenta)
+   sheen just under it, echoing a diffraction/holographic edge rather
+   than a flat rule. filter: drop-shadow() (not box-shadow) is used for
+   the glow specifically because it respects the clip-path silhouette —
+   a box-shadow would be clipped away at the cut corners. */
 .panel {
   position: relative;
   background: var(--glass);
   backdrop-filter: blur(14px) saturate(150%);
   -webkit-backdrop-filter: blur(14px) saturate(150%);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid rgba(79,214,255,.22);
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
   padding: 22px 22px 24px;
+  filter: drop-shadow(0 0 16px rgba(79,214,255,.05));
+  /* fill-mode "backwards" (not "both"): holds the from-state before the
+     animation starts, but relinquishes `transform` back to the normal
+     cascade once it ends -- otherwise a "both"-filled finished
+     animation permanently pins `transform`, silently overriding both
+     the :hover rules below and dashboard-tilt.js's inline style. */
   animation: panel-in 0.5s ease backwards;
-  transition: border-color 0.2s ease, transform 0.25s ease;
+  transition: filter 0.3s ease, transform 0.25s ease;
 }
 .panel:hover, .panel:focus-within {
-  border-color: var(--border-bright);
+  filter: drop-shadow(0 0 26px rgba(79,214,255,.14));
 }
-/* A single static, thin cyan edge-light on the top border -- not a
-   constantly sweeping/looping sheen. Every panel animating forever
-   regardless of whether anything about it changed reads as restless,
-   not alive. */
 .panel::before {
   content: "";
-  position: absolute; top: 0; left: 16px; right: 16px; height: 1px; z-index: 1;
-  background: linear-gradient(90deg, transparent, var(--accent) 15%, transparent 85%);
-  opacity: 0.55;
+  position: absolute; top: 0; left: var(--cut); right: 0; height: 2px; z-index: 1;
+  background: linear-gradient(90deg, var(--accent) 0%, transparent 65%);
+  background-size: 220% 100%;
+  animation: sheen 7s ease-in-out infinite;
+}
+.panel::after {
+  content: "";
+  position: absolute; top: 2px; left: var(--cut); right: 0; height: 1px; z-index: 1;
+  background: linear-gradient(90deg, var(--iris) 0%, transparent 45%);
+  opacity: .55;
+}
+@keyframes sheen {
+  0%, 100% { background-position: 0% 0; }
+  50% { background-position: -120% 0; }
+}
+
+/* Applied to one focal panel (Command Center Overview) to echo the
+   reference's big central circular HUD: a faint watermark of
+   concentric rings sitting behind the panel's own content, layered on
+   top of the glass background above (background-image only, so the
+   glass background-color underneath still shows through). */
+.panel-scanner {
+  background-image:
+    radial-gradient(circle at 50% 50%,
+      transparent 0, transparent 36%,
+      rgba(79,214,255,0.14) 36%, rgba(79,214,255,0.14) 36.6%, transparent 36.6%, transparent 47%,
+      rgba(255,143,224,0.12) 47%, rgba(255,143,224,0.12) 47.6%, transparent 47.6%, transparent 60%,
+      rgba(255,177,94,0.10) 60%, rgba(255,177,94,0.10) 60.6%, transparent 60.6%);
+  background-size: 460px 460px;
+  background-position: 92% -60px;
+  background-repeat: no-repeat;
+  animation: panel-in 0.5s ease backwards, scanner-drift 16s ease-in-out infinite;
+}
+
+@keyframes scanner-drift {
+  0%, 100% { background-position: 92% -60px; }
+  50% { background-position: 96% -40px; }
 }
 
 @keyframes panel-in {
@@ -274,6 +369,20 @@ body::before {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
+}
+.panel h3::after {
+  content: "";
+  position: absolute;
+  left: -30%;
+  bottom: -1px;
+  width: 30%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--holo-2), var(--holo-3), transparent);
+  animation: header-shimmer 5s ease-in-out infinite;
+}
+@keyframes header-shimmer {
+  0% { left: -30%; }
+  60%, 100% { left: 100%; }
 }
 .panel h4 {
   margin: 18px 0 10px 0;
@@ -304,7 +413,7 @@ select, input {
   background: rgba(0,0,0,0.3);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 7px 9px;
   font-size: 13px;
   font-family: var(--font-sans);
@@ -331,8 +440,8 @@ select:focus, input:focus {
   font-size: 10px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  border-radius: 999px;
-  padding: 2px 9px;
+  border-radius: 2px;
+  padding: 2px 7px;
   margin-left: 8px;
   border: 1px solid currentColor;
 }
@@ -398,7 +507,7 @@ select:focus, input:focus {
   background: transparent;
   border: 1px solid var(--border-bright);
   color: var(--muted);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 4px 10px;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -410,8 +519,8 @@ select:focus, input:focus {
 
 .status {
   font-family: var(--font-mono);
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 2px 7px;
+  border-radius: 2px;
   font-size: 10px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -423,21 +532,8 @@ select:focus, input:focus {
   color: var(--accent);
   animation: status-working-pulse 1.8s ease-in-out infinite;
 }
-.status-awaiting_approval, .status-waiting { background: rgba(255,177,94,0.08); color: var(--amber); }
-.status-failed, .status-paused, .status-retired, .status-cancelled, .status-quarantined { background: rgba(255,107,107,0.08); color: var(--red); }
-/* created/initializing: an agent record that exists but hasn't started
-   its lifecycle yet -- no code path assigns these today, but the
-   status vocabulary is shown in full (see AGENT_STATUSES in
-   registry.py), so they get a real, if muted, treatment rather than
-   falling through to unstyled text. */
-.status-created, .status-initializing { background: rgba(127,161,196,0.08); color: var(--muted); }
-/* improving: the trading strategy self-review loop is the one real
-   "an agent is revising itself" state this codebase has today. */
-.status-improving {
-  background: rgba(255,177,94,0.08);
-  color: var(--amber);
-  animation: status-working-pulse 1.8s ease-in-out infinite;
-}
+.status-awaiting_approval { background: rgba(255,177,94,0.08); color: var(--amber); }
+.status-failed, .status-paused, .status-retired, .status-cancelled { background: rgba(255,107,107,0.08); color: var(--red); }
 
 @keyframes status-working-pulse {
   0%, 100% { box-shadow: 0 0 0 rgba(79,214,255,0); }
@@ -488,7 +584,7 @@ button { position: relative; overflow: hidden; }
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 7px 14px;
   font-size: 11px;
   font-family: var(--font-mono);
@@ -529,7 +625,7 @@ button { position: relative; overflow: hidden; }
   gap: 2px;
   padding: 10px 16px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 2px;
   background: rgba(0,0,0,0.2);
   min-width: 90px;
   transition: border-color 0.2s ease, transform 0.2s ease;
@@ -549,12 +645,60 @@ button { position: relative; overflow: hidden; }
   text-shadow: 0 0 12px rgba(79,214,255,0.45);
 }
 
+/* ---------- Command stat blocks (Command Metrics panel) ---------- */
+
+.stat-block { margin-top: 16px; }
+.stat-block:first-child { margin-top: 0; }
+.stat-block-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+/* ---------- Live Activity Feed ---------- */
+
+.activity-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--border-bright);
+  border-radius: 2px;
+  margin-bottom: 6px;
+  background: rgba(0,0,0,0.15);
+  animation: panel-in 0.4s ease backwards;
+  transition: transform 0.2s ease;
+}
+.activity-row:hover { transform: translateX(2px); }
+.activity-row-alert { border-left-color: var(--amber); box-shadow: -2px 0 8px rgba(255,177,94,0.12); }
+.activity-desc { font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+.activity-actor {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.activity-action { color: var(--text); }
+.activity-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* ---------- Approvals ---------- */
 
 .approval-card {
   border: 1px solid var(--border);
   border-left-width: 3px;
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 12px 14px;
   margin-bottom: 8px;
   display: flex;
@@ -580,7 +724,7 @@ button { position: relative; overflow: hidden; }
 .approval-actions { display: flex; gap: 6px; white-space: nowrap; }
 .btn-approve, .btn-reject {
   border: none;
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 7px 12px;
   cursor: pointer;
   font-family: var(--font-mono);
@@ -597,7 +741,7 @@ button { position: relative; overflow: hidden; }
 
 .btn-job-toggle {
   border: 1px solid var(--border-bright);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 4px 10px;
   cursor: pointer;
   font-family: var(--font-mono);
@@ -691,7 +835,7 @@ button { position: relative; overflow: hidden; }
 .opportunity-card {
   border: 1px solid var(--border);
   border-left-width: 3px;
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 16px 18px;
   background: rgba(0,0,0,0.15);
   animation: panel-in 0.45s ease backwards;
@@ -726,7 +870,7 @@ button { position: relative; overflow: hidden; }
   background: transparent;
   border: 1px solid var(--border-bright);
   color: var(--muted);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 3px 8px;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -754,7 +898,7 @@ button { position: relative; overflow: hidden; }
   background: transparent;
   border: 1px solid var(--border-bright);
   color: var(--muted);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 3px 8px;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1035,248 +1179,97 @@ button { position: relative; overflow: hidden; }
   100% { stroke-dashoffset: -20; opacity: 0.2; }
 }
 
-/* A slim dot + stacked labels, not a glowing circular badge -- the
-   badge shape read as a "gaming HUD instrument," where a small filled
-   dot with quiet mono text underneath reads as a precise data point.
-   The dot alone carries the accent color/glow; the text stays plain. */
 .core-node {
   position: absolute;
   transform: translate(-50%, -50%);
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 1px;
   text-align: center;
-  animation: node-in 0.4s ease both;
+  background: radial-gradient(circle, rgba(13,26,40,0.92), rgba(10,20,32,0.7));
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 0 12px rgba(79,214,255,0.15);
+  animation: node-in 0.5s ease both, node-breathe 3.4s ease-in-out infinite;
 }
-.core-node-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-}
-.core-node-alert .core-node-dot {
-  background: var(--amber);
-  box-shadow: 0 0 6px var(--amber);
-  animation: amber-breathe 1.6s ease-in-out infinite;
+.core-node-alert {
+  border-color: var(--amber);
+  box-shadow: 0 0 14px rgba(255,177,94,0.3);
+  animation: node-in 0.5s ease both, amber-breathe 1.6s ease-in-out infinite;
 }
 .core-node-value {
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--text);
+  color: var(--accent);
+  text-shadow: 0 0 6px rgba(79,214,255,0.5);
 }
-.core-node-alert .core-node-value { color: var(--amber); }
+.core-node-alert .core-node-value { color: var(--amber); text-shadow: 0 0 6px rgba(255,177,94,0.5); }
 .core-node-label {
   font-family: var(--font-mono);
-  font-size: 8px;
-  letter-spacing: 0.5px;
+  font-size: 7px;
+  letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--muted);
-  white-space: nowrap;
-}
-
-/* Second, outer ring: real businesses instead of metric totals --
-   visually distinct from the inner metric-node ring (a name label, not
-   a number) so the two rings read as different kinds of thing at a
-   glance even though both share pointOnRing's math. */
-.core-node-business .core-node-label {
-  color: var(--text);
-  font-size: 8px;
-}
-.core-node-biz-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  box-shadow: 0 0 6px currentColor;
-}
-
-/* Satellite nodes hanging just off a business node -- its own agent/
-   open-task counts broken out as small nodes of their own instead of
-   folded into the business node's label. Deliberately smaller and
-   dimmer than the business node they belong to, so the hierarchy (hub
-   -> business -> its own breakdown) stays legible at a glance. */
-.core-node-mini {
-  gap: 2px;
-}
-.core-node-mini .core-node-value {
-  font-size: 10px;
-  color: var(--muted);
-}
-.core-node-mini .core-node-label {
-  font-size: 6.5px;
-  color: var(--text-faint);
-}
-.web-line-mini {
-  stroke-width: 0.2;
-  opacity: 0.3;
 }
 
 @keyframes node-in {
-  from { opacity: 0; transform: translate(-50%, -50%) translateY(4px); }
-  to { opacity: 1; transform: translate(-50%, -50%) translateY(0); }
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
+@keyframes node-breathe {
+  0%, 100% { box-shadow: 0 0 12px rgba(79,214,255,0.15); }
+  50% { box-shadow: 0 0 18px rgba(79,214,255,0.3); }
+}
+
+/* Business ring nodes: the same glowing circular badge as the metric
+   ring, on the same ring radius (gap-midpoint placement keeps them
+   clear of the metric nodes -- see businessRingAngle), tinted iris
+   instead of cyan so a business reads as a distinct kind of node at a
+   glance rather than an eighth metric. */
+.core-node-business {
+  width: 70px;
+  height: 70px;
+  border-color: var(--iris);
+  box-shadow: 0 0 12px rgba(255,143,224,0.18);
+}
+.core-node-business .core-node-value {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--iris);
+  text-shadow: 0 0 6px rgba(255,143,224,0.5);
+  letter-spacing: 0.3px;
+}
+.core-node-business.core-node-alert { border-color: var(--amber); box-shadow: 0 0 14px rgba(255,177,94,0.3); }
+.core-node-business.core-node-alert .core-node-value { color: var(--amber); text-shadow: 0 0 6px rgba(255,177,94,0.5); }
+
+/* Mini breakdown nodes: a business's own agent/task counts, hung just
+   off its node -- smaller and dimmer so the hierarchy (hub > metric
+   ring > business ring > per-business breakdown) stays legible instead
+   of every node competing at the same visual weight. */
+.core-node-mini {
+  width: 36px;
+  height: 36px;
+  border-color: var(--border-bright);
+  box-shadow: 0 0 6px rgba(79,214,255,0.1);
+  animation: node-in 0.5s ease both;
+}
+.core-node-mini .core-node-value { font-size: 10px; }
+.core-node-mini .core-node-label { font-size: 5px; }
+
+.web-line-mini { stroke: var(--iris); opacity: 0.3; }
 
 @media (max-width: 640px) {
+  .core-node { width: 62px; height: 62px; }
   .core-node-value { font-size: 11px; }
-  .core-node-label { font-size: 7px; }
-  /* The per-business agent/task breakdown is a nice-to-have at this
-     size -- the same numbers are one scroll away in the Businesses
-     table -- and the orbital box is too small here to fit a business's
-     name plus two satellite nodes without everything colliding. */
-  .core-node-mini, .web-line-mini { display: none; }
+  .core-node-label { font-size: 6px; }
+  .core-node-business { width: 54px; height: 54px; }
+  .core-node-mini { width: 26px; height: 26px; }
 }
-
-/* ---------- Top bar: system status + approvals ---------- */
-
-.header-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  padding: 5px 12px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: rgba(0,0,0,0.2);
-  color: var(--green);
-}
-.header-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 6px currentColor;
-  animation: badge-breathe-green 2.6s ease-in-out infinite;
-}
-.header-status-amber { color: var(--amber); }
-.header-status-amber .header-status-dot { animation: amber-breathe 1.6s ease-in-out infinite; }
-.header-status-red { color: var(--red); }
-.header-status-red .header-status-dot { animation: error-flash 1.6s ease-in-out infinite; }
-
-.header-approvals-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.5px;
-  color: var(--amber);
-  border: 1px solid var(--amber);
-  border-radius: 3px;
-  padding: 5px 10px;
-  text-decoration: none;
-  animation: amber-breathe 3.2s ease-in-out infinite;
-}
-.header-approvals-badge:hover { background: rgba(255,177,94,0.1); }
-
-/* ---------- Command stat row: Real USD / ARC / Agents / Businesses ----------
-   Extends the existing .arc-stat instrument pattern (large mono value,
-   small uppercase label) into labeled groups laid out edge-to-edge, so
-   the top-level "what's the state of the whole ecosystem" numbers read
-   as one authoritative instrument row instead of scattered panels. */
-
-.stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  grid-column: 1 / -1;
-}
-.stat-block {
-  background: var(--panel-bg);
-  padding: 14px 18px 16px;
-}
-.stat-block-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 10px;
-}
-.stat-block-cells {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px 14px;
-}
-.stat-cell-label {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin-bottom: 2px;
-}
-.stat-cell-value {
-  font-family: var(--font-mono);
-  font-size: 17px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.stat-cell-value.tone-green { color: var(--green); }
-.stat-cell-value.tone-amber { color: var(--amber); }
-.stat-cell-value.tone-red { color: var(--red); }
-.stat-cell-value.tone-accent { color: var(--accent); text-shadow: 0 0 10px rgba(79,214,255,0.4); }
-
-/* ---------- Live Activity feed ---------- */
-
-.activity-feed {
-  display: flex;
-  flex-direction: column;
-  max-height: 360px;
-  overflow-y: auto;
-}
-.activity-row {
-  display: grid;
-  grid-template-columns: 66px 8px 1fr;
-  align-items: start;
-  gap: 10px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
-  animation: panel-in 0.3s ease backwards;
-}
-.activity-row:last-child { border-bottom: none; }
-.activity-ts {
-  font-family: var(--font-mono);
-  color: var(--text-faint);
-  font-size: 10.5px;
-  padding-top: 2px;
-}
-.activity-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-top: 4px;
-  box-shadow: 0 0 5px currentColor;
-}
-.activity-actor {
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-weight: 600;
-  margin-right: 6px;
-}
-.activity-text { color: var(--muted); }
-
-/* ---------- Trading Strategy Evolution (global summary) ---------- */
-
-.evolution-summary { display: flex; flex-direction: column; gap: 8px; }
-.evolution-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border);
-}
-.evolution-row:last-child { border-bottom: none; }
-.evolution-row .k { color: var(--muted); }
-.evolution-row .v { font-family: var(--font-mono); color: var(--text); }
 
 /* ---------- Revenue trend chart ---------- */
 
