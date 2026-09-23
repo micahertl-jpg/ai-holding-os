@@ -1058,6 +1058,7 @@
         (p, i) => `
         <div class="core-node${p.alert ? " core-node-alert" : ""}"
           style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08).toFixed(2)}s">
+          <span class="core-node-dot"></span>
           <span class="core-node-value">${escapeHtml(p.value)}</span>
           <span class="core-node-label">${escapeHtml(p.label)}</span>
         </div>`
