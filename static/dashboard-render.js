@@ -1265,10 +1265,29 @@
         <div class="arc-stat"><span class="label">Pending Approval Value</span><span class="value">${fmtUsd(pendingUsd)}</span></div>
       </div>`;
 
-    const agentsBlock = renderStatBlock(
-      "Agents",
-      ALL_AGENT_STATUSES.map((s) => [s, agentsByStatus[s] || 0])
-    );
+    // Bars (not another grid of boxes) for the 11-way agent-status
+    // breakdown -- matches the instrument-panel mix of stat cards +
+    // gauges + bar charts the original Command Center Overview panel
+    // already uses, instead of one more wall of identical small boxes.
+    const agentMax = Math.max(1, ...ALL_AGENT_STATUSES.map((s) => agentsByStatus[s] || 0));
+    const agentBars = ALL_AGENT_STATUSES.map((s) => {
+      const count = agentsByStatus[s] || 0;
+      const pct = Math.round((count / agentMax) * 100);
+      return `
+        <div class="stat-bar-row">
+          <span class="stat-bar-label">${escapeHtml(s)}</span>
+          <div class="stat-bar-track">
+            <div class="stat-bar-fill" style="width:${pct}%; background:${statusColorVar(s)};"></div>
+          </div>
+          <span class="stat-bar-count">${escapeHtml(count)}</span>
+        </div>`;
+    }).join("");
+    const agentsBlock = `
+      <div class="stat-block">
+        <div class="stat-block-label">Agents</div>
+        <div class="stat-bars">${agentBars}</div>
+      </div>`;
+
     const businessesBlock = renderStatBlock("Businesses", Object.entries(businessesByStatus));
 
     return topRow + agentsBlock + businessesBlock;
@@ -1362,15 +1381,20 @@
     return -Math.PI / 2 + METRIC_RING_ANGLE_STEP * (slot + 0.5);
   }
 
-  const BUSINESS_MINI_NODE_DISTANCE_PCT = 9;
-  const BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD = 0.55;
+  // A distinctly larger radius than the metric ring (not the same
+  // ring) -- radial separation, on top of the angular gap-midpoint
+  // placement above, so business nodes fan out into the hub's own
+  // open space instead of crowding the metric ring's existing nodes.
+  const BUSINESS_RING_RADIUS_PCT = 50;
+  const BUSINESS_MINI_NODE_DISTANCE_PCT = 6;
+  const BUSINESS_MINI_NODE_ANGLE_OFFSET_RAD = 0.4;
 
   function renderBusinessRing(businesses) {
     if (!businesses || businesses.length === 0) return "";
 
     const positioned = businesses.map((b, i) => {
       const angle = businessRingAngle(i);
-      const pos = pointOnRing(0, 1, ORBITAL_RING_RADIUS_PCT, angle);
+      const pos = pointOnRing(0, 1, BUSINESS_RING_RADIUS_PCT, angle);
       return Object.assign({}, b, pos, { angle });
     });
 
