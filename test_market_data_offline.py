@@ -1,13 +1,39 @@
 """
 test_market_data_offline.py — real tests for market_data.py that don't
 need network access: the response-shape parsing/validation logic (via a
-fake urlopen) and MockMarketDataClient's contract.
+fake urlopen), MockMarketDataClient's contract, and the daily request-
+budget tracking (used_today()/reserve_budget()) against a real SQLite
+Database with hand-seeded rows.
 """
 
 import json
+import os
+from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import market_data
+from db import Database, new_id
+from scheduler import TIMESTAMP_FORMAT
+
+TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_market_data.db")
+
+NOW = datetime(2026, 1, 2, 12, 0, 0)
+
+
+def _fmt(dt):
+    return dt.strftime(TIMESTAMP_FORMAT)
+
+
+def _setup_db():
+    if os.path.exists(TEST_DB_PATH):
+        os.remove(TEST_DB_PATH)
+    return Database(TEST_DB_PATH)
+
+
+class _FakeRealClient:
+    """Stands in for AlphaVantageClient without needing a real API key
+    -- reserve_budget() only ever checks .is_mock, nothing else."""
+    is_mock = False
 
 
 def _fake_response(payload_dict):
@@ -144,6 +170,88 @@ def test_get_default_client_picks_real_client_only_with_a_key():
           "an explicitly-labeled mock otherwise")
 
 
+# --- used_today() / reserve_budget() ---
+
+def test_used_today_sums_only_todays_reservations():
+    db = _setup_db()
+    yesterday = NOW - timedelta(days=1)
+    db.execute("INSERT INTO market_data_usage (id, purpose, request_count, created_at) "
+               "VALUES (?,?,?,?)", (new_id("mdusage"), "trading_cycle", 5, _fmt(yesterday)))
+    db.execute("INSERT INTO market_data_usage (id, purpose, request_count, created_at) "
+               "VALUES (?,?,?,?)", (new_id("mdusage"), "trading_cycle", 3, _fmt(NOW)))
+    db.execute("INSERT INTO market_data_usage (id, purpose, request_count, created_at) "
+               "VALUES (?,?,?,?)", (new_id("mdusage"), "strategy_backtest_search", 4, _fmt(NOW)))
+
+    assert market_data.used_today(db, now=NOW) == 7
+    print("PASS: used_today sums only reservations from today (UTC), across every purpose")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_used_today_is_zero_with_no_reservations_yet():
+    db = _setup_db()
+    assert market_data.used_today(db, now=NOW) == 0
+    print("PASS: used_today is a real, honest zero with nothing reserved yet")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_reserve_budget_is_a_no_op_for_a_mock_client():
+    db = _setup_db()
+    mock_client = market_data.MockMarketDataClient()
+    # Deliberately over any real limit -- must never raise or record
+    # anything, since no real quota is at stake with a mock client.
+    market_data.reserve_budget(db, mock_client, 999, "trading_cycle", now=NOW)
+    assert market_data.used_today(db, now=NOW) == 0
+    print("PASS: reserve_budget is a complete no-op for a mock client -- no check, no record")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_reserve_budget_records_usage_for_a_real_client_within_budget():
+    db = _setup_db()
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 25):
+        market_data.reserve_budget(db, _FakeRealClient(), 5, "trading_cycle", now=NOW)
+    assert market_data.used_today(db, now=NOW) == 5
+    row = db.query_one("SELECT * FROM market_data_usage")
+    assert row["purpose"] == "trading_cycle"
+    assert row["request_count"] == 5
+    print("PASS: reserve_budget records a real reservation for a real client within budget")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_reserve_budget_raises_and_records_nothing_once_the_daily_quota_is_exhausted():
+    db = _setup_db()
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 10):
+        market_data.reserve_budget(db, _FakeRealClient(), 8, "strategy_backtest_search", now=NOW)
+        try:
+            market_data.reserve_budget(db, _FakeRealClient(), 5, "trading_cycle", now=NOW)
+            assert False, "expected MarketDataError"
+        except market_data.MarketDataError as e:
+            assert "5 Alpha Vantage request(s)" in str(e)
+            assert "only 2 remain" in str(e)
+            assert "8 already used" in str(e)
+
+    # The refused reservation must never partially apply.
+    assert market_data.used_today(db, now=NOW) == 8
+    print("PASS: reserve_budget refuses loudly (before making any real calls) once a "
+          "reservation would exceed what's left today, and never partially records it")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_reserve_budget_respects_a_raised_limit_for_an_upgraded_plan():
+    db = _setup_db()
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 500):
+        # Would have failed against the free-tier default of 25.
+        market_data.reserve_budget(db, _FakeRealClient(), 100, "strategy_backtest_search", now=NOW)
+    assert market_data.used_today(db, now=NOW) == 100
+    print("PASS: reserve_budget respects ALPHAVANTAGE_DAILY_REQUEST_LIMIT for an upgraded plan")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_get_quote_parses_a_real_shaped_response()
     test_get_quote_raises_on_rate_limit_note()
@@ -155,4 +263,10 @@ if __name__ == "__main__":
     test_get_daily_history_raises_when_range_has_no_bars()
     test_mock_client_daily_history_is_clearly_labeled_and_skips_weekends()
     test_get_default_client_picks_real_client_only_with_a_key()
+    test_used_today_sums_only_todays_reservations()
+    test_used_today_is_zero_with_no_reservations_yet()
+    test_reserve_budget_is_a_no_op_for_a_mock_client()
+    test_reserve_budget_records_usage_for_a_real_client_within_budget()
+    test_reserve_budget_raises_and_records_nothing_once_the_daily_quota_is_exhausted()
+    test_reserve_budget_respects_a_raised_limit_for_an_upgraded_plan()
     print("\nAll market_data.py offline tests passed.")

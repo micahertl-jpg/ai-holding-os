@@ -815,6 +815,58 @@ validation split date, and a validation end date in the Backtest panel
 Search**. Within a few minutes you should see a real run appear with
 one or more candidates and their real train/validation stats.
 
+### Shared Alpha Vantage request budget (trading_cycle, live_trading_cycle, strategy_backtest_search)
+
+Found for real, from an owner's actual usage: a backtest search
+retried several times (each attempt burns real Alpha Vantage quota
+even when it's rejected with a rate-limit response, not a network
+failure) exhausted that day's free-tier 25-requests/day quota right
+before a scheduled paper trading cycle needed it — the two features
+were competing for the same real resource with neither aware of the
+other's usage, so the trading cycle's own longer interval (see the
+"Owner Digest" section's provisioning fix, a separate earlier issue)
+didn't help.
+
+- `market_data.py`'s `reserve_budget(db, market_client, count, purpose)`
+  is called by all three handlers (`_handle_trading_cycle`,
+  `_handle_live_trading_cycle`, `_handle_strategy_backtest_search`) in
+  `executor.py`, right before they're about to make `count` real
+  requests (one per watchlist/held symbol). It checks today's real
+  usage (summed from the new `market_data_usage` table, real rows only
+  — nothing here is ever estimated) against `DAILY_REQUEST_LIMIT`
+  (default 25, override via `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` if
+  you've upgraded your Alpha Vantage plan) and refuses loudly, **before
+  any real fetch happens**, if the request would exceed what's left —
+  a caller that would fail partway through a batch never gets to burn
+  through the remainder of the day's quota first.
+- A complete no-op (no check, no record) when
+  `market_client.is_mock` is `True` (both `AlphaVantageClient` and
+  `MockMarketDataClient` now carry this marker) — there's no real
+  quota at stake using the mock client, and this keeps every existing
+  offline test that passes a mock/fake client working unmodified.
+
+**What was actually verified in this session:**
+- 6 new checks in `test_market_data_offline.py`: `used_today()` sums
+  only today's (UTC) reservations across every purpose; `reserve_budget()`
+  is a true no-op for a mock client even wildly over budget; it records
+  a real reservation for a real client within budget; it refuses loudly
+  (and records nothing) once a reservation would exceed what's left,
+  with the exact remaining/used counts in the message; and it respects
+  a raised `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` for an upgraded plan.
+- 2 new `test_executor_offline.py` checks: a `trading_cycle` task
+  refuses loudly, before any real fetch, once an earlier
+  `strategy_backtest_search` already spent the day's shared quota
+  (and vice versa) — each confirming the refused reservation never
+  partially applies.
+- Live-verified directly against a real Postgres database (not just
+  SQLite): reserved budget across two different purposes, confirmed a
+  request that would exceed what's left is refused with the exact
+  right numbers, confirmed the refusal records nothing, and confirmed
+  a mock client is always a true no-op — including the cross-backend
+  timestamp comparison (`market_data_usage.created_at` is
+  `TIMESTAMPTZ` in Postgres vs. `TEXT` in SQLite) working correctly on
+  both.
+
 ## App Development — status
 
 The fourth business vertical: app-idea feasibility and technical

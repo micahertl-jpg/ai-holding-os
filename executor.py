@@ -393,10 +393,16 @@ def _handle_trading_cycle(task_row, client, db):
         for r in recent
     )
 
+    market_client = market_data.get_default_client()
+    symbols_to_quote = set(strategy_params["watchlist"]) | {
+        p["symbol"] for p in positions if p["quantity"] > 0
+    }
+    market_data.reserve_budget(db, market_client, len(symbols_to_quote), "trading_cycle")
+
     tracked_client = CostTrackingClient(client)
     result = run_trading_cycle(
         portfolio["cash_usd"], positions, strategy_params, recent_trades_summary,
-        market_data.get_default_client(), tracked_client,
+        market_client, tracked_client,
     )
 
     cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
@@ -661,10 +667,16 @@ def _handle_live_trading_cycle(task_row, client, db):
         for r in recent
     )
 
+    market_client = market_data.get_default_client()
+    symbols_to_quote = set(strategy_params["watchlist"]) | {
+        p["symbol"] for p in positions if p["quantity"] > 0
+    }
+    market_data.reserve_budget(db, market_client, len(symbols_to_quote), "live_trading_cycle")
+
     tracked_client = CostTrackingClient(client)
     result = run_trading_cycle(
         account["cash"], positions, strategy_params, recent_trades_summary,
-        market_data.get_default_client(), tracked_client,
+        market_client, tracked_client,
     )
 
     cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
@@ -833,6 +845,14 @@ def _handle_strategy_backtest_search(task_row, client, db):
 
     strategy_row, strategy_params = _get_active_trading_strategy(db, business_id)
     market_client = market_data.get_default_client()
+    # Reserved BEFORE any real fetch -- a backtest search retried after
+    # an earlier failure was found to burn through the day's shared
+    # Alpha Vantage quota one watchlist symbol at a time, leaving
+    # trading_cycle with nothing left. Refusing loudly here, before
+    # spending any of what's left, beats partway-through failures.
+    market_data.reserve_budget(
+        db, market_client, len(strategy_params["watchlist"]), "strategy_backtest_search",
+    )
 
     # One real historical-data fetch per watchlist symbol, covering the
     # WHOLE train+validation range in one call each (not one call per
