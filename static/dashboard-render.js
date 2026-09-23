@@ -1182,6 +1182,270 @@
       </div>`;
   }
 
+  // ---------- Header: system status + approvals badge ----------
+
+  function renderHeaderStatus(overview) {
+    const report = overview.latest_ops_report;
+    const severity = report ? report.overall_severity : "ok";
+    const cls = severity === "critical" ? " header-status-red"
+      : severity === "warning" ? " header-status-amber" : "";
+    const label = severity === "critical" ? "CRITICAL"
+      : severity === "warning" ? "ATTENTION NEEDED" : "SYSTEM ONLINE";
+    return `
+      <div class="header-status${cls}">
+        <span class="header-status-dot"></span>
+        <span>${escapeHtml(label)}</span>
+      </div>`;
+  }
+
+  function renderHeaderApprovalsBadge(pendingApprovals) {
+    const count = (pendingApprovals || []).length;
+    if (count === 0) return "";
+    return `
+      <a href="#global-approvals-section" class="header-approvals-badge">
+        <span>${escapeHtml(count)}</span> awaiting approval
+      </a>`;
+  }
+
+  // ---------- Command stat row: Real USD / ARC / Agents / Businesses ----------
+
+  // Mirrors AGENT_STATUSES in registry.py exactly -- shown in full so
+  // the row stays correct even for a status no running code assigns
+  // yet, rather than only ever showing whichever few happen to have a
+  // nonzero count today.
+  const ALL_AGENT_STATUSES = [
+    "created", "initializing", "active", "working", "idle",
+    "waiting", "improving", "paused", "failed", "quarantined", "retired",
+  ];
+  const ALL_BUSINESS_STATUSES = ["active", "paused", "retired"];
+  const ALERT_AGENT_STATUSES = { failed: true, quarantined: true };
+
+  function _statCell(label, value, tone) {
+    return `
+      <div>
+        <div class="stat-cell-label">${escapeHtml(label)}</div>
+        <div class="stat-cell-value${tone ? " tone-" + tone : ""}">${escapeHtml(value)}</div>
+      </div>`;
+  }
+
+  function _statBlock(label, cellsHtml) {
+    return `
+      <div class="stat-block">
+        <div class="stat-block-label">${escapeHtml(label)}</div>
+        <div class="stat-block-cells">${cellsHtml}</div>
+      </div>`;
+  }
+
+  function renderCommandStatRow(overview) {
+    const revenue = (overview.real_revenue_usd_cents || 0) / 100;
+    const pendingApprovals = overview.pending_approvals || [];
+    const awaitingUsd = pendingApprovals.reduce(
+      (sum, p) => sum + Number(p.amount_usd || 0), 0
+    );
+
+    const arc = overview.global_arc || {};
+    const earned = Number(arc.earn || 0) + Number(arc.allocation || 0);
+    const spent = Math.abs(Number(arc.spend || 0));
+
+    const agentsByStatus = overview.agents_by_status || {};
+    const bizCounts = { active: 0, paused: 0, retired: 0 };
+    (overview.businesses || []).forEach((b) => {
+      if (Object.prototype.hasOwnProperty.call(bizCounts, b.status)) bizCounts[b.status]++;
+    });
+
+    const usdCells =
+      _statCell("Revenue Collected", fmtUsd(revenue), "green") +
+      _statCell("Awaiting Approval", fmtUsd(awaitingUsd), awaitingUsd > 0 ? "amber" : undefined);
+
+    const arcCells =
+      _statCell("Earned", fmtArc(earned)) +
+      _statCell("Spent", fmtArc(spent));
+
+    const agentCells = ALL_AGENT_STATUSES.map((s) => {
+      const count = agentsByStatus[s] || 0;
+      const tone = ALERT_AGENT_STATUSES[s] && count > 0 ? "red" : undefined;
+      return _statCell(s.replace(/_/g, " "), String(count), tone);
+    }).join("");
+
+    const bizCells = ALL_BUSINESS_STATUSES.map((s) =>
+      _statCell(s, String(bizCounts[s]), s === "active" ? "green" : undefined)
+    ).join("");
+
+    return (
+      _statBlock("Real USD", usdCells) +
+      _statBlock("ARC (internal)", arcCells) +
+      _statBlock("Agents", agentCells) +
+      _statBlock("Businesses", bizCells)
+    );
+  }
+
+  // ---------- Live Activity feed (backed by GET /audit) ----------
+
+  // Known audit_log `action` values mapped to a short human label --
+  // gathered directly from every db.audit(...) call site in this
+  // codebase. Anything not in this map falls back to the raw action
+  // string with underscores turned to spaces -- an unrecognized action
+  // is never hidden, just unprettified.
+  const AUDIT_ACTION_LABELS = {
+    create_business: "created business",
+    create_agent: "created agent",
+    pause_agent: "paused agent",
+    retire_agent: "retired agent",
+    approve_action: "approved request",
+    reject_action: "rejected request",
+    allocate_arc: "allocated ARC",
+    reward_arc: "rewarded ARC",
+    charge_arc: "charged ARC",
+    penalize_arc: "penalized ARC",
+    create_task: "created task",
+    assign_task: "assigned task",
+    complete_task: "completed task",
+    fail_task: "task failed",
+    task_awaiting_approval: "task awaiting approval",
+    task_approved_promoted: "approved task promoted",
+    task_rejected_cancelled: "rejected task cancelled",
+    task_unassigned_no_agent: "task unassigned — no agent available",
+    create_trading_portfolio: "created trading portfolio",
+    enable_auto_trading: "enabled auto-trading",
+    enable_live_trading: "enabled LIVE trading",
+    disable_live_trading: "disabled live trading",
+    trading_strategy_updated: "trading strategy updated",
+    trading_strategy_overridden: "trading strategy overridden by owner",
+    trading_drawdown_halt: "trading paused — drawdown limit hit",
+    live_trading_halt: "LIVE trading halted",
+    live_order_failed: "live order failed",
+    live_order_unconfirmed: "live order unconfirmed",
+    strategy_backtest_search_completed: "backtest search completed",
+    opportunity_assessed: "researched an opportunity",
+    roblox_trend_assessed: "researched a Roblox concept",
+    app_feasibility_assessed: "assessed app feasibility",
+    real_estate_assessed: "researched real estate",
+    order_paid: "order paid",
+    order_fulfilled: "order fulfilled",
+    order_fulfillment_failed: "order fulfillment failed",
+    ops_maintenance_reviewed: "ran ops review",
+    owner_digest_sent: "sent owner digest",
+    scheduled_job_fired: "scheduled job fired",
+    scheduled_job_provisioned: "scheduled job created",
+    set_scheduled_job_enabled: "toggled scheduled job",
+    set_scheduled_job_interval: "changed job interval",
+    reconcile_stuck_agent: "reconciled a stuck agent",
+    ops_business_provisioned: "provisioned business",
+    set_business_status: "changed business status",
+    delete_abandoned_order: "removed abandoned order",
+    delete_opportunity: "removed opportunity",
+    delete_roblox_trend: "removed Roblox concept",
+    delete_app_feasibility_assessment: "removed feasibility assessment",
+    delete_real_estate_assessment: "removed real estate assessment",
+  };
+
+  // Actions that represent something going wrong or needing attention
+  // vs. routine/positive activity -- same severity intent as the rest
+  // of the dashboard's status vocabulary, just applied to a raw action
+  // string instead of a status enum.
+  const AUDIT_ACTION_ALERT = {
+    fail_task: "red", task_unassigned_no_agent: "amber", trading_drawdown_halt: "red",
+    live_trading_halt: "red", live_order_failed: "red", live_order_unconfirmed: "amber",
+    task_awaiting_approval: "amber", reject_action: "amber",
+    order_fulfillment_failed: "red", scheduler_tick_error: "red",
+    executor_pass_error: "red", fulfillment_pass_error: "red",
+    owner_ops_report_alert_failed: "red", order_email_failed: "amber",
+    owner_failed_order_alert_failed: "red",
+  };
+
+  function _auditActionLabel(action) {
+    return AUDIT_ACTION_LABELS[action] || String(action || "").replace(/_/g, " ");
+  }
+
+  function _auditActorLabel(entry) {
+    if (entry.actor === "owner") return "OWNER";
+    if (entry.actor === "system") return "SYSTEM";
+    return entry.actor_name || entry.actor || "unknown";
+  }
+
+  function renderActivityFeed(events) {
+    if (!events || events.length === 0) {
+      return '<p class="empty">No system activity recorded yet.</p>';
+    }
+    const rows = events
+      .map((e) => {
+        const dotColor = AUDIT_ACTION_ALERT[e.action] === "red" ? "var(--red)"
+          : AUDIT_ACTION_ALERT[e.action] === "amber" ? "var(--amber)"
+          : "var(--accent)";
+        const ts = String(e.created_at || "").slice(5, 16).replace("T", " "); // MM-DD HH:MM
+        return `
+        <div class="activity-row">
+          <span class="activity-ts">${escapeHtml(ts)}</span>
+          <span class="activity-dot" style="background:${dotColor};color:${dotColor}"></span>
+          <span>
+            <span class="activity-actor">${escapeHtml(_auditActorLabel(e))}</span>
+            <span class="activity-text">${escapeHtml(_auditActionLabel(e.action))}${
+              e.target_type ? ` &middot; ${escapeHtml(e.target_type)}` : ""
+            }</span>
+          </span>
+        </div>`;
+      })
+      .join("");
+    return `<div class="activity-feed">${rows}</div>`;
+  }
+
+  // ---------- System Core: outer ring of real business nodes ----------
+
+  // Second ring around the same hub as renderOrbitalRing's metric
+  // nodes -- real businesses (name, status, pending-approval count),
+  // at a larger radius so the two rings never collide. Returns its own
+  // <line>s + node <div>s in the same shape as renderOrbitalRing, meant
+  // to be concatenated into the same #core-orbital-overlay container.
+  const BUSINESS_RING_RADIUS_PCT = 47;
+
+  function renderBusinessRing(businesses) {
+    if (!businesses || businesses.length === 0) return "";
+    const positioned = businesses.map((b, i) =>
+      Object.assign({}, b, pointOnRing(i, businesses.length, BUSINESS_RING_RADIUS_PCT))
+    );
+    const lines = positioned
+      .map(
+        (p, i) => `
+        <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
+          style="animation-delay:${(i * 0.15 + 0.3).toFixed(2)}s;opacity:0.25" />`
+      )
+      .join("");
+    const nodeDivs = positioned
+      .map((p, i) => {
+        const alert = Number(p.pending_approval_count || 0) > 0;
+        const dotColor = alert ? "var(--amber)" : p.status === "active" ? "var(--green)" : "var(--muted)";
+        return `
+        <div class="core-node core-node-business${alert ? " core-node-alert" : ""}"
+          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.2).toFixed(2)}s"
+          title="${escapeHtml(p.name)} — ${escapeHtml(p.status)}">
+          <span class="core-node-biz-dot" style="background:${dotColor};color:${dotColor}"></span>
+          <span class="core-node-label">${escapeHtml(p.name)}</span>
+        </div>`;
+      })
+      .join("");
+    return `
+      <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>
+      ${nodeDivs}`;
+  }
+
+  // ---------- Trading Strategy Evolution (global summary) ----------
+
+  function renderTradingStrategyEvolution(evolution) {
+    if (!evolution || !evolution.total_versions) {
+      return '<p class="empty">No trading strategy history yet — versions appear once a ' +
+        'business starts paper or live trading.</p>';
+    }
+    const latest = evolution.latest_version;
+    return `
+      <div class="evolution-summary">
+        <div class="evolution-row"><span class="k">Strategy versions (all businesses)</span><span class="v">${escapeHtml(evolution.total_versions)}</span></div>
+        <div class="evolution-row"><span class="k">Currently active</span><span class="v">${escapeHtml(evolution.active_count)}</span></div>
+        <div class="evolution-row"><span class="k">Businesses with a trading strategy</span><span class="v">${escapeHtml(evolution.businesses_with_trading)}</span></div>
+        ${latest ? `<div class="evolution-row"><span class="k">Most recent change</span><span class="v">${escapeHtml(latest.created_at)} (${escapeHtml(latest.source)})</span></div>` : ""}
+        ${latest && latest.rationale ? `<div class="evolution-row"><span class="k">Rationale</span><span class="v">${escapeHtml(latest.rationale)}</span></div>` : ""}
+      </div>`;
+  }
+
   const api = {
     escapeHtml,
     fmtArc,
@@ -1193,6 +1457,12 @@
     computeOverviewCounts,
     renderSystemCoreCenter,
     renderOrbitalRing,
+    renderBusinessRing,
+    renderHeaderStatus,
+    renderHeaderApprovalsBadge,
+    renderCommandStatRow,
+    renderActivityFeed,
+    renderTradingStrategyEvolution,
     renderBusinessOptions,
     renderAgentOptions,
     renderBusinessHeader,

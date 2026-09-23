@@ -725,7 +725,16 @@ def list_audit_log(target_type: Optional[str] = None, target_id: Optional[str] =
     Added specifically so a stuck order/task can be diagnosed from the
     browser (e.g. GET /audit?target_type=order&target_id=ord_xxx) without
     needing direct database access. limit is capped at 200 to keep this
-    a quick diagnostic view, not a full log export."""
+    a quick diagnostic view, not a full log export.
+
+    Also powers the dashboard's live activity feed (unfiltered, small
+    limit) — so each row's `actor` (an agent id, 'owner', or 'system')
+    is resolved to a real `actor_name` where it names an agent, via a
+    second batch lookup rather than a JOIN (this codebase's queries are
+    otherwise all single-table; a JOIN here would be the only exception
+    for one convenience field). Never guesses a name for an actor id
+    that doesn't match any agent — `actor_name` is simply omitted (None)
+    and the caller falls back to the raw `actor` string."""
     limit = max(1, min(limit, 200))
     query = "SELECT * FROM audit_log WHERE 1=1"
     params = []
@@ -740,8 +749,19 @@ def list_audit_log(target_type: Optional[str] = None, target_id: Optional[str] =
         params.append(action)
     query += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
-    rows = state["db"].query(query, tuple(params))
-    return [row_to_dict(r) for r in rows]
+    rows = [row_to_dict(r) for r in state["db"].query(query, tuple(params))]
+
+    actor_ids = sorted({r["actor"] for r in rows if r["actor"] not in (None, "owner", "system")})
+    actor_names = {}
+    if actor_ids:
+        placeholders = ",".join(["?"] * len(actor_ids))
+        for a in state["db"].query(
+            f"SELECT id, name FROM agents WHERE id IN ({placeholders})", tuple(actor_ids)
+        ):
+            actor_names[a["id"]] = a["name"]
+    for r in rows:
+        r["actor_name"] = actor_names.get(r["actor"])
+    return rows
 
 
 @app.get("/overview")
@@ -805,6 +825,31 @@ def overview():
         "SELECT * FROM ops_maintenance_reports ORDER BY created_at DESC LIMIT 1"
     ))
 
+    # Real cross-business rollup over trading_strategy_versions -- the
+    # honest, real-data version of "self-improvement" this codebase
+    # actually has today (self-improvement is scoped to the trading
+    # strategy review loop only, not agents generally, so this reports
+    # exactly that rather than a fabricated general "AI evolution" stat).
+    total_versions = db.query_one(
+        "SELECT COUNT(*) as c FROM trading_strategy_versions"
+    )["c"]
+    active_count = db.query_one(
+        "SELECT COUNT(*) as c FROM trading_strategy_versions WHERE active=1"
+    )["c"]
+    businesses_with_trading = db.query_one(
+        "SELECT COUNT(DISTINCT business_id) as c FROM trading_strategy_versions"
+    )["c"]
+    latest_version = row_to_dict(db.query_one(
+        "SELECT created_at, rationale, source FROM trading_strategy_versions "
+        "ORDER BY created_at DESC LIMIT 1"
+    ))
+    trading_strategy_evolution = {
+        "total_versions": total_versions,
+        "active_count": active_count,
+        "businesses_with_trading": businesses_with_trading,
+        "latest_version": latest_version,
+    }
+
     return {
         "businesses": businesses_overview,
         "pending_approvals": [row_to_dict(r) for r in state["approvals"].pending()],
@@ -813,6 +858,7 @@ def overview():
         "real_revenue_usd_cents": real_revenue_usd_cents,
         "global_arc": global_arc,
         "latest_ops_report": latest_ops_report,
+        "trading_strategy_evolution": trading_strategy_evolution,
     }
 
 

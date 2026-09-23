@@ -139,13 +139,25 @@
     // (if any) is currently selected below. This is what makes pending
     // approvals on a business the owner isn't currently viewing actually
     // visible, instead of silently sitting unnoticed.
-    const data = await api("/overview");
+    const [data, auditEvents] = await Promise.all([
+      api("/overview"),
+      api("/audit?limit=40"),
+    ]);
     setHtmlIfChanged("global-approvals-list", R.renderApprovalsList(data.pending_approvals));
     setHtmlIfChanged("global-stats", R.renderGlobalStats(data));
     setHtmlIfChanged("businesses-overview-table", R.renderBusinessesOverviewTable(data.businesses));
+    setHtmlIfChanged("global-arc-summary", R.renderArcSummary(data.global_arc));
     setHtmlIfChanged("system-core-center", R.renderSystemCoreCenter(data));
-    setHtmlIfChanged("core-orbital-overlay", R.renderOrbitalRing(data));
+    setHtmlIfChanged(
+      "core-orbital-overlay",
+      R.renderOrbitalRing(data) + R.renderBusinessRing(data.businesses)
+    );
     setHtmlIfChanged("ops-report", R.renderOpsReport(data.latest_ops_report));
+    setHtmlIfChanged("header-status-wrap", R.renderHeaderStatus(data));
+    setHtmlIfChanged("header-approvals-wrap", R.renderHeaderApprovalsBadge(data.pending_approvals));
+    setHtmlIfChanged("command-stat-row", R.renderCommandStatRow(data));
+    setHtmlIfChanged("activity-feed-list", R.renderActivityFeed(auditEvents));
+    setHtmlIfChanged("trading-evolution-summary", R.renderTradingStrategyEvolution(data.trading_strategy_evolution));
   }
 
   async function loadDashboard() {

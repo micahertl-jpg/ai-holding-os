@@ -1351,4 +1351,144 @@ test("computeOverviewCounts matches the shape renderGlobalStats relies on", () =
   assert.strictEqual(counts.totalTasks, 5);
 });
 
+// ---------- Command-center redesign additions ----------
+
+test("renderHeaderStatus reads SYSTEM ONLINE when there's no ops report yet, or it's ok", () => {
+  assert.ok(R.renderHeaderStatus({ latest_ops_report: null }).includes("SYSTEM ONLINE"));
+  assert.ok(R.renderHeaderStatus({ latest_ops_report: { overall_severity: "ok" } }).includes("SYSTEM ONLINE"));
+});
+
+test("renderHeaderStatus flips to amber/red based on the real latest ops report severity", () => {
+  const warn = R.renderHeaderStatus({ latest_ops_report: { overall_severity: "warning" } });
+  assert.ok(warn.includes("header-status-amber"));
+  assert.ok(warn.includes("ATTENTION NEEDED"));
+  const critical = R.renderHeaderStatus({ latest_ops_report: { overall_severity: "critical" } });
+  assert.ok(critical.includes("header-status-red"));
+  assert.ok(critical.includes("CRITICAL"));
+});
+
+test("renderHeaderApprovalsBadge is empty when nothing is pending, never a fake zero badge", () => {
+  assert.strictEqual(R.renderHeaderApprovalsBadge([]), "");
+  assert.strictEqual(R.renderHeaderApprovalsBadge(null), "");
+});
+
+test("renderHeaderApprovalsBadge shows the real pending count and links to the approval center", () => {
+  const html = R.renderHeaderApprovalsBadge([{ id: "a1" }, { id: "a2" }]);
+  assert.ok(html.includes(">2<"));
+  assert.ok(html.includes('href="#global-approvals-section"'));
+});
+
+test("renderCommandStatRow shows all 11 agent statuses even when most are zero, never hiding one", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 0, pending_approvals: [], global_arc: {},
+    agents_by_status: { idle: 2 }, businesses: [],
+  });
+  for (const status of ["created", "initializing", "active", "working", "idle", "waiting",
+                         "improving", "paused", "failed", "quarantined", "retired"]) {
+    assert.ok(html.includes(`>${status}<`), `stat row must show the "${status}" agent status, even at 0`);
+  }
+});
+
+test("renderCommandStatRow sums real USD awaiting approval from pending_approvals, never fabricates it", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 250000, // $2500.00
+    pending_approvals: [{ amount_usd: 50 }, { amount_usd: 125.5 }, { amount_usd: null }],
+    global_arc: {}, agents_by_status: {}, businesses: [],
+  });
+  assert.ok(html.includes("$2500.00") || html.includes("$2,500.00"));
+  assert.ok(html.includes("$175.50"), "must sum only the real amount_usd values, treating null as 0");
+});
+
+test("renderCommandStatRow counts businesses by their real status only (active/paused/retired)", () => {
+  const html = R.renderCommandStatRow({
+    real_revenue_usd_cents: 0, pending_approvals: [], global_arc: {}, agents_by_status: {},
+    businesses: [{ status: "active" }, { status: "active" }, { status: "paused" }, { status: "retired" }],
+  });
+  const cells = html.split('<div class="stat-block-label">Businesses</div>')[1];
+  assert.ok(cells.includes(">active<"));
+  assert.ok(/active[\s\S]{0,80}>2</.test(cells), "2 active businesses should render as 2, not fabricated");
+});
+
+test("renderActivityFeed handles the empty case", () => {
+  assert.ok(R.renderActivityFeed([]).includes("No system activity recorded yet"));
+  assert.ok(R.renderActivityFeed(null).includes("No system activity recorded yet"));
+});
+
+test("renderActivityFeed shows a real agent's resolved name, falling back to the raw actor id for an unknown one", () => {
+  const events = [
+    { id: 1, actor: "owner", actor_name: null, action: "create_business",
+      target_type: "business", created_at: "2026-09-20 14:30:00" },
+    { id: 2, actor: "agt_123", actor_name: "Nova", action: "complete_task",
+      target_type: "task", created_at: "2026-09-20 14:31:00" },
+    { id: 3, actor: "agt_gone", actor_name: null, action: "complete_task",
+      target_type: "task", created_at: "2026-09-20 14:32:00" },
+  ];
+  const html = R.renderActivityFeed(events);
+  assert.ok(html.includes("OWNER"));
+  assert.ok(html.includes("created business"));
+  assert.ok(html.includes("Nova"));
+  assert.ok(html.includes("agt_gone"), "an actor id with no resolved name still shows the raw id, never hidden");
+});
+
+test("renderActivityFeed falls back to the raw action string for an action not in the label map", () => {
+  const html = R.renderActivityFeed([
+    { id: 1, actor: "system", actor_name: null, action: "some_future_action_xyz",
+      target_type: "widget", created_at: "2026-09-20 14:30:00" },
+  ]);
+  assert.ok(html.includes("some future action xyz"), "unknown action falls back to a de-underscored raw string, never hidden");
+});
+
+test("renderActivityFeed escapes actor/action/target text to prevent HTML injection", () => {
+  const html = R.renderActivityFeed([
+    { id: 1, actor: "agt_1", actor_name: '<script>alert(1)</script>', action: "create_business",
+      target_type: "business", created_at: "2026-09-20 14:30:00" },
+  ]);
+  assert.ok(!html.includes("<script>"));
+});
+
+test("renderBusinessRing returns nothing for an empty business list (no empty ring drawn)", () => {
+  assert.strictEqual(R.renderBusinessRing([]), "");
+  assert.strictEqual(R.renderBusinessRing(null), "");
+});
+
+test("renderBusinessRing places one node + one line per real business, using core-node-business styling", () => {
+  const businesses = [
+    { id: "biz_1", name: "Trading Co", status: "active", pending_approval_count: 0 },
+    { id: "biz_2", name: "Roblox Studio", status: "paused", pending_approval_count: 2 },
+  ];
+  const html = R.renderBusinessRing(businesses);
+  assert.strictEqual((html.match(/class="core-node core-node-business/g) || []).length, 2);
+  assert.strictEqual((html.match(/<line class="web-line"/g) || []).length, 2);
+  assert.ok(html.includes("Trading Co"));
+  assert.ok(html.includes("Roblox Studio"));
+  // A business with a real pending approval gets the same alert treatment
+  // the metric ring already uses, not a fabricated new visual language.
+  assert.ok(html.includes("core-node-alert"));
+});
+
+test("renderBusinessRing escapes a business name to prevent HTML injection", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "<img src=x onerror=alert(1)>", status: "active", pending_approval_count: 0 },
+  ]);
+  assert.ok(!html.includes("<img"));
+});
+
+test("renderTradingStrategyEvolution handles the no-history-yet case", () => {
+  const html = R.renderTradingStrategyEvolution({ total_versions: 0, active_count: 0,
+    businesses_with_trading: 0, latest_version: null });
+  assert.ok(html.includes("No trading strategy history yet"));
+});
+
+test("renderTradingStrategyEvolution shows the real rollup counts and latest version's rationale", () => {
+  const html = R.renderTradingStrategyEvolution({
+    total_versions: 5, active_count: 2, businesses_with_trading: 2,
+    latest_version: { created_at: "2026-09-20 12:00:00", source: "strategy_review",
+                       rationale: "Tightened position sizing after a losing streak." },
+  });
+  assert.ok(html.includes(">5<"));
+  assert.ok(html.includes(">2<"));
+  assert.ok(html.includes("strategy_review"));
+  assert.ok(html.includes("Tightened position sizing after a losing streak."));
+});
+
 console.log("\nAll dashboard-render.js tests finished.");
