@@ -20,6 +20,7 @@ from orchestrator import Orchestrator
 from llm_client import MockClient
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS
 from alpaca_client import MockAlpacaClient, AlpacaError
+import market_data
 from market_data import MarketDataError
 import executor
 
@@ -706,6 +707,34 @@ def test_trading_cycle_without_a_portfolio_fails_loudly():
     os.remove(TEST_DB_PATH)
 
 
+def test_trading_cycle_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+    # Simulate an earlier strategy_backtest_search today having already
+    # used up all but 2 of the day's requests -- this trading cycle's
+    # 5-symbol watchlist needs more than that.
+    market_data.reserve_budget(db, _FakeMarketClient({}), 23, "strategy_backtest_search")
+
+    task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
+                                permission_level_required=3, task_type="trading_cycle")
+    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:")
+    assert "only 2 remain" in outcomes[0][1]
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "failed"
+    # Refusing must never itself burn any of what little quota is left.
+    assert market_data.used_today(db) == 23
+    print("PASS: a trading_cycle task refuses loudly, before any real fetch, once an earlier "
+          "backtest search already exhausted today's shared Alpha Vantage quota")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def _setup_live_trading(db, biz_id, live_trading_enabled=1, drawdown_halt_pct=None):
     """Creates a permission_level=4 live-trading agent plus a fresh
     paper_portfolios row (with live_trading_enabled set as given) and
@@ -949,6 +978,37 @@ def test_strategy_backtest_search_task_runs_and_saves_a_report():
     assert runs[0]["validation_split_date"] == "2026-01-06"
     print("PASS: a strategy_backtest_search task runs a real backtest against historical data "
           "and saves a report -- never touching paper_trades/live_trades")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_strategy_backtest_search_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted():
+    db, orch, biz_id, agent_id = _setup()
+    _setup_backtest_strategy(db, biz_id)  # watchlist=['AAPL'], needs 1 request
+    # Simulate the day's whole quota already spent by earlier trading
+    # cycles -- this backtest search's 1-symbol watchlist needs more
+    # than the 0 left.
+    market_data.reserve_budget(db, _FakeMarketClient({}), 25, "trading_cycle")
+
+    task_id = orch.create_task(
+        biz_id, "Backtest and search for a better trading strategy against real historical "
+                "price data", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={
+            "train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+            "validation_end_date": "2026-01-07", "max_candidates": 1,
+        },
+    )
+    fake_market = _FakeHistoricalMarketClient({"AAPL": [_bt_bar("2026-01-05", 100.0)]})
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+
+    assert len(outcomes) == 1 and outcomes[0][0] == task_id
+    assert outcomes[0][1].startswith("failed:")
+    assert "only 0 remain" in outcomes[0][1]
+    assert market_data.used_today(db) == 25, "a refused reservation must never partially apply"
+    print("PASS: a strategy_backtest_search task refuses loudly, before any real fetch, once "
+          "earlier trading cycles already exhausted today's shared Alpha Vantage quota")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -1236,6 +1296,7 @@ if __name__ == "__main__":
     test_trading_cycle_task_executes_a_paper_trade_and_records_a_snapshot()
     test_trading_cycle_drawdown_halt_pauses_the_trading_agent()
     test_trading_cycle_without_a_portfolio_fails_loudly()
+    test_trading_cycle_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted()
     test_live_trading_cycle_task_executes_a_real_order_and_records_it()
     test_live_trading_cycle_refuses_when_live_trading_not_enabled()
     test_live_trading_cycle_respects_the_kill_switch()
@@ -1244,6 +1305,7 @@ if __name__ == "__main__":
     test_live_trading_cycle_daily_loss_halt_pauses_the_live_agent()
     test_live_trading_cycle_without_a_portfolio_fails_loudly()
     test_strategy_backtest_search_task_runs_and_saves_a_report()
+    test_strategy_backtest_search_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted()
     test_strategy_backtest_search_never_touches_paper_or_live_trade_tables()
     test_strategy_backtest_search_requires_complete_date_range_in_task_input()
     test_strategy_backtest_search_fails_loudly_on_missing_historical_data()

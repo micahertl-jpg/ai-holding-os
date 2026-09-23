@@ -298,6 +298,15 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- market_data_usage — see schema.sql for the full explanation; this
+-- mirrors it exactly.
+CREATE TABLE IF NOT EXISTS market_data_usage (
+    id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,
+    request_count INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- App Development — see schema.sql for the full explanation; this
 -- mirrors it exactly.
 CREATE TABLE IF NOT EXISTS app_feasibility_assessments (

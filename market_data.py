@@ -27,8 +27,20 @@ import os
 import urllib.request
 import urllib.error
 
+from db import new_id
+from scheduler import TIMESTAMP_FORMAT
+
 ALPHAVANTAGE_API_URL = "https://www.alphavantage.co/query"
 FETCH_TIMEOUT_SECONDS = 15
+
+# Alpha Vantage's free-tier cap (25 requests/day at the time this was
+# written -- see the module docstring's note that this can change).
+# Every real caller (tasks/trading_cycle.py's paper AND live cycles,
+# executor.py's strategy_backtest_search handler) shares this same
+# quota, since they all hit the same real Alpha Vantage account. If
+# you've upgraded to a paid Alpha Vantage plan, raise this via the env
+# var rather than editing the default.
+DAILY_REQUEST_LIMIT = int(os.environ.get("ALPHAVANTAGE_DAILY_REQUEST_LIMIT", "25"))
 
 
 class MarketDataError(Exception):
@@ -40,6 +52,8 @@ class AlphaVantageClient:
     different provider later by writing another class with the same
     `.get_quote(symbol) -> {"symbol", "price", "as_of", "mock"}`
     signature — nothing else in the codebase should need to change."""
+
+    is_mock = False
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.environ.get("ALPHAVANTAGE_API_KEY")
@@ -173,6 +187,8 @@ class MockMarketDataClient:
     rule llm_client.MockClient follows for model output, applied here to
     market data."""
 
+    is_mock = True
+
     def __init__(self, prices: dict = None, default_price: float = 100.0):
         self.prices = prices or {}
         self.default_price = default_price
@@ -209,6 +225,56 @@ class MockMarketDataClient:
                 day_index += 1
             d += datetime.timedelta(days=1)
         return bars
+
+
+def used_today(db, now: datetime.datetime = None) -> int:
+    """Real count of Alpha Vantage requests reserved so far today (UTC),
+    summed from market_data_usage -- never estimated. Pure enough to
+    unit-test directly against a real (SQLite) Database with hand-seeded
+    rows."""
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    row = db.query_one(
+        "SELECT COALESCE(SUM(request_count),0) as total FROM market_data_usage WHERE created_at >= ?",
+        (start_of_day.strftime(TIMESTAMP_FORMAT),),
+    )
+    return row["total"]
+
+
+def reserve_budget(db, market_client, count: int, purpose: str, now: datetime.datetime = None) -> None:
+    """Call BEFORE a caller is about to make `count` real Alpha Vantage
+    requests (one per symbol it's about to fetch a quote/history for),
+    so a request batch that would blow through the rest of today's
+    quota is refused loudly up front -- never partway through, after
+    already burning what was left. A no-op (no check, no record) when
+    market_client.is_mock is True: there's no real quota at stake using
+    MockMarketDataClient, and requiring db there too would force every
+    existing offline test that passes a mock client to also thread a
+    real Database through call sites that don't otherwise need one.
+
+    Found necessary for real: a backtest search retried several times
+    (each attempt burns real quota even when Alpha Vantage rejects it
+    with a rate-limit response, not a network failure) exhausted the
+    day's quota right before a scheduled trading cycle needed it --
+    trading_cycle and strategy_backtest_search were competing for the
+    same shared resource with neither aware of the other's usage."""
+    if getattr(market_client, "is_mock", False):
+        return
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    used = used_today(db, now)
+    remaining = max(0, DAILY_REQUEST_LIMIT - used)
+    if count > remaining:
+        raise MarketDataError(
+            f"this would need {count} Alpha Vantage request(s), but only {remaining} remain "
+            f"of today's {DAILY_REQUEST_LIMIT}/day free-tier quota ({used} already used) -- "
+            f"refusing to start {purpose} and burn through what's left on a request that "
+            f"would fail partway anyway. Try again after the quota resets, or raise "
+            f"ALPHAVANTAGE_DAILY_REQUEST_LIMIT if you've upgraded your Alpha Vantage plan."
+        )
+    db.execute(
+        "INSERT INTO market_data_usage (id, purpose, request_count) VALUES (?, ?, ?)",
+        (new_id("mdusage"), purpose, count),
+    )
 
 
 def get_default_client():

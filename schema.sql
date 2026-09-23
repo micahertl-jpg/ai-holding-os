@@ -388,6 +388,25 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Tracks real Alpha Vantage request usage against its free-tier daily
+-- quota (see market_data.py's reserve_budget()) -- NOT per-symbol, one
+-- row per RESERVATION a caller makes right before it's about to fetch
+-- request_count symbols' worth of quotes/history in one go
+-- (trading_cycle, live_trading_cycle, and strategy_backtest_search all
+-- share this same quota, since they hit the same real Alpha Vantage
+-- account). Found necessary for real: a backtest search retried
+-- several times (each attempt burns real quota even when Alpha Vantage
+-- rejects it with a rate-limit response) exhausted the day's quota
+-- right before a scheduled trading cycle needed it. Never written to
+-- when market_data.get_default_client() returns MockMarketDataClient
+-- (no real key configured) -- there's no real quota at stake then.
+CREATE TABLE IF NOT EXISTS market_data_usage (
+    id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,          -- e.g. 'trading_cycle' | 'live_trading_cycle' | 'strategy_backtest_search'
+    request_count INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- App Development — feasibility/planning assessments produced by the
 -- research_app_feasibility task type. Every field is the model's
 -- ESTIMATE, never a guaranteed timeline/cost/outcome — see

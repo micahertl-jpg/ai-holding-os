@@ -43,7 +43,11 @@ as a separate later task.
    also set `ALPHAVANTAGE_API_KEY` (free key at alphavantage.co) — without
    it, `trading_cycle` tasks fail loudly instead of trading on fabricated
    prices, which is correct behavior but means the feature is otherwise
-   invisible.
+   invisible. The free key's 25-requests/day quota is shared across
+   `trading_cycle`, `live_trading_cycle`, and `strategy_backtest_search`
+   (see README.md's "Shared Alpha Vantage request budget" section) — if
+   you've upgraded to a paid Alpha Vantage plan, raise the optional
+   `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` to match.
 6. Set **`DASHBOARD_USERNAME`** and **`DASHBOARD_PASSWORD`** — this is
    what actually protects `/dashboard` and everything under it (every
    business's data, the ARC ledger, agent controls) with HTTP Basic
