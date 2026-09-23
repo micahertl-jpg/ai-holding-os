@@ -1473,6 +1473,93 @@ test("renderBusinessRing escapes a business name to prevent HTML injection", () 
   assert.ok(!html.includes("<img"));
 });
 
+test("renderBusinessRing gives each business its own agent/task breakdown as separate mini nodes", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Trading Co", status: "active", pending_approval_count: 0,
+      agent_count: 3, open_task_count: 2 },
+  ]);
+  assert.strictEqual((html.match(/class="core-node core-node-mini"/g) || []).length, 2,
+    "one mini node for agents, one for open tasks -- a real breakdown, not a fabricated extra stat");
+  assert.strictEqual((html.match(/<line class="web-line web-line-mini"/g) || []).length, 2,
+    "each mini node gets its own connecting line back to the business node, not the hub");
+  assert.ok(html.includes(">3<"), "the real agent_count value must appear");
+  assert.ok(html.includes(">2<"), "the real open_task_count value must appear");
+  assert.ok(html.includes("AGT"));
+  assert.ok(html.includes("TASK"));
+});
+
+test("renderBusinessRing shows 0 for a business's mini breakdown rather than omitting it", () => {
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Empty Co", status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0 },
+  ]);
+  assert.strictEqual((html.match(/class="core-node core-node-mini"/g) || []).length, 2,
+    "a business with zero agents/tasks still gets its breakdown nodes, honestly showing 0");
+});
+
+test("renderBusinessRing's first business never lands on the same angle as the metric ring's first node", () => {
+  // Regression test: both rings' index-0 node used to sit at exactly
+  // -90deg (straight up) regardless of node count, since pointOnRing's
+  // angle formula always starts there -- with only a 5-point radius
+  // gap between the two rings, the first business and the "Businesses"
+  // metric node landed directly on top of each other. The business
+  // ring now carries its own angle offset specifically to avoid this.
+  const html = R.renderBusinessRing([
+    { id: "biz_1", name: "Solo Co", status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0 },
+  ]);
+  const match = html.match(/class="core-node core-node-business"\s+style="left:(-?[\d.]+)%;top:(-?[\d.]+)%/);
+  assert.ok(match, "should find the business node's position");
+  const [, left] = match.map(Number);
+  assert.notStrictEqual(left, 50, "a single business must not sit at left:50% (straight up), " +
+    "the same angle the metric ring's own first node always uses");
+});
+
+test("renderBusinessRing keeps every business node at maximum angular clearance from all 7 fixed metric angles, for any business count 1-9", () => {
+  // Regression test: a plain fixed rotation offset was tried first and
+  // wasn't enough -- with a 30deg offset and 4 businesses, one business
+  // landed only ~8.6deg from the metric ring's "Approvals" node (found
+  // live via screenshot). Each business is now placed at the angular
+  // MIDPOINT between two consecutive metric nodes, which is exactly
+  // half of one metric step (360/7/2 = ~25.71deg) from BOTH neighbors,
+  // by construction -- proven here for every business count from 1
+  // through 9 (past the 7-slot wraparound point), not just today's
+  // live data shape.
+  const METRIC_STEP_DEG = 360 / 7;
+  const EXPECTED_CLEARANCE_DEG = METRIC_STEP_DEG / 2;
+  function angleOf(html, name) {
+    const re = new RegExp(
+      `class="core-node core-node-business[^"]*"\\s+style="left:(-?[\\d.]+)%;top:(-?[\\d.]+)%[^"]*"[^>]*title="${name}`
+    );
+    const m = html.match(re);
+    assert.ok(m, `should find ${name}'s node position`);
+    const [, left, top] = m.map(Number);
+    return Math.atan2(top - 50, left - 50) * (180 / Math.PI);
+  }
+  function angularDistanceDeg(a, b) {
+    let d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+  const metricAnglesDeg = Array.from({ length: 7 }, (_, i) => -90 + i * METRIC_STEP_DEG);
+
+  for (let count = 1; count <= 9; count++) {
+    const businesses = Array.from({ length: count }, (_, i) => ({
+      id: `biz_${i}`, name: `Biz${i}`, status: "active", pending_approval_count: 0,
+      agent_count: 0, open_task_count: 0,
+    }));
+    const html = R.renderBusinessRing(businesses);
+    for (let i = 0; i < count; i++) {
+      const angle = angleOf(html, `Biz${i}`);
+      const minClearance = Math.min(...metricAnglesDeg.map((m) => angularDistanceDeg(angle, m)));
+      assert.ok(
+        Math.abs(minClearance - EXPECTED_CLEARANCE_DEG) < 0.5,
+        `business ${i} of ${count} should sit ~${EXPECTED_CLEARANCE_DEG.toFixed(2)}deg from its nearest ` +
+        `metric node (max possible clearance), got ${minClearance.toFixed(2)}deg`
+      );
+    }
+  }
+});
+
 test("renderTradingStrategyEvolution handles the no-history-yet case", () => {
   const html = R.renderTradingStrategyEvolution({ total_versions: 0, active_count: 0,
     businesses_with_trading: 0, latest_version: null });

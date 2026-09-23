@@ -1091,6 +1091,27 @@ button { position: relative; overflow: hidden; }
   box-shadow: 0 0 6px currentColor;
 }
 
+/* Satellite nodes hanging just off a business node -- its own agent/
+   open-task counts broken out as small nodes of their own instead of
+   folded into the business node's label. Deliberately smaller and
+   dimmer than the business node they belong to, so the hierarchy (hub
+   -> business -> its own breakdown) stays legible at a glance. */
+.core-node-mini {
+  gap: 2px;
+}
+.core-node-mini .core-node-value {
+  font-size: 10px;
+  color: var(--muted);
+}
+.core-node-mini .core-node-label {
+  font-size: 6.5px;
+  color: var(--text-faint);
+}
+.web-line-mini {
+  stroke-width: 0.2;
+  opacity: 0.3;
+}
+
 @keyframes node-in {
   from { opacity: 0; transform: translate(-50%, -50%) translateY(4px); }
   to { opacity: 1; transform: translate(-50%, -50%) translateY(0); }
@@ -1099,6 +1120,11 @@ button { position: relative; overflow: hidden; }
 @media (max-width: 640px) {
   .core-node-value { font-size: 11px; }
   .core-node-label { font-size: 7px; }
+  /* The per-business agent/task breakdown is a nice-to-have at this
+     size -- the same numbers are one scroll away in the Businesses
+     table -- and the orbital box is too small here to fit a business's
+     name plus two satellite nodes without everything colliding. */
+  .core-node-mini, .web-line-mini { display: none; }
 }
 
 /* ---------- Top bar: system status + approvals ---------- */

@@ -1001,11 +1001,22 @@
   // and going clockwise -- shared math for both the orbital node badges
   // and the web-lines connecting them back to the hub, so the two can
   // never drift out of sync with each other.
-  function pointOnRing(index, count, radiusPct) {
-    const angle = (index / count) * 2 * Math.PI - Math.PI / 2;
+  function pointOnRing(index, count, radiusPct, angleOffsetRad) {
+    const angle = (index / count) * 2 * Math.PI - Math.PI / 2 + (angleOffsetRad || 0);
     return {
       x: 50 + Math.cos(angle) * radiusPct,
       y: 50 + Math.sin(angle) * radiusPct,
+    };
+  }
+
+  // A point offset a short distance from an already-placed ring node,
+  // in the same 0-100 percentage coordinate space -- used to hang a
+  // small satellite (a mini node breaking down one aspect of the
+  // parent node) just off of it without needing its own ring math.
+  function pointNear(center, angleRad, distancePct) {
+    return {
+      x: center.x + Math.cos(angleRad) * distancePct,
+      y: center.y + Math.sin(angleRad) * distancePct,
     };
   }
 
@@ -1397,36 +1408,97 @@
   // at a larger radius so the two rings never collide. Returns its own
   // <line>s + node <div>s in the same shape as renderOrbitalRing, meant
   // to be concatenated into the same #core-orbital-overlay container.
-  const BUSINESS_RING_RADIUS_PCT = 47;
+  //
+  // Angle placement: a plain rotation offset was tried first and isn't
+  // enough -- it only moves WHICH business ends up near a metric node,
+  // not whether one does (found live: with a fixed 30deg offset, 4
+  // businesses put a different business only ~8.6deg from "Approvals").
+  // The metric ring is always exactly 7 nodes at fixed angles, so
+  // instead each business is placed at the angular MIDPOINT between two
+  // consecutive metric nodes -- the point of maximum possible clearance
+  // from both of them, by construction, for any business count. With
+  // more than 7 businesses, extra ones share a midpoint slot with an
+  // earlier business and step out one extra radius band so they don't
+  // collide with each other either.
+  const METRIC_RING_NODE_COUNT = 7; // renderOrbitalRing's fixed node count
+  const METRIC_RING_ANGLE_STEP = (2 * Math.PI) / METRIC_RING_NODE_COUNT;
+  const BUSINESS_RING_RADIUS_PCT = 50;
+  const BUSINESS_RING_RADIUS_STEP_PCT = 9; // extra radius per lap once businesses > 7
+  const BUSINESS_MINI_ANGLE_SPREAD = 0.5; // rad, how far each mini node fans from its parent's own angle
+  const BUSINESS_MINI_DISTANCE_PCT = 6;
 
+  function businessRingAngle(index) {
+    const slot = index % METRIC_RING_NODE_COUNT;
+    return -Math.PI / 2 + METRIC_RING_ANGLE_STEP * (slot + 0.5);
+  }
+
+  // Each business node gets two small satellite nodes of its own --
+  // agent count and open task count -- rather than folding those
+  // numbers into the business node's own label. This is the same
+  // "hub with real nodes orbiting it" idea the System Core itself uses,
+  // just one level down: the business node becomes a small hub for a
+  // real breakdown of what's inside it, instead of one flat label.
   function renderBusinessRing(businesses) {
     if (!businesses || businesses.length === 0) return "";
-    const positioned = businesses.map((b, i) =>
-      Object.assign({}, b, pointOnRing(i, businesses.length, BUSINESS_RING_RADIUS_PCT))
-    );
+
+    // One pass: each business's own ring position, plus its two mini
+    // satellites (agents/tasks), computed once and reused for both the
+    // <line>s and the node <div>s below -- never recomputed, so the
+    // lines can never drift out of sync with the nodes they connect.
+    const positioned = businesses.map((b, i) => {
+      const angle = businessRingAngle(i);
+      const lap = Math.floor(i / METRIC_RING_NODE_COUNT);
+      const radius = BUSINESS_RING_RADIUS_PCT + lap * BUSINESS_RING_RADIUS_STEP_PCT;
+      const pos = { x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius };
+      const agentPos = pointNear(pos, angle - BUSINESS_MINI_ANGLE_SPREAD, BUSINESS_MINI_DISTANCE_PCT);
+      const taskPos = pointNear(pos, angle + BUSINESS_MINI_ANGLE_SPREAD, BUSINESS_MINI_DISTANCE_PCT);
+      return Object.assign({}, b, pos, { agentPos, taskPos });
+    });
+
     const lines = positioned
-      .map(
-        (p, i) => `
+      .map((p, i) => {
+        const delay = (i * 0.08 + 0.3).toFixed(2);
+        return `
         <line class="web-line" x1="50" y1="50" x2="${p.x.toFixed(2)}" y2="${p.y.toFixed(2)}"
-          style="animation-delay:${(i * 0.15 + 0.3).toFixed(2)}s;opacity:0.25" />`
-      )
+          style="animation-delay:${delay}s;opacity:0.25" />
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}"
+          x2="${p.agentPos.x.toFixed(2)}" y2="${p.agentPos.y.toFixed(2)}" style="animation-delay:${delay}s" />
+        <line class="web-line web-line-mini" x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}"
+          x2="${p.taskPos.x.toFixed(2)}" y2="${p.taskPos.y.toFixed(2)}" style="animation-delay:${delay}s" />`;
+      })
       .join("");
-    const nodeDivs = positioned
+
+    const nodes = positioned
       .map((p, i) => {
         const alert = Number(p.pending_approval_count || 0) > 0;
         const dotColor = alert ? "var(--amber)" : p.status === "active" ? "var(--green)" : "var(--muted)";
+        const delay = (i * 0.08 + 0.2).toFixed(2);
+        const miniDelay = (i * 0.08 + 0.4).toFixed(2);
         return `
         <div class="core-node core-node-business${alert ? " core-node-alert" : ""}"
-          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${(i * 0.08 + 0.2).toFixed(2)}s"
+          style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%;animation-delay:${delay}s"
           title="${escapeHtml(p.name)} — ${escapeHtml(p.status)}">
           <span class="core-node-biz-dot" style="background:${dotColor};color:${dotColor}"></span>
           <span class="core-node-label">${escapeHtml(p.name)}</span>
+        </div>
+        <div class="core-node core-node-mini"
+          style="left:${p.agentPos.x.toFixed(2)}%;top:${p.agentPos.y.toFixed(2)}%;animation-delay:${miniDelay}s"
+          title="${escapeHtml(p.name)} — agents">
+          <span class="core-node-value">${escapeHtml(p.agent_count != null ? p.agent_count : 0)}</span>
+          <span class="core-node-label">AGT</span>
+        </div>
+        <div class="core-node core-node-mini"
+          style="left:${p.taskPos.x.toFixed(2)}%;top:${p.taskPos.y.toFixed(2)}%;animation-delay:${miniDelay}s"
+          title="${escapeHtml(p.name)} — open tasks">
+          <span class="core-node-value">${escapeHtml(p.open_task_count != null ? p.open_task_count : 0)}</span>
+          <span class="core-node-label">TASK</span>
         </div>`;
       })
       .join("");
+
     return `
       <svg class="core-web-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>
-      ${nodeDivs}`;
+      ${nodes}`;
   }
 
   // ---------- Trading Strategy Evolution (global summary) ----------
