@@ -29,7 +29,7 @@ class _FakeHistoricalMarketClient:
     """Stand-in for market_data.get_default_client() in these tests --
     serves real-shaped (mock=False) historical bars from a fixed dict
     per symbol, filtered to the requested date range, exactly like
-    AlphaVantageClient.get_daily_history() would. get_quote() is
+    TwelveDataClient.get_daily_history() would. get_quote() is
     deliberately unimplemented since _handle_strategy_backtest_search
     never calls it."""
 
@@ -713,14 +713,15 @@ def test_trading_cycle_refuses_before_any_fetch_once_the_shared_daily_quota_is_e
     # Simulate an earlier strategy_backtest_search today having already
     # used up all but 2 of the day's requests -- this trading cycle's
     # 5-symbol watchlist needs more than that.
-    market_data.reserve_budget(db, _FakeMarketClient({}), 23, "strategy_backtest_search")
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 25):
+        market_data.reserve_budget(db, _FakeMarketClient({}), 23, "strategy_backtest_search")
 
-    task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
-                                permission_level_required=3, task_type="trading_cycle")
-    fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
+        task_id = orch.create_task(biz_id, "Run a paper-trading cycle",
+                                    permission_level_required=3, task_type="trading_cycle")
+        fake_market = _FakeMarketClient({s: 100.0 for s in params["watchlist"]})
 
-    with patch("executor.market_data.get_default_client", return_value=fake_market):
-        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+        with patch("executor.market_data.get_default_client", return_value=fake_market):
+            outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
 
     assert len(outcomes) == 1 and outcomes[0][0] == task_id
     assert outcomes[0][1].startswith("failed:")
@@ -730,7 +731,7 @@ def test_trading_cycle_refuses_before_any_fetch_once_the_shared_daily_quota_is_e
     # Refusing must never itself burn any of what little quota is left.
     assert market_data.used_today(db) == 23
     print("PASS: a trading_cycle task refuses loudly, before any real fetch, once an earlier "
-          "backtest search already exhausted today's shared Alpha Vantage quota")
+          "backtest search already exhausted today's shared Twelve Data quota")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -988,27 +989,28 @@ def test_strategy_backtest_search_refuses_before_any_fetch_once_the_shared_daily
     # Simulate the day's whole quota already spent by earlier trading
     # cycles -- this backtest search's 1-symbol watchlist needs more
     # than the 0 left.
-    market_data.reserve_budget(db, _FakeMarketClient({}), 25, "trading_cycle")
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 25):
+        market_data.reserve_budget(db, _FakeMarketClient({}), 25, "trading_cycle")
 
-    task_id = orch.create_task(
-        biz_id, "Backtest and search for a better trading strategy against real historical "
-                "price data", permission_level_required=2, task_type="strategy_backtest_search",
-        task_input={
-            "train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
-            "validation_end_date": "2026-01-07", "max_candidates": 1,
-        },
-    )
-    fake_market = _FakeHistoricalMarketClient({"AAPL": [_bt_bar("2026-01-05", 100.0)]})
+        task_id = orch.create_task(
+            biz_id, "Backtest and search for a better trading strategy against real historical "
+                    "price data", permission_level_required=2, task_type="strategy_backtest_search",
+            task_input={
+                "train_start_date": "2026-01-05", "validation_split_date": "2026-01-06",
+                "validation_end_date": "2026-01-07", "max_candidates": 1,
+            },
+        )
+        fake_market = _FakeHistoricalMarketClient({"AAPL": [_bt_bar("2026-01-05", 100.0)]})
 
-    with patch("executor.market_data.get_default_client", return_value=fake_market):
-        outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
+        with patch("executor.market_data.get_default_client", return_value=fake_market):
+            outcomes = executor.run_once(db, orch, client=MockClient(canned_response="{}"))
 
     assert len(outcomes) == 1 and outcomes[0][0] == task_id
     assert outcomes[0][1].startswith("failed:")
     assert "only 0 remain" in outcomes[0][1]
     assert market_data.used_today(db) == 25, "a refused reservation must never partially apply"
     print("PASS: a strategy_backtest_search task refuses loudly, before any real fetch, once "
-          "earlier trading cycles already exhausted today's shared Alpha Vantage quota")
+          "earlier trading cycles already exhausted today's shared Twelve Data quota")
     db.close()
     os.remove(TEST_DB_PATH)
 

@@ -84,7 +84,7 @@ def run_backtest(starting_cash_usd, strategy_params, historical_bars_by_symbol, 
         if mocked:
             raise BacktestError(
                 f"refusing to backtest -- mock historical data for {symbol} "
-                f"(ALPHAVANTAGE_API_KEY not configured; see README ACTION REQUIRED)"
+                f"(TWELVEDATA_API_KEY not configured; see README ACTION REQUIRED)"
             )
         bars_by_symbol_by_date[symbol] = {b["date"]: b for b in bars}
         all_dates.update(b["date"] for b in bars)

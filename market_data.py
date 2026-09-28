@@ -2,23 +2,30 @@
 market_data.py — minimal, real stock-quote client using only the Python
 standard library (urllib), same pattern as llm_client.py.
 
-Talks to Alpha Vantage's free GLOBAL_QUOTE endpoint. This is NOT a mock:
-given a real ALPHAVANTAGE_API_KEY and normal internet access,
-AlphaVantageClient.get_quote() makes an actual HTTPS GET and returns the
+Talks to Twelve Data's free /quote and /time_series endpoints. This is
+NOT a mock: given a real TWELVEDATA_API_KEY and normal internet access,
+TwelveDataClient.get_quote() makes an actual HTTPS GET and returns the
 real latest traded price. It was written in a sandbox with no API key and
 no general internet access, so the live call itself has NOT been executed
 yet — see MockMarketDataClient below for what was actually exercised
 there, and README.md for how to do the first real test run.
 
-Why Alpha Vantage: free API key (instant signup, email only), simple
-JSON, no extra pip dependency needed (plain urllib, same as the rest of
-this codebase). Its free tier is rate-limited — check the current limit
-on your own key at alphavantage.co, since it has changed over time and
-this comment could go stale. A rate-limited/empty response comes back as
-HTTP 200 with a "Note" or "Information" field instead of a real error
-code, so that shape is checked explicitly below rather than trusting a
-200 status alone — otherwise a rate-limit message could be silently
-parsed as if it were quote data.
+Why Twelve Data (replacing an earlier Alpha Vantage integration, found
+live to be unworkable — Alpha Vantage's free tier caps out at 25
+requests/day, which even a single default 5-symbol watchlist on a 6-hour
+cycle burns through almost entirely on its own, one bad rate-limit-hit
+day away from failing every subsequent cycle): free API key (instant
+signup, email only), simple JSON, no extra pip dependency needed (plain
+urllib, same as the rest of this codebase), and a free tier that covers
+both live quotes AND historical daily bars (needed for backtesting) with
+a much larger daily allowance. Its free tier is still rate-limited —
+check the current limit on your own key at twelvedata.com, since it can
+change over time and this comment could go stale. An error (bad symbol,
+rate limit, invalid key) comes back as JSON with a "status": "error"
+field — sometimes alongside a real non-200 HTTP status, sometimes not —
+so that shape is checked explicitly below rather than trusting a 200
+status alone, same discipline the codebase already applied to Alpha
+Vantage's equivalent "Note"/"Information" quirk.
 """
 
 import datetime
@@ -30,68 +37,85 @@ import urllib.error
 from db import new_id
 from scheduler import TIMESTAMP_FORMAT
 
-ALPHAVANTAGE_API_URL = "https://www.alphavantage.co/query"
+TWELVEDATA_API_URL = "https://api.twelvedata.com"
 FETCH_TIMEOUT_SECONDS = 15
 
-# Alpha Vantage's free-tier cap (25 requests/day at the time this was
+# Twelve Data's free-tier cap (800 requests/day at the time this was
 # written -- see the module docstring's note that this can change).
 # Every real caller (tasks/trading_cycle.py's paper AND live cycles,
 # executor.py's strategy_backtest_search handler) shares this same
-# quota, since they all hit the same real Alpha Vantage account. If
-# you've upgraded to a paid Alpha Vantage plan, raise this via the env
+# quota, since they all hit the same real Twelve Data account. If
+# you've upgraded to a paid Twelve Data plan, raise this via the env
 # var rather than editing the default.
-DAILY_REQUEST_LIMIT = int(os.environ.get("ALPHAVANTAGE_DAILY_REQUEST_LIMIT", "25"))
+DAILY_REQUEST_LIMIT = int(os.environ.get("TWELVEDATA_DAILY_REQUEST_LIMIT", "800"))
 
 
 class MarketDataError(Exception):
     pass
 
 
-class AlphaVantageClient:
-    """Thin real client. One method: get_quote(). Swap this out for a
-    different provider later by writing another class with the same
-    `.get_quote(symbol) -> {"symbol", "price", "as_of", "mock"}`
-    signature — nothing else in the codebase should need to change."""
+class TwelveDataClient:
+    """Thin real client. Same two-method interface the codebase already
+    depends on: `.get_quote(symbol) -> {"symbol", "price", "as_of", "mock"}`
+    and `.get_daily_history(symbol, start_date, end_date) -> [bars]` —
+    swap this out for yet another provider later by writing another class
+    with the same signature, nothing else in the codebase should need to
+    change."""
 
     is_mock = False
 
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.environ.get("ALPHAVANTAGE_API_KEY")
+        self.api_key = api_key or os.environ.get("TWELVEDATA_API_KEY")
         if not self.api_key:
             raise MarketDataError(
-                "No ALPHAVANTAGE_API_KEY found (env var or constructor arg). "
+                "No TWELVEDATA_API_KEY found (env var or constructor arg). "
                 "Refusing to proceed — this system never fabricates market data."
             )
+
+    def _get_json(self, path_and_query: str, symbol: str, action: str) -> dict:
+        """Shared GET + error-surfacing for both endpoints below. Twelve
+        Data returns a real non-200 status for some errors (auth, rate
+        limit) and a 200 with a JSON {"status": "error"} body for others
+        (bad symbol) -- both are handled here so a rate-limit message can
+        never be mistaken for real data."""
+        url = f"{TWELVEDATA_API_URL}/{path_and_query}&apikey={self.api_key}"
+        req = urllib.request.Request(url, headers={"User-Agent": "ai-holding-os-trading/0.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read().decode("utf-8")).get("message", "")
+            except Exception:
+                detail = ""
+            raise MarketDataError(
+                f"failed to {action} for {symbol}: HTTP {e.code} {detail or e.reason}"
+            ) from e
+        except urllib.error.URLError as e:
+            raise MarketDataError(f"failed to {action} for {symbol}: {e}") from e
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise MarketDataError(f"non-JSON response trying to {action} for {symbol}: {e}") from e
+
+        if data.get("status") == "error" or ("code" in data and "message" in data):
+            raise MarketDataError(
+                f"Twelve Data returned an error instead of data trying to {action} "
+                f"for {symbol}: {data.get('message', data)}"
+            )
+        return data
 
     def get_quote(self, symbol: str) -> dict:
         """Returns {"symbol": str, "price": float, "as_of": str, "mock": False}.
         Raises MarketDataError on any failure, including a rate-limited or
         malformed response — never returns a guessed/fabricated price."""
-        url = (f"{ALPHAVANTAGE_API_URL}?function=GLOBAL_QUOTE&symbol="
-               f"{urllib.request.quote(symbol)}&apikey={self.api_key}")
-        req = urllib.request.Request(url, headers={"User-Agent": "ai-holding-os-trading/0.1"})
-        try:
-            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
-                raw = resp.read().decode("utf-8")
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            raise MarketDataError(f"failed to fetch quote for {symbol}: {e}") from e
+        data = self._get_json(f"quote?symbol={urllib.request.quote(symbol)}", symbol, "fetch quote")
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise MarketDataError(f"non-JSON response fetching quote for {symbol}: {e}") from e
-
-        if "Note" in data or "Information" in data:
-            raise MarketDataError(
-                f"Alpha Vantage returned a rate-limit/info message instead of quote "
-                f"data for {symbol}: {data.get('Note') or data.get('Information')}"
-            )
-
-        quote = data.get("Global Quote") or {}
-        price_str = quote.get("05. price")
+        price_str = data.get("close")
         if not price_str:
             raise MarketDataError(
-                f"no '05. price' field in Alpha Vantage response for {symbol}: {data}"
+                f"no 'close' field in Twelve Data response for {symbol}: {data}"
             )
         try:
             price = float(price_str)
@@ -103,7 +127,7 @@ class AlphaVantageClient:
         return {
             "symbol": symbol,
             "price": price,
-            "as_of": quote.get("07. latest trading day", ""),
+            "as_of": data.get("datetime", ""),
             "mock": False,
         }
 
@@ -115,59 +139,42 @@ class AlphaVantageClient:
         price action rather than live quotes. Raises MarketDataError on
         any failure -- never fabricates a historical bar.
 
-        Uses outputsize=compact (the last ~100 trading days, roughly
-        4-5 calendar months) rather than "full". outputsize=full is now
-        a premium-only parameter on Alpha Vantage's free tier -- found
-        live, the hard way: an earlier version of this code requested
-        "full" on the assumption free accounts still got 20+ years of
-        history, and every real call failed with "The outputsize=full
-        parameter value is a premium feature." A requested date range
-        older than what "compact" covers simply returns fewer bars for
-        the earlier portion (or, if the WHOLE range predates it,
-        MarketDataError via the "no daily bars found" check below) --
-        never a fabricated bar to fill the gap."""
-        url = (f"{ALPHAVANTAGE_API_URL}?function=TIME_SERIES_DAILY&symbol="
-               f"{urllib.request.quote(symbol)}&outputsize=compact&apikey={self.api_key}")
-        req = urllib.request.Request(url, headers={"User-Agent": "ai-holding-os-trading/0.1"})
-        try:
-            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
-                raw = resp.read().decode("utf-8")
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            raise MarketDataError(f"failed to fetch daily history for {symbol}: {e}") from e
+        Passes start_date/end_date straight through to Twelve Data's own
+        range filtering, then filters again locally in case the account's
+        history depth doesn't reach as far back as requested -- a
+        requested range older than what's available simply returns fewer
+        bars for the earlier portion (or, if the WHOLE range predates it,
+        MarketDataError via the "no daily bars found" check below), never
+        a fabricated bar to fill the gap."""
+        data = self._get_json(
+            f"time_series?symbol={urllib.request.quote(symbol)}&interval=1day"
+            f"&start_date={start_date}&end_date={end_date}&outputsize=5000",
+            symbol, "fetch daily history",
+        )
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise MarketDataError(f"non-JSON response fetching daily history for {symbol}: {e}") from e
-
-        if "Note" in data or "Information" in data:
+        values = data.get("values")
+        if not values:
             raise MarketDataError(
-                f"Alpha Vantage returned a rate-limit/info message instead of history "
-                f"data for {symbol}: {data.get('Note') or data.get('Information')}"
-            )
-
-        series = data.get("Time Series (Daily)")
-        if not series:
-            raise MarketDataError(
-                f"no 'Time Series (Daily)' field in Alpha Vantage response for {symbol}: {data}"
+                f"no 'values' field in Twelve Data response for {symbol}: {data}"
             )
 
         bars = []
-        for date_str, values in series.items():
+        for row in values:
+            date_str = row.get("datetime", "")[:10]
             if date_str < start_date or date_str > end_date:
                 continue
             try:
                 bars.append({
                     "date": date_str,
-                    "open": float(values["1. open"]),
-                    "high": float(values["2. high"]),
-                    "low": float(values["3. low"]),
-                    "close": float(values["4. close"]),
-                    "volume": int(float(values["5. volume"])),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": int(float(row.get("volume") or 0)),
                     "mock": False,
                 })
             except (KeyError, ValueError) as e:
-                raise MarketDataError(f"malformed daily bar for {symbol} on {date_str}: {values}") from e
+                raise MarketDataError(f"malformed daily bar for {symbol} on {date_str}: {row}") from e
 
         bars.sort(key=lambda b: b["date"])
         if not bars:
@@ -228,7 +235,7 @@ class MockMarketDataClient:
 
 
 def used_today(db, now: datetime.datetime = None) -> int:
-    """Real count of Alpha Vantage requests reserved so far today (UTC),
+    """Real count of Twelve Data requests reserved so far today (UTC),
     summed from market_data_usage -- never estimated. Pure enough to
     unit-test directly against a real (SQLite) Database with hand-seeded
     rows."""
@@ -242,7 +249,7 @@ def used_today(db, now: datetime.datetime = None) -> int:
 
 
 def reserve_budget(db, market_client, count: int, purpose: str, now: datetime.datetime = None) -> None:
-    """Call BEFORE a caller is about to make `count` real Alpha Vantage
+    """Call BEFORE a caller is about to make `count` real Twelve Data
     requests (one per symbol it's about to fetch a quote/history for),
     so a request batch that would blow through the rest of today's
     quota is refused loudly up front -- never partway through, after
@@ -253,7 +260,7 @@ def reserve_budget(db, market_client, count: int, purpose: str, now: datetime.da
     real Database through call sites that don't otherwise need one.
 
     Found necessary for real: a backtest search retried several times
-    (each attempt burns real quota even when Alpha Vantage rejects it
+    (each attempt burns real quota even when the provider rejects it
     with a rate-limit response, not a network failure) exhausted the
     day's quota right before a scheduled trading cycle needed it --
     trading_cycle and strategy_backtest_search were competing for the
@@ -265,11 +272,11 @@ def reserve_budget(db, market_client, count: int, purpose: str, now: datetime.da
     remaining = max(0, DAILY_REQUEST_LIMIT - used)
     if count > remaining:
         raise MarketDataError(
-            f"this would need {count} Alpha Vantage request(s), but only {remaining} remain "
+            f"this would need {count} Twelve Data request(s), but only {remaining} remain "
             f"of today's {DAILY_REQUEST_LIMIT}/day free-tier quota ({used} already used) -- "
             f"refusing to start {purpose} and burn through what's left on a request that "
             f"would fail partway anyway. Try again after the quota resets, or raise "
-            f"ALPHAVANTAGE_DAILY_REQUEST_LIMIT if you've upgraded your Alpha Vantage plan."
+            f"TWELVEDATA_DAILY_REQUEST_LIMIT if you've upgraded your Twelve Data plan."
         )
     db.execute(
         "INSERT INTO market_data_usage (id, purpose, request_count) VALUES (?, ?, ?)",
@@ -278,10 +285,10 @@ def reserve_budget(db, market_client, count: int, purpose: str, now: datetime.da
 
 
 def get_default_client():
-    """Returns a real AlphaVantageClient if a key is present, otherwise
+    """Returns a real TwelveDataClient if a key is present, otherwise
     an explicitly-labeled MockMarketDataClient. Never silently pretends a
     mock price is real."""
-    key = os.environ.get("ALPHAVANTAGE_API_KEY")
+    key = os.environ.get("TWELVEDATA_API_KEY")
     if key:
-        return AlphaVantageClient(api_key=key)
+        return TwelveDataClient(api_key=key)
     return MockMarketDataClient()

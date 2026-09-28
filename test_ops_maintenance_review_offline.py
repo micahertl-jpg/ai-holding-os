@@ -161,11 +161,11 @@ def test_collect_system_metrics_counts_recent_errors_only():
 def test_collect_system_metrics_detects_missing_optional_config():
     db, biz_id = _setup()
     with patch.dict(os.environ, {"OWNER_EMAIL": "owner@example.com"}, clear=False):
-        os.environ.pop("ALPHAVANTAGE_API_KEY", None)
+        os.environ.pop("TWELVEDATA_API_KEY", None)
         metrics = collect_system_metrics(db, now=NOW)
     env_vars_flagged = {m["env_var"] for m in metrics["missing_optional_config"]}
     assert "OWNER_EMAIL" not in env_vars_flagged
-    assert "ALPHAVANTAGE_API_KEY" in env_vars_flagged
+    assert "TWELVEDATA_API_KEY" in env_vars_flagged
     print("PASS: a configured optional var is not flagged, an unset one is")
     db.close()
     os.remove(TEST_DB_PATH)

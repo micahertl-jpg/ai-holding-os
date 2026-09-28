@@ -248,7 +248,7 @@
         here can ever place a real order. Every trade shows the model's stated confidence and
         rationale; the system (not the model) enforces every position/trade/exposure limit. A
         drawdown past the active strategy's threshold automatically pauses the trading agent for
-        owner review. "Enable Auto-Trading" requires ALPHAVANTAGE_API_KEY to be set — without it,
+        owner review. "Enable Auto-Trading" requires TWELVEDATA_API_KEY to be set — without it,
         cycles fail loudly rather than trading on fabricated prices.</p>
     </section>
 
@@ -301,7 +301,7 @@
         together. Bounded to at most max_candidates tries — "none of these were good enough yet"
         is a normal, expected result, not a bug. Nothing here is ever auto-activated; promote a
         candidate yourself via the strategy override, below. Requires
-        <code>ALPHAVANTAGE_API_KEY</code>; each simulated day is one real LLM call, so cost scales
+        <code>TWELVEDATA_API_KEY</code>; each simulated day is one real LLM call, so cost scales
         with (days) &times; (candidates tried).</p>
     </section>
 
