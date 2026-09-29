@@ -31,7 +31,7 @@ def _setup_db():
 
 
 class _FakeRealClient:
-    """Stands in for AlphaVantageClient without needing a real API key
+    """Stands in for TwelveDataClient without needing a real API key
     -- reserve_budget() only ever checks .is_mock, nothing else."""
     is_mock = False
 
@@ -45,49 +45,49 @@ def _fake_response(payload_dict):
 
 
 def test_get_quote_parses_a_real_shaped_response():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Global Quote": {"01. symbol": "AAPL", "05. price": "231.50",
-                                 "07. latest trading day": "2026-01-02"}}
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"symbol": "AAPL", "close": "231.50", "datetime": "2026-01-02"}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         quote = client.get_quote("AAPL")
     assert quote == {"symbol": "AAPL", "price": 231.50, "as_of": "2026-01-02", "mock": False}
-    print("PASS: get_quote parses a real-shaped Alpha Vantage response correctly")
+    print("PASS: get_quote parses a real-shaped Twelve Data response correctly")
 
 
-def test_get_quote_raises_on_rate_limit_note():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Note": "Thank you for using Alpha Vantage! Our standard API call frequency is ..."}
+def test_get_quote_raises_on_rate_limit_error():
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"code": 429, "message": "You have run out of API credits for the current minute.",
+               "status": "error"}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         try:
             client.get_quote("AAPL")
             assert False, "expected MarketDataError"
         except market_data.MarketDataError as e:
-            assert "rate-limit" in str(e)
-    print("PASS: a rate-limit 'Note' response raises MarketDataError instead of being "
+            assert "run out of API credits" in str(e)
+    print("PASS: a rate-limit error response raises MarketDataError instead of being "
           "silently parsed as if it were quote data")
 
 
 def test_get_quote_raises_on_missing_price_field():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Global Quote": {}}
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"symbol": "BADSYM"}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         try:
             client.get_quote("BADSYM")
             assert False, "expected MarketDataError"
         except market_data.MarketDataError as e:
-            assert "no '05. price' field" in str(e)
-    print("PASS: an empty Global Quote (e.g. invalid symbol) raises MarketDataError, "
-          "never a fabricated price")
+            assert "no 'close' field" in str(e)
+    print("PASS: a response missing the 'close' field (e.g. invalid symbol) raises "
+          "MarketDataError, never a fabricated price")
 
 
 def test_client_refuses_to_construct_without_api_key():
     with patch.dict("os.environ", {}, clear=True):
         try:
-            market_data.AlphaVantageClient(api_key=None)
+            market_data.TwelveDataClient(api_key=None)
             assert False, "expected MarketDataError"
         except market_data.MarketDataError as e:
-            assert "ALPHAVANTAGE_API_KEY" in str(e)
-    print("PASS: AlphaVantageClient refuses to construct without an API key -- never "
+            assert "TWELVEDATA_API_KEY" in str(e)
+    print("PASS: TwelveDataClient refuses to construct without an API key -- never "
           "silently falls back to fabricated data")
 
 
@@ -103,15 +103,15 @@ def test_mock_client_is_clearly_labeled():
 
 
 def test_get_daily_history_parses_a_real_shaped_response_and_filters_by_date():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Time Series (Daily)": {
-        "2026-01-05": {"1. open": "101.0", "2. high": "102.0", "3. low": "100.5",
-                        "4. close": "101.5", "5. volume": "1000000"},
-        "2026-01-02": {"1. open": "100.0", "2. high": "101.0", "3. low": "99.5",
-                        "4. close": "100.8", "5. volume": "900000"},
-        "2025-12-31": {"1. open": "99.0", "2. high": "99.5", "3. low": "98.5",
-                       "4. close": "99.2", "5. volume": "800000"},
-    }}
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"status": "ok", "values": [
+        {"datetime": "2026-01-05", "open": "101.0", "high": "102.0", "low": "100.5",
+         "close": "101.5", "volume": "1000000"},
+        {"datetime": "2026-01-02", "open": "100.0", "high": "101.0", "low": "99.5",
+         "close": "100.8", "volume": "900000"},
+        {"datetime": "2025-12-31", "open": "99.0", "high": "99.5", "low": "98.5",
+         "close": "99.2", "volume": "800000"},
+    ]}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         bars = client.get_daily_history("AAPL", "2026-01-01", "2026-01-31")
     # 2025-12-31 is outside the requested range and must be excluded.
@@ -122,25 +122,26 @@ def test_get_daily_history_parses_a_real_shaped_response_and_filters_by_date():
           "date range, and returns bars oldest-first")
 
 
-def test_get_daily_history_raises_on_rate_limit_note():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Note": "Thank you for using Alpha Vantage! ..."}
+def test_get_daily_history_raises_on_rate_limit_error():
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"code": 429, "message": "You have run out of API credits for the current minute.",
+               "status": "error"}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         try:
             client.get_daily_history("AAPL", "2026-01-01", "2026-01-31")
             assert False, "expected MarketDataError"
         except market_data.MarketDataError as e:
-            assert "rate-limit" in str(e)
-    print("PASS: get_daily_history raises on a rate-limit 'Note' response, never silently "
+            assert "run out of API credits" in str(e)
+    print("PASS: get_daily_history raises on a rate-limit error response, never silently "
           "returns empty/fabricated history")
 
 
 def test_get_daily_history_raises_when_range_has_no_bars():
-    client = market_data.AlphaVantageClient(api_key="fake-key")
-    payload = {"Time Series (Daily)": {
-        "2020-01-02": {"1. open": "1.0", "2. high": "1.0", "3. low": "1.0",
-                        "4. close": "1.0", "5. volume": "1"},
-    }}
+    client = market_data.TwelveDataClient(api_key="fake-key")
+    payload = {"status": "ok", "values": [
+        {"datetime": "2020-01-02", "open": "1.0", "high": "1.0", "low": "1.0",
+         "close": "1.0", "volume": "1"},
+    ]}
     with patch("urllib.request.urlopen", return_value=_fake_response(payload)):
         try:
             client.get_daily_history("AAPL", "2026-01-01", "2026-01-31")
@@ -162,8 +163,8 @@ def test_mock_client_daily_history_is_clearly_labeled_and_skips_weekends():
 
 
 def test_get_default_client_picks_real_client_only_with_a_key():
-    with patch.dict("os.environ", {"ALPHAVANTAGE_API_KEY": "real-key"}, clear=True):
-        assert isinstance(market_data.get_default_client(), market_data.AlphaVantageClient)
+    with patch.dict("os.environ", {"TWELVEDATA_API_KEY": "real-key"}, clear=True):
+        assert isinstance(market_data.get_default_client(), market_data.TwelveDataClient)
     with patch.dict("os.environ", {}, clear=True):
         assert isinstance(market_data.get_default_client(), market_data.MockMarketDataClient)
     print("PASS: get_default_client() returns a real client only when a key is configured, "
@@ -229,7 +230,7 @@ def test_reserve_budget_raises_and_records_nothing_once_the_daily_quota_is_exhau
             market_data.reserve_budget(db, _FakeRealClient(), 5, "trading_cycle", now=NOW)
             assert False, "expected MarketDataError"
         except market_data.MarketDataError as e:
-            assert "5 Alpha Vantage request(s)" in str(e)
+            assert "5 Twelve Data request(s)" in str(e)
             assert "only 2 remain" in str(e)
             assert "8 already used" in str(e)
 
@@ -247,19 +248,19 @@ def test_reserve_budget_respects_a_raised_limit_for_an_upgraded_plan():
         # Would have failed against the free-tier default of 25.
         market_data.reserve_budget(db, _FakeRealClient(), 100, "strategy_backtest_search", now=NOW)
     assert market_data.used_today(db, now=NOW) == 100
-    print("PASS: reserve_budget respects ALPHAVANTAGE_DAILY_REQUEST_LIMIT for an upgraded plan")
+    print("PASS: reserve_budget respects TWELVEDATA_DAILY_REQUEST_LIMIT for an upgraded plan")
     db.close()
     os.remove(TEST_DB_PATH)
 
 
 if __name__ == "__main__":
     test_get_quote_parses_a_real_shaped_response()
-    test_get_quote_raises_on_rate_limit_note()
+    test_get_quote_raises_on_rate_limit_error()
     test_get_quote_raises_on_missing_price_field()
     test_client_refuses_to_construct_without_api_key()
     test_mock_client_is_clearly_labeled()
     test_get_daily_history_parses_a_real_shaped_response_and_filters_by_date()
-    test_get_daily_history_raises_on_rate_limit_note()
+    test_get_daily_history_raises_on_rate_limit_error()
     test_get_daily_history_raises_when_range_has_no_bars()
     test_mock_client_daily_history_is_clearly_labeled_and_skips_weekends()
     test_get_default_client_picks_real_client_only_with_a_key()

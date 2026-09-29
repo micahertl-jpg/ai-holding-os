@@ -491,11 +491,15 @@ a config flag someone could flip on. Real trading stays out of scope
 until explicitly, separately authorized and built.
 
 **What's new:**
-- `market_data.py` — a real Alpha Vantage quote client (`GLOBAL_QUOTE`),
-  stdlib-only (`urllib`, same pattern as `llm_client.py`), plus an
-  explicitly-labeled `MockMarketDataClient` for when no
-  `ALPHAVANTAGE_API_KEY` is set. Every quote is tagged `mock: True/False`
-  so downstream code can refuse to trade on fake prices.
+- `market_data.py` — a real Twelve Data quote client (`/quote` and
+  `/time_series`), stdlib-only (`urllib`, same pattern as
+  `llm_client.py`), plus an explicitly-labeled `MockMarketDataClient` for
+  when no `TWELVEDATA_API_KEY` is set. Every quote is tagged
+  `mock: True/False` so downstream code can refuse to trade on fake
+  prices. (Originally built against Alpha Vantage; swapped to Twelve
+  Data after Alpha Vantage's 25-requests/day free tier was found live to
+  starve even a single default watchlist — see the "Shared Twelve Data
+  request budget" section below.)
 - `tasks/trading_common.py` — the strategy-parameter schema (watchlist,
   position/trade/exposure limits, the drawdown circuit breaker, a
   minimum-confidence floor) and `validate_parameters()`, which enforces
@@ -600,7 +604,7 @@ same as every other LLM-driven task type in this project):
 **To verify it yourself:**
 ```
 export ANTHROPIC_API_KEY=sk-ant-...
-export ALPHAVANTAGE_API_KEY=...   # free key at alphavantage.co
+export TWELVEDATA_API_KEY=...   # free key at twelvedata.com
 python -m uvicorn api:app --reload
 ```
 Open the dashboard, pick or create a business, click **Enable
@@ -722,9 +726,11 @@ Backtesting" section.
 
 **What's new:**
 - `market_data.py` — `get_daily_history(symbol, start_date, end_date)`
-  on both `AlphaVantageClient` (real, via Alpha Vantage's
-  `TIME_SERIES_DAILY`) and `MockMarketDataClient` (deterministic
-  synthetic bars, always tagged `mock=True`, for offline tests).
+  on both the real client (originally `AlphaVantageClient` via
+  `TIME_SERIES_DAILY`, later swapped to `TwelveDataClient` via
+  `/time_series` — see the "Shared Twelve Data request budget" section)
+  and `MockMarketDataClient` (deterministic synthetic bars, always
+  tagged `mock=True`, for offline tests).
 - `tasks/backtest.py` — `run_backtest()` steps day-by-day through real
   historical bars, calling the *exact same*
   `decide_trades()`/`apply_risk_limits()` pair from
@@ -799,7 +805,13 @@ ever gets `outputsize=compact` (~100 most recent trading days, roughly
 Also confirmed live: `run_backtest()`'s own guard correctly failed the
 task loudly with Alpha Vantage's real error text rather than silently
 proceeding on partial/fabricated data — the safety property held even
-though the underlying assumption about free-tier limits didn't.
+though the underlying assumption about free-tier limits didn't. (This
+whole "Update" paragraph describes the original Alpha Vantage
+integration, since replaced by Twelve Data — the failure-handling
+behavior it confirms is unchanged, but the specific `outputsize=compact`
+history-depth limit is Alpha-Vantage-specific and no longer applies;
+see the "Shared Twelve Data request budget" section for the current
+provider.)
 
 **Still not verified:** an actual backtest search completing
 successfully end to end against real historical prices and a real
@@ -808,51 +820,67 @@ the new dashboard panel's form/results table clicked through in a real
 browser by a human.
 
 **To verify it yourself**, with `ANTHROPIC_API_KEY` and
-`ALPHAVANTAGE_API_KEY` both set: open the dashboard, pick a business
+`TWELVEDATA_API_KEY` both set: open the dashboard, pick a business
 with a paper trading portfolio, fill in a train start date, a
 validation split date, and a validation end date in the Backtest panel
 (a few months total is plenty to start), and click **Run Backtest
 Search**. Within a few minutes you should see a real run appear with
 one or more candidates and their real train/validation stats.
 
-### Shared Alpha Vantage request budget (trading_cycle, live_trading_cycle, strategy_backtest_search)
+### Shared Twelve Data request budget (trading_cycle, live_trading_cycle, strategy_backtest_search)
 
-Found for real, from an owner's actual usage: a backtest search
-retried several times (each attempt burns real Alpha Vantage quota
-even when it's rejected with a rate-limit response, not a network
-failure) exhausted that day's free-tier 25-requests/day quota right
-before a scheduled paper trading cycle needed it — the two features
-were competing for the same real resource with neither aware of the
-other's usage, so the trading cycle's own longer interval (see the
-"Owner Digest" section's provisioning fix, a separate earlier issue)
-didn't help.
+Found for real, from an owner's actual usage — of the *original* Alpha
+Vantage integration this codebase shipped with first: a backtest search
+retried several times (each attempt burns real quota even when it's
+rejected with a rate-limit response, not a network failure) exhausted
+that day's free-tier 25-requests/day quota right before a scheduled
+paper trading cycle needed it — the two features were competing for the
+same real resource with neither aware of the other's usage. Worse,
+Alpha Vantage's 25/day cap turned out to be so low that even a single
+business's default 5-symbol watchlist on the default 6-hour cycle
+(4 cycles/day × 5 symbols = 20 requests/day) consumed nearly the whole
+budget on its own, with zero headroom for a second business, a manual
+trigger, or a backtest the same day — a scheduled cycle that fails once
+this way keeps failing every subsequent cycle too, since a currently-held
+symbol can never get a fresh quote once the day's quota is gone.
+`market_data.py` was swapped from Alpha Vantage to Twelve Data for
+exactly this reason — same `get_quote()`/`get_daily_history()`
+interface, much larger free-tier daily allowance.
 
 - `market_data.py`'s `reserve_budget(db, market_client, count, purpose)`
   is called by all three handlers (`_handle_trading_cycle`,
   `_handle_live_trading_cycle`, `_handle_strategy_backtest_search`) in
   `executor.py`, right before they're about to make `count` real
   requests (one per watchlist/held symbol). It checks today's real
-  usage (summed from the new `market_data_usage` table, real rows only
-  — nothing here is ever estimated) against `DAILY_REQUEST_LIMIT`
-  (default 25, override via `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` if
-  you've upgraded your Alpha Vantage plan) and refuses loudly, **before
+  usage (summed from the `market_data_usage` table, real rows only —
+  nothing here is ever estimated) against `DAILY_REQUEST_LIMIT`
+  (default 800, override via `TWELVEDATA_DAILY_REQUEST_LIMIT` if
+  you've upgraded your Twelve Data plan) and refuses loudly, **before
   any real fetch happens**, if the request would exceed what's left —
   a caller that would fail partway through a batch never gets to burn
   through the remainder of the day's quota first.
 - A complete no-op (no check, no record) when
-  `market_client.is_mock` is `True` (both `AlphaVantageClient` and
-  `MockMarketDataClient` now carry this marker) — there's no real
-  quota at stake using the mock client, and this keeps every existing
-  offline test that passes a mock/fake client working unmodified.
+  `market_client.is_mock` is `True` (both `TwelveDataClient` and
+  `MockMarketDataClient` carry this marker) — there's no real quota at
+  stake using the mock client, and this keeps every existing offline
+  test that passes a mock/fake client working unmodified.
 
-**What was actually verified in this session:**
-- 6 new checks in `test_market_data_offline.py`: `used_today()` sums
-  only today's (UTC) reservations across every purpose; `reserve_budget()`
-  is a true no-op for a mock client even wildly over budget; it records
-  a real reservation for a real client within budget; it refuses loudly
-  (and records nothing) once a reservation would exceed what's left,
-  with the exact remaining/used counts in the message; and it respects
-  a raised `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` for an upgraded plan.
+**What was actually verified when this budget mechanism was first
+built** (against the original Alpha Vantage integration — the numbers
+below are unchanged by the later provider swap, since `reserve_budget()`
+itself is provider-agnostic): 6 checks in `test_market_data_offline.py`:
+`used_today()` sums only today's (UTC) reservations across every
+purpose; `reserve_budget()` is a true no-op for a mock client even
+wildly over budget; it records a real reservation for a real client
+within budget; it refuses loudly (and records nothing) once a
+reservation would exceed what's left, with the exact remaining/used
+counts in the message; and it respects a raised daily limit for an
+upgraded plan. The Twelve Data client itself (`get_quote()`/
+`get_daily_history()` response parsing) has only been verified offline
+against hand-built fake responses shaped like Twelve Data's documented
+API — this sandbox has no real key or network access to make an actual
+live call, same caveat `llm_client.py` already carries for its own
+first real Anthropic call.
 - 2 new `test_executor_offline.py` checks: a `trading_cycle` task
   refuses loudly, before any real fetch, once an earlier
   `strategy_backtest_search` already spent the day's shared quota
@@ -1569,23 +1597,26 @@ next.
   confirmed live. `DEPLOY.md` still has the full steps/alternatives
   (Render/Fly) if you ever need to redeploy elsewhere or stand up a
   second environment.
-- **For the Automated Stock Trading vertical:** set `ALPHAVANTAGE_API_KEY`
-  as a Railway variable (free key at alphavantage.co) alongside the
+- **For the Automated Stock Trading vertical:** set `TWELVEDATA_API_KEY`
+  as a Railway variable (free key at twelvedata.com) alongside the
   existing `ANTHROPIC_API_KEY`. Without it, `trading_cycle` tasks fail
   loudly with a clear error instead of trading on fabricated prices —
   this is intentional, not a bug, but it means the feature does nothing
   visible until the key is set.
-  **Free-tier quota:** Alpha Vantage's free key allows 25 requests/day.
-  Each trading cycle uses one request per watchlist/held symbol, so
-  watchlist size x cycles/day must stay under 25 (the default —
-  6-hour cycles, a 5-symbol watchlist — uses 20/day, leaving headroom
-  for a manual trigger or backtest search the same day). Exceeding the
-  quota surfaces as `TradingCycleError: missing live quotes for
-  currently-held symbols [...]` with Alpha Vantage's own rate-limit text
-  in the message. Fix an already-running job's cadence without
-  disabling/recreating it via the "Edit Interval" button on its row in
-  the Scheduled Jobs panel (or `POST /scheduled-jobs/{job_id}/set-interval`).
-- **For Strategy Backtesting:** nothing beyond the `ALPHAVANTAGE_API_KEY`
+  **Free-tier quota:** Twelve Data's free key allows 800 requests/day
+  at the time this was written (verify on your own account, since it
+  can change) — a large step up from this vertical's original Alpha
+  Vantage integration, whose 25/day cap left almost no headroom (a
+  default 5-symbol watchlist on the default 6-hour cycle alone used
+  20/day). Each trading cycle still uses one request per watchlist/held
+  symbol, so watchlist size × cycles/day must stay under your real
+  daily limit. Exceeding the quota surfaces as `TradingCycleError:
+  missing live quotes for currently-held symbols [...]` with Twelve
+  Data's own rate-limit text in the message. Fix an already-running
+  job's cadence without disabling/recreating it via the "Edit Interval"
+  button on its row in the Scheduled Jobs panel (or
+  `POST /scheduled-jobs/{job_id}/set-interval`).
+- **For Strategy Backtesting:** nothing beyond the `TWELVEDATA_API_KEY`
   you already set above — it reuses the same key for historical data.
   Recommended before ever touching Live Trading below: see DEPLOY.md's
   "Strategy Backtesting" section and try it against a few months of

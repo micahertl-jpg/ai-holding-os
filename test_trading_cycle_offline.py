@@ -314,7 +314,7 @@ def test_run_trading_cycle_refuses_mock_market_data():
     except TradingCycleError as e:
         assert "mock market data" in str(e)
     print("PASS: run_trading_cycle refuses to trade when quotes are mock data "
-          "(no ALPHAVANTAGE_API_KEY configured)")
+          "(no TWELVEDATA_API_KEY configured)")
 
 
 def test_run_trading_cycle_refuses_when_a_held_symbols_quote_is_missing():
@@ -326,7 +326,7 @@ def test_run_trading_cycle_refuses_when_a_held_symbols_quote_is_missing():
         assert False, "expected TradingCycleError"
     except TradingCycleError as e:
         assert "IBM" in str(e)
-        # The real underlying reason (e.g. Alpha Vantage's exact
+        # The real underlying reason (e.g. Twelve Data's exact
         # rate-limit text) must be in the message too, not just the
         # symbol name -- otherwise the owner sees "missing quotes" with
         # no way to tell a rate limit apart from a delisted symbol or a

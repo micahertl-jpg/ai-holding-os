@@ -847,7 +847,7 @@ def _handle_strategy_backtest_search(task_row, client, db):
     market_client = market_data.get_default_client()
     # Reserved BEFORE any real fetch -- a backtest search retried after
     # an earlier failure was found to burn through the day's shared
-    # Alpha Vantage quota one watchlist symbol at a time, leaving
+    # Twelve Data quota one watchlist symbol at a time, leaving
     # trading_cycle with nothing left. Refusing loudly here, before
     # spending any of what's left, beats partway-through failures.
     market_data.reserve_budget(
@@ -858,7 +858,7 @@ def _handle_strategy_backtest_search(task_row, client, db):
     # WHOLE train+validation range in one call each (not one call per
     # window) -- split_bars_by_date then cuts it at the boundary. Any
     # MarketDataError here (including get_default_client() falling back
-    # to a mock with no ALPHAVANTAGE_API_KEY, which run_strategy_search
+    # to a mock with no TWELVEDATA_API_KEY, which run_strategy_search
     # would then refuse via BacktestError anyway) propagates up through
     # run_once()'s normal try/except and fails this task loudly.
     historical_bars_by_symbol = {

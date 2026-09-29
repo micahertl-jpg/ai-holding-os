@@ -164,7 +164,7 @@ _dashboard_login_rate_limiter = RateLimiter(
 # ---------------------------------------------------------------------
 # Ops/Maintenance — the sixth business vertical, and the only one with
 # no owner setup step: unlike the storefront (needs Stripe/Resend keys)
-# or Automated Stock Trading (needs an Alpha Vantage key + clicking
+# or Automated Stock Trading (needs a Twelve Data key + clicking
 # "Enable Auto-Trading"), watching this system's own health needs
 # nothing beyond the ANTHROPIC_API_KEY every other vertical already
 # requires -- so it's provisioned automatically at startup, not behind
@@ -639,12 +639,13 @@ class TradingStrategyOverrideRequest(BaseModel):
 class EnableAutoTradingRequest(BaseModel):
     starting_cash_usd: float = 10000.0
     watchlist: List[str] = []
-    # 6 hours -- one Alpha Vantage GLOBAL_QUOTE request per watchlist/held
-    # symbol per cycle, so a default 5-symbol watchlist at this interval
-    # is 4 cycles/day x 5 = 20 requests/day, staying under Alpha Vantage's
-    # free-tier cap of 25/day with headroom for a manual trigger or
-    # backtest search the same day. The previous 4-hour default (6
-    # cycles/day) exceeded the cap on its own. Use
+    # 6 hours -- one Twelve Data quote request per watchlist/held symbol
+    # per cycle, so a default 5-symbol watchlist at this interval is 4
+    # cycles/day x 5 = 20 requests/day, well under Twelve Data's free-tier
+    # cap of 800/day with plenty of headroom for a manual trigger, a
+    # second business, or a backtest search the same day (unlike the
+    # earlier Alpha Vantage integration, whose 25/day cap this same
+    # interval used to consume nearly all of on its own). Use
     # POST /scheduled-jobs/{job_id}/set-interval to adjust an
     # already-created job.
     cycle_interval_seconds: int = 21600
@@ -1870,7 +1871,7 @@ def trigger_live_trading_cycle(business_id: str, department: Optional[str] = Non
 # data (see tasks/backtest.py, tasks/strategy_backtest_search.py,
 # executor.py's _handle_strategy_backtest_search). Recommend-only, no
 # real or paper money touched -- see that handler's docstring. Requires
-# ALPHAVANTAGE_API_KEY to be configured; without it, market_data.py
+# TWELVEDATA_API_KEY to be configured; without it, market_data.py
 # returns mock historical data and the search refuses to run rather
 # than backtest against fabricated prices.
 # ---------------------------------------------------------------------

@@ -40,14 +40,15 @@ as a separate later task.
    service, not blank).
 5. Also set `ANTHROPIC_API_KEY` as a variable (Settings → Variables).
    Never commit it to the repo. For the Automated Stock Trading vertical,
-   also set `ALPHAVANTAGE_API_KEY` (free key at alphavantage.co) — without
+   also set `TWELVEDATA_API_KEY` (free key at twelvedata.com) — without
    it, `trading_cycle` tasks fail loudly instead of trading on fabricated
    prices, which is correct behavior but means the feature is otherwise
-   invisible. The free key's 25-requests/day quota is shared across
-   `trading_cycle`, `live_trading_cycle`, and `strategy_backtest_search`
-   (see README.md's "Shared Alpha Vantage request budget" section) — if
-   you've upgraded to a paid Alpha Vantage plan, raise the optional
-   `ALPHAVANTAGE_DAILY_REQUEST_LIMIT` to match.
+   invisible. The free key's daily request quota (800/day at the time
+   this was written — verify on your own account, since it can change)
+   is shared across `trading_cycle`, `live_trading_cycle`, and
+   `strategy_backtest_search` (see README.md's "Shared Twelve Data
+   request budget" section) — if you've upgraded to a paid Twelve Data
+   plan, raise the optional `TWELVEDATA_DAILY_REQUEST_LIMIT` to match.
 6. Set **`DASHBOARD_USERNAME`** and **`DASHBOARD_PASSWORD`** — this is
    what actually protects `/dashboard` and everything under it (every
    business's data, the ARC ledger, agent controls) with HTTP Basic
@@ -280,21 +281,23 @@ is never win rate alone: `tasks/strategy_backtest_search.py`'s
 profit_factor with real margin above break-even (not just "wins more
 than it loses"), and a bounded max drawdown.
 
-**Requires `ALPHAVANTAGE_API_KEY`** (same key the paper-trading
+**Requires `TWELVEDATA_API_KEY`** (same key the paper-trading
 vertical uses) — without it, `market_data.py` returns clearly-labeled
 mock historical data and the backtest refuses to run against it,
 exactly like live/paper trading refuse to trade on a mock quote.
 
-**Free-tier history is capped at ~100 trading days (roughly the last
-4-5 calendar months), found live:** Alpha Vantage's `TIME_SERIES_DAILY`
-endpoint has an `outputsize=full` option for full history, but it's a
-premium-only parameter now — a free key only ever gets `outputsize=
-compact` (the most recent ~100 points). Pick a `train_start_date` no
-more than about 4-5 months back from today, or the earlier portion of
-your train window will simply have fewer (or zero) real bars than
-requested. A range entirely older than that fails loudly
-("no daily bars found for SYMBOL in range...") rather than silently
-running on a partial or fabricated dataset.
+**Free-tier history depth is not hardcoded here and hasn't been
+verified live** (this sandbox has no real Twelve Data key/network
+access) — `get_daily_history()` passes your requested date range
+straight through and simply returns fewer bars than requested if your
+plan's real history doesn't reach that far back, rather than fabricating
+one. Note the previous Alpha Vantage integration's free tier capped
+history at ~100 trading days (~4-5 calendar months) via a
+`compact`-only restriction; verify your own Twelve Data account's real
+limit before assuming a longer `train_start_date` will actually return
+data. A range entirely outside what your account can return fails
+loudly ("no daily bars found for SYMBOL in range...") rather than
+silently running on a partial or fabricated dataset.
 
 **Real cost, stated plainly:** each simulated trading day is one real
 LLM call — the same cost as one real trading_cycle task. A backtest

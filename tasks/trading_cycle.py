@@ -287,7 +287,7 @@ def run_trading_cycle(cash_usd, positions, strategy_params, recent_trades_summar
 
     Raises TradingCycleError (never silently proceeds) if: a currently-
     held symbol's quote couldn't be fetched (equity would be unknown), or
-    any fetched quote is mock data (ALPHAVANTAGE_API_KEY not configured —
+    any fetched quote is mock data (TWELVEDATA_API_KEY not configured —
     this system never paper-trades on fabricated prices outside of an
     explicit offline test)."""
     symbols_to_quote = set(strategy_params["watchlist"]) | {
@@ -304,7 +304,7 @@ def run_trading_cycle(cash_usd, positions, strategy_params, recent_trades_summar
         p["symbol"] for p in positions if p["quantity"] > 0 and p["symbol"] not in quotes
     )
     if held_missing:
-        # The real reason each quote fetch failed (e.g. Alpha Vantage's
+        # The real reason each quote fetch failed (e.g. Twelve Data's
         # exact rate-limit message) was already captured in
         # quote_errors above -- surfacing it here, instead of just
         # naming the symbol, is the difference between the owner
@@ -322,7 +322,7 @@ def run_trading_cycle(cash_usd, positions, strategy_params, recent_trades_summar
     if mocked:
         raise TradingCycleError(
             f"refusing to trade — mock market data for {mocked} "
-            f"(ALPHAVANTAGE_API_KEY not configured; see README ACTION REQUIRED)"
+            f"(TWELVEDATA_API_KEY not configured; see README ACTION REQUIRED)"
         )
 
     if not quotes:

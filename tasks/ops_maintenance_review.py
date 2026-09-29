@@ -69,7 +69,7 @@ GROWTH_WATCH_TABLES = (
 KNOWN_OPTIONAL_CONFIG = [
     ("OWNER_EMAIL", "no email alert when a storefront order fails or an "
                      "ops review finds something serious -- only visible on the dashboard"),
-    ("ALPHAVANTAGE_API_KEY", "Automated Stock Trading cycles fail loudly instead of trading"),
+    ("TWELVEDATA_API_KEY", "Automated Stock Trading cycles fail loudly instead of trading"),
     ("STRIPE_SECRET_KEY", "the storefront cannot accept any real payments"),
     ("STRIPE_WEBHOOK_SECRET", "the storefront cannot accept any real payments"),
     ("STORE_BUSINESS_ID", "the storefront cannot accept any real payments"),
