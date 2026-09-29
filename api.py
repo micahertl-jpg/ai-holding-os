@@ -1071,6 +1071,20 @@ def pause_agent(agent_id: str, req: DecisionRequest):
     return {"status": "paused"}
 
 
+@app.post("/agents/{agent_id}/resume")
+def resume_agent(agent_id: str, req: DecisionRequest):
+    """Reverses pause() -- the only way back for an agent paused either
+    by the owner or automatically by a drawdown-halt (see
+    tasks/trading_cycle.py's run_trading_cycle /
+    executor.py's _handle_trading_cycle and _handle_live_trading_cycle).
+    Without this endpoint a paused trading agent had no path back to
+    'idle' except a direct database edit."""
+    if not state["agents"].get(agent_id):
+        raise HTTPException(status_code=404, detail="agent not found")
+    state["agents"].resume(agent_id, reason=req.notes)
+    return {"status": "idle"}
+
+
 @app.post("/agents/{agent_id}/retire")
 def retire_agent(agent_id: str, req: DecisionRequest):
     if not state["agents"].get(agent_id):

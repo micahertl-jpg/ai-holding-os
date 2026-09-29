@@ -633,6 +633,9 @@
         if (action === "pause-agent") {
           await api(`/agents/${t.dataset.agentId}/pause`, { method: "POST", body: "{}" });
           await refresh();
+        } else if (action === "resume-agent") {
+          await api(`/agents/${t.dataset.agentId}/resume`, { method: "POST", body: "{}" });
+          await refresh();
         } else if (action === "retire-agent") {
           await api(`/agents/${t.dataset.agentId}/retire`, { method: "POST", body: "{}" });
           await refresh();

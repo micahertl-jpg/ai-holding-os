@@ -84,6 +84,15 @@ class AgentRegistry:
         self.set_status(agent_id, "paused", actor="owner")
         self.db.audit("owner", "pause_agent", "agent", agent_id, {"reason": reason})
 
+    def resume(self, agent_id, reason=""):
+        """Reverses pause() (owner-initiated or an automatic drawdown-halt
+        pause, e.g. _handle_trading_cycle/_handle_live_trading_cycle in
+        executor.py) -- back to 'idle' so the orchestrator's _try_assign
+        can pick the agent up again. Without this, an agent paused for
+        any reason had no way back except editing the database by hand."""
+        self.set_status(agent_id, "idle", actor="owner")
+        self.db.audit("owner", "resume_agent", "agent", agent_id, {"reason": reason})
+
     def retire(self, agent_id, reason=""):
         self.set_status(agent_id, "retired", actor="owner")
         self.db.audit("owner", "retire_agent", "agent", agent_id, {"reason": reason})

@@ -40,6 +40,21 @@ def main():
     assert agents.get(agent_id)["status"] == "idle"
     print("PASS: create_agent + status transition")
 
+    # --- mirrors POST /agents/{id}/pause and POST /agents/{id}/resume ---
+    agents.pause(agent_id, reason="drawdown halt")
+    assert agents.get(agent_id)["status"] == "paused"
+    agents.resume(agent_id, reason="owner reviewed and cleared it")
+    assert agents.get(agent_id)["status"] == "idle", (
+        "resume() must reverse pause() -- the only path back for an agent paused "
+        "either by the owner or automatically by a drawdown halt"
+    )
+    resume_audit = db.query_one(
+        "SELECT * FROM audit_log WHERE target_id=? AND action='resume_agent' "
+        "ORDER BY created_at DESC LIMIT 1", (agent_id,),
+    )
+    assert resume_audit is not None and resume_audit["actor"] == "owner"
+    print("PASS: pause_agent + resume_agent reverse each other, both real and audited")
+
     # --- mirrors POST /businesses/{id}/banker/allocate ---
     banker.allocate(biz_id, agent_id, 20, reason="test allocation")
     assert banker.balance(agent_id) == 20
