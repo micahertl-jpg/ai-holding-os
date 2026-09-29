@@ -608,7 +608,7 @@ button { position: relative; overflow: hidden; }
 .btn-small:hover { background: rgba(79,214,255,0.12); box-shadow: 0 0 10px rgba(79,214,255,0.25); transform: translateY(-1px); }
 .btn-small:hover::before { left: 130%; }
 .btn-small:active { transform: translateY(0) scale(.96); }
-.btn-pause, .btn-retire {
+.btn-pause, .btn-retire, .btn-resume {
   background: transparent;
   border: 1px solid var(--border-bright);
   color: var(--muted);
@@ -616,6 +616,8 @@ button { position: relative; overflow: hidden; }
   padding: 4px 9px;
 }
 .btn-pause:hover, .btn-retire:hover { color: var(--text); border-color: var(--muted); box-shadow: none; }
+.btn-resume { background: rgba(67,209,122,0.1); color: var(--green); border-color: var(--green); }
+.btn-resume:hover { box-shadow: 0 0 10px rgba(67,209,122,0.35); }
 
 /* ---------- ARC summary ---------- */
 

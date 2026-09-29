@@ -87,6 +87,29 @@ test("renderAgentsTable handles the empty case without throwing", () => {
   assert.ok(R.renderAgentsTable(null).includes("No agents yet"));
 });
 
+test("renderAgentsTable shows Resume instead of Pause for a paused agent, never both", () => {
+  const html = R.renderAgentsTable([{
+    id: "agt_paused1", name: "Halted Trader", status: "paused",
+    permission_level: 3, arc_balance: 12.5,
+  }]);
+  assert.ok(html.includes('data-action="resume-agent"'));
+  assert.ok(html.includes('data-agent-id="agt_paused1"'));
+  assert.ok(!html.includes('data-action="pause-agent"'),
+    "a paused agent has nothing left to pause -- Resume replaces Pause, it doesn't join it");
+  assert.ok(html.includes('data-action="retire-agent"'),
+    "Retire stays available regardless of status");
+});
+
+test("renderAgentsTable shows Pause, never Resume, for a non-paused agent", () => {
+  const html = R.renderAgentsTable([{
+    id: "agt_idle1", name: "Idle Agent", status: "idle",
+    permission_level: 2, arc_balance: 0,
+  }]);
+  assert.ok(html.includes('data-action="pause-agent"'));
+  assert.ok(!html.includes('data-action="resume-agent"'),
+    "an agent that isn't paused has nothing to resume");
+});
+
 test("renderTasksTable renders status and cost correctly", () => {
   const tasks = [{
     id: "task_1", objective: "Scan 5 candidate niches", status: "completed",

@@ -154,7 +154,9 @@
           <td>${escapeHtml(a.permission_level)}</td>
           <td>${fmtArc(a.arc_balance)}</td>
           <td>
-            <button class="btn-small btn-pause" data-action="pause-agent" data-agent-id="${escapeHtml(a.id)}">Pause</button>
+            ${a.status === "paused"
+              ? `<button class="btn-small btn-resume" data-action="resume-agent" data-agent-id="${escapeHtml(a.id)}">Resume</button>`
+              : `<button class="btn-small btn-pause" data-action="pause-agent" data-agent-id="${escapeHtml(a.id)}">Pause</button>`}
             <button class="btn-small btn-retire" data-action="retire-agent" data-agent-id="${escapeHtml(a.id)}">Retire</button>
           </td>
         </tr>`
