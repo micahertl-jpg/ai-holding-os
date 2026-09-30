@@ -974,6 +974,11 @@ button { position: relative; overflow: hidden; }
   transition: stroke-dasharray 0.6s ease;
   animation: gauge-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+/* Dial-face tick rhythm (see _gaugeTicks in dashboard-render.js) --
+   purely decorative, gives the ring an instrument-dial read rather
+   than a bare progress circle. */
+.radial-gauge-tick { stroke: var(--border-bright); stroke-width: 1; opacity: 0.55; }
+.radial-gauge-tick-major { stroke: var(--muted); stroke-width: 1.2; opacity: 0.8; }
 @keyframes gauge-in {
   from { stroke-dasharray: 0 1000; }
 }
@@ -1059,19 +1064,20 @@ button { position: relative; overflow: hidden; }
   border-radius: 3px;
   background: rgba(0,0,0,0.2);
   padding: 6px 8px;
+  filter: drop-shadow(0 0 10px rgba(79,214,255,.08));
 }
 .sparkline svg { display: block; width: 100%; height: auto; }
-.sparkline-area { opacity: 0.16; animation: fade-in-slow 0.8s ease both; }
+.sparkline-area { opacity: 0.3; animation: fade-in-slow 0.8s ease both; }
 .sparkline-line {
-  stroke-width: 1.6;
+  stroke-width: 2;
   fill: none;
-  filter: drop-shadow(0 0 3px currentColor);
+  filter: drop-shadow(0 0 4px currentColor);
   stroke-dasharray: 600;
   stroke-dashoffset: 600;
   animation: line-draw 1.1s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes line-draw { to { stroke-dashoffset: 0; } }
-@keyframes fade-in-slow { from { opacity: 0; } to { opacity: 0.16; } }
+@keyframes fade-in-slow { from { opacity: 0; } to { opacity: 0.3; } }
 .sparkline-empty { padding: 10px 0 0 0; }
 
 /* ---------- System Core hero: a radial hub ----------

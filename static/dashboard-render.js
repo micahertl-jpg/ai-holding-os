@@ -38,6 +38,28 @@
     return "var(--muted)";
   }
 
+  // Short tick marks ringed just inside a gauge's track -- purely
+  // decorative (no data of their own), giving the ring the look of a
+  // real dial/instrument face rather than a bare progress circle.
+  // Every 3rd tick is drawn longer ("major") for a speedometer-style
+  // rhythm. Kept inside the existing track radius so it never changes
+  // the gauge's footprint or clips against the SVG viewBox.
+  function _gaugeTicks(cx, cy, r, count) {
+    let ticks = "";
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * 2 * Math.PI - Math.PI / 2;
+      const isMajor = i % 3 === 0;
+      const outer = r - 3;
+      const inner = r - (isMajor ? 10 : 6);
+      const x1 = (cx + Math.cos(angle) * outer).toFixed(1);
+      const y1 = (cy + Math.sin(angle) * outer).toFixed(1);
+      const x2 = (cx + Math.cos(angle) * inner).toFixed(1);
+      const y2 = (cy + Math.sin(angle) * inner).toFixed(1);
+      ticks += `<line class="radial-gauge-tick${isMajor ? " radial-gauge-tick-major" : ""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" />`;
+    }
+    return ticks;
+  }
+
   // A single instrument-panel radial gauge (SVG ring), matching the
   // dial-style readouts on a HUD control panel. Pure function of
   // value/max — no DOM/animation state, so it's trivial to unit test
@@ -60,6 +82,7 @@
       )}">
         <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
           <circle class="radial-gauge-track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" />
+          <g class="radial-gauge-ticks">${_gaugeTicks(size / 2, size / 2, r, 24)}</g>
           <circle class="radial-gauge-fill" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none"
             stroke="${color}" stroke-dasharray="${dash} ${circumference.toFixed(1)}"
             transform="rotate(-90 ${size / 2} ${size / 2})" />
