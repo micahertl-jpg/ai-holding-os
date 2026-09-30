@@ -1683,10 +1683,11 @@ def enable_auto_trading(business_id: str, req: EnableAutoTradingRequest):
             starting_cash_usd=req.starting_cash_usd, watchlist=req.watchlist,
         ))
 
-    trading_agent = db.query_one(
-        "SELECT id FROM agents WHERE business_id=? AND permission_level >= 3 "
-        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
-    )
+    # Same agent-selection query _try_assign will actually use when the
+    # scheduled jobs below fire (department=None, matching how they're
+    # created) -- see Orchestrator.find_assignable_agent's docstring for
+    # why this must never be a separately-ordered query of its own.
+    trading_agent = state["orchestrator"].find_assignable_agent(business_id, None, 3)
     if not trading_agent:
         agent_id = state["agents"].create(
             business_id, "Trading Agent", role="Paper Trading Analyst",
@@ -1806,10 +1807,12 @@ def enable_live_trading(business_id: str, req: EnableLiveTradingRequest):
     db.execute("UPDATE paper_portfolios SET live_trading_enabled=1, updated_at=datetime('now') "
                "WHERE id=?", (portfolio["id"],))
 
-    live_agent = db.query_one(
-        "SELECT id FROM agents WHERE business_id=? AND permission_level >= 4 "
-        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
-    )
+    # Same agent-selection query _try_assign will actually use when the
+    # live_trading_cycle job below fires (department=None, matching how
+    # it's created) -- see Orchestrator.find_assignable_agent's
+    # docstring for why this must never be a separately-ordered query
+    # of its own, especially here where real money is on the line.
+    live_agent = state["orchestrator"].find_assignable_agent(business_id, None, 4)
     if not live_agent:
         agent_id = state["agents"].create(
             business_id, "Live Trading Agent", role="Real-Money Trading Executor",
@@ -1953,10 +1956,17 @@ def trigger_strategy_backtest_search(business_id: str, req: TriggerBacktestSearc
         MIN_BACKTEST_AGENT_STARTING_ARC,
     )
 
-    backtest_agent = db.query_one(
-        "SELECT id, arc_balance FROM agents WHERE business_id=? AND permission_level >= 2 "
-        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (business_id,),
-    )
+    # Must use the exact same agent the orchestrator's _try_assign is
+    # about to pick below (find_assignable_agent, not a separately-
+    # ordered query here) -- this used to order by created_at while
+    # _try_assign orders by updated_at, so a business with more than
+    # one eligible agent could fund one and then have the task assigned
+    # to a completely different, unfunded one. See
+    # Orchestrator.find_assignable_agent's docstring for the real
+    # incident this caused (a full backtest run's real LLM cost
+    # discarded at the end for "insufficient ARC" on an agent that was
+    # never topped up in the first place).
+    backtest_agent = state["orchestrator"].find_assignable_agent(business_id, department, 2)
     if not backtest_agent:
         agent_id = state["agents"].create(
             business_id, "Backtest Agent", role="Strategy Researcher",

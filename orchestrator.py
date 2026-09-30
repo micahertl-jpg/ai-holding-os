@@ -108,6 +108,40 @@ class Orchestrator:
             reset_ids.append(agent["id"])
         return reset_ids
 
+    def find_assignable_agent(self, business_id, department, perm_required):
+        """Returns the agent row _try_assign would hand a task to below
+        the human-approval threshold, or None. Pulled out of
+        _try_assign so that an endpoint which needs to fund an agent
+        BEFORE creating its task (backtest search, enable-auto-trading,
+        enable-live-trading -- each auto-creates/tops-up an agent for
+        real work about to be queued) can fund the exact agent
+        _try_assign will actually pick, instead of running its own
+        separate query that can silently pick a DIFFERENT one.
+
+        That exact divergence was a real, money-wasting bug: a
+        top-up query ordered by created_at (oldest-created agent) and
+        this query ordered by updated_at (least-recently-active agent)
+        can disagree whenever a business has more than one eligible
+        agent -- e.g. an actively-scheduled trading agent (frequently
+        refreshed, so it keeps sorting late on updated_at) alongside an
+        idle one sitting untouched since creation (early on updated_at,
+        early on created_at only if it's genuinely the oldest). A
+        backtest search topped up the agent its own created_at-ordered
+        query found, but _try_assign's updated_at-ordered query handed
+        the actual task to a different, still-unfunded agent -- which
+        then burned hundreds of real LLM calls before the executor
+        discarded the whole result for insufficient ARC at the very
+        end. Calling this one method from both places makes that
+        divergence structurally impossible: there is only one query."""
+        query = ("SELECT * FROM agents WHERE business_id=? AND status IN "
+                 "('created','idle','active') AND permission_level >= ?")
+        params = [business_id, max(perm_required, MIN_ASSIGNABLE_AGENT_LEVEL)]
+        if department:
+            query += " AND department=?"
+            params.append(department)
+        query += " ORDER BY updated_at ASC LIMIT 1"
+        return self.db.query_one(query, tuple(params))
+
     def _try_assign(self, task_id, business_id, department, perm_required):
         # Consequential tasks (permission_level_required >= 6) MUST always
         # reach the human approval queue — this is checked FIRST and
@@ -145,14 +179,7 @@ class Orchestrator:
         # even for a task that only requires level 0 itself — so the
         # floor here is max(perm_required, MIN_ASSIGNABLE_AGENT_LEVEL),
         # not perm_required directly.
-        query = ("SELECT * FROM agents WHERE business_id=? AND status IN "
-                 "('created','idle','active') AND permission_level >= ?")
-        params = [business_id, max(perm_required, MIN_ASSIGNABLE_AGENT_LEVEL)]
-        if department:
-            query += " AND department=?"
-            params.append(department)
-        query += " ORDER BY updated_at ASC LIMIT 1"
-        agent = self.db.query_one(query, tuple(params))
+        agent = self.find_assignable_agent(business_id, department, perm_required)
 
         if not agent:
             self.db.execute("UPDATE tasks SET status='queued' WHERE id=?", (task_id,))
