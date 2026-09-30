@@ -424,9 +424,110 @@ def test_trading_strategy_evolution_rollup():
           "across businesses, and never counts a business that has never traded")
 
 
+ASSIGN_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_find_assignable_agent.db")
+
+
+def test_find_assignable_agent_matches_actual_task_assignment():
+    """Regression test for a real, money-wasting bug: the backtest,
+    enable-auto-trading, and enable-live-trading endpoints each used to
+    pick "the agent to fund" with their own query ordered by
+    created_at (oldest-created agent wins), while the orchestrator's
+    _try_assign picks "the agent to actually hand the task to" ordered
+    by updated_at (least-recently-touched agent wins). Whenever a
+    business had more than one eligible agent, those two orderings
+    could disagree -- an endpoint would top up agent A, but the task
+    (or, for backtest, hundreds of real LLM-call tasks) would go to
+    agent B, still sitting at its default starting ARC. The real
+    incident: a backtest search burned its full real LLM cost, then
+    got discarded at the very end because the agent it actually ran
+    under was never funded.
+
+    This sets up exactly that disagreement (agent A created first but
+    touched more recently; agent B created second but never touched
+    since) and proves Orchestrator.find_assignable_agent -- now the
+    ONLY place either decision is made -- returns agent B in both
+    roles, so an endpoint funding via find_assignable_agent can never
+    again fund a different agent than _try_assign assigns to."""
+    if os.path.exists(ASSIGN_TEST_DB_PATH):
+        os.remove(ASSIGN_TEST_DB_PATH)
+    db = Database(ASSIGN_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    agents = AgentRegistry(db)
+    banker = Banker(db)
+    approvals = ApprovalQueue(db)
+    orch = Orchestrator(db, banker, approvals)
+
+    biz_id = businesses.create("Assign Test Co", "trading", "prove agent selection is consistent", 0.0)
+
+    # Agent A: created FIRST (wins a created_at-ordered query), but
+    # backdated/forward-dated here to look like it was touched more
+    # RECENTLY than agent B -- e.g. an actively-scheduled trading agent
+    # whose updated_at keeps refreshing every cycle.
+    agent_a = agents.create(biz_id, "Agent A (active elsewhere)", role="x",
+                             department="Trading", permission_level=3)
+    agents.set_status(agent_a, "idle")
+    db.execute("UPDATE agents SET created_at=?, updated_at=? WHERE id=?",
+               ("2024-01-01 00:00:00", "2024-01-03 00:00:00", agent_a))
+
+    # Agent B: created SECOND (loses a created_at-ordered query), but
+    # never touched since -- its updated_at is older than agent A's,
+    # so it wins an updated_at-ordered query, exactly what _try_assign
+    # actually uses.
+    agent_b = agents.create(biz_id, "Agent B (idle since creation)", role="x",
+                             department="Trading", permission_level=3)
+    agents.set_status(agent_b, "idle")
+    db.execute("UPDATE agents SET created_at=?, updated_at=? WHERE id=?",
+               ("2024-01-02 00:00:00", "2024-01-02 00:00:00", agent_b))
+
+    # Sanity check the scenario is real: a naive created_at-ordered
+    # query (the old, buggy shape) really would pick the WRONG agent.
+    naive_created_at_pick = db.query_one(
+        "SELECT id FROM agents WHERE business_id=? AND permission_level >= 3 "
+        "AND status != 'retired' ORDER BY created_at ASC LIMIT 1", (biz_id,),
+    )
+    assert naive_created_at_pick["id"] == agent_a, (
+        "test setup sanity check: the old created_at-ordered query must pick agent A"
+    )
+
+    # The fix: find_assignable_agent must agree with what _try_assign
+    # will actually do, not with the naive created_at ordering above.
+    funded = orch.find_assignable_agent(biz_id, None, 3)
+    assert funded is not None and funded["id"] == agent_b, (
+        "find_assignable_agent must pick agent B (updated_at-ordered), matching "
+        "_try_assign, never agent A (created_at-ordered) -- otherwise an endpoint "
+        "funding 'the agent find_assignable_agent returns' funds the wrong one again"
+    )
+    print("PASS: find_assignable_agent picks the updated_at-oldest agent, not the "
+          "created_at-oldest one")
+
+    # Fund agent B for a hypothetical real task, exactly like an
+    # endpoint would (e.g. trigger_strategy_backtest_search).
+    banker.allocate(biz_id, agent_b, 1000.0, reason="test: fund the agent we expect the task to reach")
+
+    # Now actually create a task requiring the same permission level and
+    # prove the orchestrator's real assignment path (_try_assign, via
+    # create_task) lands on the SAME agent that was just funded.
+    task_id = orch.create_task(biz_id, "prove assignment matches funding",
+                                permission_level_required=3, task_type="manual")
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "assigned"
+    assert task["agent_id"] == agent_b, (
+        "the task must be assigned to agent B -- the same agent find_assignable_agent "
+        "said would be funded. If this ever assigns to agent A instead, the real bug "
+        "is back: some endpoint's funding and the real assignment have diverged again"
+    )
+    print("PASS: _try_assign's real task assignment lands on the exact same agent "
+          "find_assignable_agent said it would -- funding and assignment can no "
+          "longer disagree")
+
+    db.close()
+    os.remove(ASSIGN_TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     main()
     test_overview_aggregation_spans_all_businesses()
     test_audit_actor_name_enrichment()
     test_trading_strategy_evolution_rollup()
     test_delete_research_items_removes_only_the_targeted_row()
+    test_find_assignable_agent_matches_actual_task_assignment()
