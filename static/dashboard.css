@@ -717,6 +717,24 @@ button { position: relative; overflow: hidden; }
 
 /* ---------- Live Activity Feed ---------- */
 
+/* Capped with its own internal scroll -- unbounded (up to 40 rows from
+   /audit?limit=40), this panel alone used to make the Overview tab
+   ~1900px taller than everything else on it combined. A fixed height
+   keeps the tab's overall shape stable as events accumulate instead of
+   the whole page growing with it. */
+#activity-feed-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+#activity-feed-list::-webkit-scrollbar { width: 6px; }
+#activity-feed-list::-webkit-scrollbar-track { background: transparent; }
+#activity-feed-list::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 3px;
+}
+#activity-feed-list::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
 .activity-row {
   display: flex;
   justify-content: space-between;
@@ -751,6 +769,23 @@ button { position: relative; overflow: hidden; }
 }
 
 /* ---------- Approvals ---------- */
+
+/* Same reasoning as #activity-feed-list above -- a business with many
+   pending approvals at once shouldn't be able to stretch this panel
+   (and the whole Overview row it shares with the activity feed) past a
+   fixed, predictable height. */
+#global-approvals-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+#global-approvals-list::-webkit-scrollbar { width: 6px; }
+#global-approvals-list::-webkit-scrollbar-track { background: transparent; }
+#global-approvals-list::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 3px;
+}
+#global-approvals-list::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
 .approval-card {
   border: 1px solid var(--border);
@@ -814,11 +849,39 @@ button { position: relative; overflow: hidden; }
 
 /* ---------- Opportunities ---------- */
 
+/* Collapsed by default -- these were long-form disclosure/context text
+   (safety notes, what's real vs. not, background-job timing) that read
+   fine written out in full, but at 3-6 lines apiece x 14 of them across
+   the dashboard, they were a major reason panels like the trading ones
+   couldn't fit a screen. A one-line summary keeps the information one
+   click away instead of permanently taking the space. */
 .panel-note {
+  margin: 12px 0 0 0;
+}
+.panel-note summary {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent-dim);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.panel-note summary::-webkit-details-marker { display: none; }
+.panel-note summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 5px;
+  transition: transform 0.15s ease;
+}
+.panel-note[open] summary::before { transform: rotate(90deg); }
+.panel-note summary:hover { color: var(--accent); }
+.panel-note p {
   font-size: 13px;
   color: var(--muted);
   font-style: italic;
-  margin: 12px 0 0 0;
+  margin: 8px 0 0 0;
   line-height: 1.6;
 }
 
@@ -1182,8 +1245,13 @@ button { position: relative; overflow: hidden; }
    drifting relative to each other at different viewport sizes. */
 .core-orbital {
   position: relative;
-  width: min(68vw, 660px);
-  height: min(68vw, 660px);
+  /* Shrunk from 660px: the hub is one panel among six tabs now, not a
+     standalone hero -- 660px made the Overview tab alone taller than
+     the rest of the dashboard combined. Node/line math in
+     dashboard-render.js is entirely percentage-based (pointOnRing), so
+     this is a pure size change with no coordinate drift. */
+  width: min(52vw, 460px);
+  height: min(52vw, 460px);
   max-width: 100%;
   margin: 4px auto 12px auto;
 }
