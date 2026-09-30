@@ -115,7 +115,7 @@ body::after {
   100% { top: 100%; }
 }
 
-.app-header, .error-banner, .layout { position: relative; z-index: 3; }
+.app-header, .tab-bar, .error-banner, .layout { position: relative; z-index: 3; }
 
 /* ---------- Header ---------- */
 
@@ -264,7 +264,61 @@ body::after {
   50% { box-shadow: 0 0 14px rgba(255,107,107,0.35) inset; }
 }
 
+/* ---------- Tab bar ---------- */
+
+/* HUD section-select strip, sitting directly under the header. Grouping
+   everything by function (Overview / Businesses / Agents & Tasks /
+   Trading & Banker / Research / Admin) instead of one long scroll is
+   what makes the dense feature set here fit a single monitor -- each
+   tab only ever renders its own handful of panels into .layout below. */
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 32px;
+  background: rgba(5,10,18,0.5);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.tab-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  padding: 13px 16px 11px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, text-shadow 0.15s ease;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  text-shadow: 0 0 10px rgba(79,214,255,0.4);
+}
+.tab-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* ---------- Layout & panels ---------- */
+
+/* Each tab's content is wrapped in a .tab-panel so exactly one group of
+   panels renders at a time. The active one uses display: contents --
+   NOT display: block/grid -- specifically so its <section class="panel">
+   children remain direct children of .layout and keep participating in
+   .layout's own CSS grid untouched (grid-template-columns/gap/etc.
+   below); an inactive tab-panel is removed from grid flow entirely via
+   the [hidden] attribute JS sets on it, so switching tabs never leaves
+   stray empty grid tracks behind. */
+.tab-panel.active { display: contents; }
+.tab-panel[hidden] { display: none; }
 
 .layout {
   display: grid;
@@ -1278,6 +1332,8 @@ button { position: relative; overflow: hidden; }
   .core-node-business .core-node-value { font-size: 7px; }
   .core-node-mini { width: 16px; height: 16px; }
   .core-node-mini .core-node-value { font-size: 6px; }
+  .tab-bar { padding: 0 12px; overflow-x: auto; flex-wrap: nowrap; }
+  .tab-btn { padding: 11px 12px 9px; font-size: 10px; flex-shrink: 0; }
 }
 
 /* ---------- Revenue trend chart ---------- */

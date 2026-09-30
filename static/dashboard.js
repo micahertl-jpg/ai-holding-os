@@ -9,7 +9,19 @@
  */
 (function () {
   const R = window.DashboardRender;
-  let currentBusinessId = null;
+  // Each business-scoped tab now owns its own independent business
+  // selection -- picking a business on the Research tab no longer
+  // affects what the Trading & Banker tab is showing, and vice versa.
+  // The Overview tab has no entry here: every panel on it is global
+  // (see loadOverview()) and never depends on a selected business.
+  const TAB_KEYS = ["businesses", "agents-tasks", "trading-banker", "research", "admin"];
+  const tabBusinessId = {
+    "businesses": null,
+    "agents-tasks": null,
+    "trading-banker": null,
+    "research": null,
+    "admin": null,
+  };
   let refreshInFlight = false;
   const AUTO_REFRESH_INTERVAL_MS = 5000;
 
@@ -27,7 +39,7 @@
   };
 
   // Revenue trend chart state -- purely a display concern over orders
-  // already fetched by loadDashboard(), so switching the range or
+  // already fetched by loadAdminTab(), so switching the range or
   // selecting a bar never needs a network round-trip.
   let lastOrders = [];
   let ordersChartRangeDays = 7;
@@ -35,7 +47,7 @@
   // Promoting a backtest candidate (see the "promote-backtest-candidate"
   // action below) needs that candidate's full parameters dict, which is
   // too large/nested to round-trip through data-* attributes -- kept
-  // here instead, refreshed on every loadDashboard() like lastOrders.
+  // here instead, refreshed on every loadTradingBankerTab() like lastOrders.
   let lastBacktestRuns = [];
 
   // Tasks table: whether the completed-task history is expanded (see
@@ -123,15 +135,39 @@
     document.getElementById(id).innerHTML = html;
   }
 
+  // Tab switching: the active tab-panel gets display: contents (see
+  // dashboard.css) so its <section class="panel"> children stay direct
+  // grid items of .layout, exactly like before tabs existed -- every
+  // other tab-panel is hidden and removed from grid flow entirely.
+  function switchTab(tab) {
+    document.querySelectorAll(".tab-panel").forEach((panel) => {
+      const active = panel.dataset.tabPanel === tab;
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
+    });
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      const active = btn.dataset.tab === tab;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
   async function loadBusinessList() {
     const businesses = await api("/businesses");
-    document.getElementById("business-select").innerHTML =
-      R.renderBusinessOptions(businesses);
-    if (businesses.length > 0 && !currentBusinessId) {
-      currentBusinessId = businesses[0].id;
-      document.getElementById("business-select").value = currentBusinessId;
-      await loadDashboard();
-    }
+    const optionsHtml = R.renderBusinessOptions(businesses);
+    const loaders = [];
+    TAB_KEYS.forEach((tab) => {
+      const select = document.getElementById(`business-select-${tab}`);
+      select.innerHTML = optionsHtml;
+      if (businesses.length > 0 && !tabBusinessId[tab]) {
+        tabBusinessId[tab] = businesses[0].id;
+        select.value = tabBusinessId[tab];
+        loaders.push(loadTabDashboard(tab));
+      } else if (tabBusinessId[tab]) {
+        select.value = tabBusinessId[tab];
+      }
+    });
+    await Promise.all(loaders);
   }
 
   async function loadOverview() {
@@ -160,23 +196,44 @@
     setHtmlIfChanged("trading-evolution-summary", R.renderTradingStrategyEvolution(data.trading_strategy_evolution));
   }
 
-  async function loadDashboard() {
-    if (!currentBusinessId) return;
-    const data = await api(`/businesses/${currentBusinessId}/dashboard`);
+  // GET /businesses/{id}/dashboard returns every business-scoped field
+  // in one payload (agents, tasks, arc_summary, jobs, orders, all four
+  // research verticals, trading/live-trading/backtest data). With five
+  // independent per-tab business selections, two tabs pointed at the
+  // SAME business would otherwise fetch that identical payload twice
+  // per refresh -- this cache (rebuilt at the start of every refresh(),
+  // see below) makes concurrent tab loaders share one in-flight request
+  // per distinct business id instead.
+  let dashboardFetchCache = new Map();
+  function fetchBusinessDashboard(businessId) {
+    if (!dashboardFetchCache.has(businessId)) {
+      dashboardFetchCache.set(businessId, api(`/businesses/${businessId}/dashboard`));
+    }
+    return dashboardFetchCache.get(businessId);
+  }
+
+  async function loadBusinessesTab() {
+    const id = tabBusinessId["businesses"];
+    if (!id) return;
+    const data = await fetchBusinessDashboard(id);
     setHtmlIfChanged("business-header", R.renderBusinessHeader(data.business));
+  }
+
+  async function loadAgentsTasksTab() {
+    const id = tabBusinessId["agents-tasks"];
+    if (!id) return;
+    const data = await fetchBusinessDashboard(id);
     setHtmlIfChanged("agents-table", R.renderAgentsTable(data.agents));
     lastTasks = data.tasks || [];
     setHtmlIfChanged("tasks-table", R.renderTasksTable(lastTasks, tasksShowAll));
     setHtmlIfChanged("arc-summary", R.renderArcSummary(data.arc_summary));
-    setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
-    setHtmlIfChanged("orders-table", R.renderOrdersTable(data.orders));
-    lastOrders = data.orders || [];
-    renderOrdersChartPanel();
-    setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
-    setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
-    setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));
-    setHtmlIfChanged("real-estate-list", R.renderRealEstateTable(data.real_estate_assessments));
     setHtmlIfChanged("allocate-arc-agent-select", R.renderAgentOptions(data.agents));
+  }
+
+  async function loadTradingBankerTab() {
+    const id = tabBusinessId["trading-banker"];
+    if (!id) return;
+    const data = await fetchBusinessDashboard(id);
     setHtmlIfChanged("trading-portfolio", R.renderTradingPortfolio(data.trading_portfolio));
     setHtmlIfChanged("trading-positions",
       R.renderTradingPositions(data.trading_portfolio ? data.trading_portfolio.positions : []));
@@ -190,17 +247,50 @@
     lastBacktestRuns = data.backtest_runs || [];
   }
 
+  async function loadResearchTab() {
+    const id = tabBusinessId["research"];
+    if (!id) return;
+    const data = await fetchBusinessDashboard(id);
+    setHtmlIfChanged("opportunities-list", R.renderOpportunitiesTable(data.opportunities));
+    setHtmlIfChanged("roblox-trends-list", R.renderRobloxTrendsTable(data.roblox_trends));
+    setHtmlIfChanged("app-feasibility-list", R.renderAppFeasibilityTable(data.app_feasibility_assessments));
+    setHtmlIfChanged("real-estate-list", R.renderRealEstateTable(data.real_estate_assessments));
+  }
+
+  async function loadAdminTab() {
+    const id = tabBusinessId["admin"];
+    if (!id) return;
+    const data = await fetchBusinessDashboard(id);
+    setHtmlIfChanged("jobs-table", R.renderJobsTable(data.scheduled_jobs));
+    setHtmlIfChanged("orders-table", R.renderOrdersTable(data.orders));
+    lastOrders = data.orders || [];
+    renderOrdersChartPanel();
+  }
+
+  const TAB_LOADERS = {
+    "businesses": loadBusinessesTab,
+    "agents-tasks": loadAgentsTasksTab,
+    "trading-banker": loadTradingBankerTab,
+    "research": loadResearchTab,
+    "admin": loadAdminTab,
+  };
+
+  function loadTabDashboard(tab) {
+    return TAB_LOADERS[tab]();
+  }
+
   async function refresh() {
     // Guard against overlapping calls: if a slow request from the auto-
     // refresh interval is still in flight when the next tick (or a manual
     // action) fires, skip it rather than piling up concurrent fetches.
     if (refreshInFlight) return;
     refreshInFlight = true;
+    dashboardFetchCache = new Map();
     try {
-      // loadOverview() runs unconditionally (global, not tied to
-      // currentBusinessId) -- loadDashboard() is a no-op until a
-      // business is selected.
-      await Promise.all([loadOverview(), loadDashboard()]);
+      // loadOverview() runs unconditionally (global, not tied to any
+      // tab's business selection) -- each tab loader below is a no-op
+      // until that tab has a business selected.
+      await Promise.all([loadOverview(), ...TAB_KEYS.map(loadTabDashboard)]);
     } catch (e) {
       showError("Failed to refresh: " + e.message);
     } finally {
@@ -231,12 +321,16 @@
     // incidentally triggered a refresh).
     setInterval(refresh, AUTO_REFRESH_INTERVAL_MS);
 
-    document.getElementById("business-select").addEventListener("change", async (ev) => {
-      currentBusinessId = ev.target.value || null;
-      await refresh();
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
 
-    document.getElementById("refresh-btn").addEventListener("click", refresh);
+    TAB_KEYS.forEach((tab) => {
+      document.getElementById(`business-select-${tab}`).addEventListener("change", async (ev) => {
+        tabBusinessId[tab] = ev.target.value || null;
+        await refresh();
+      });
+    });
 
     document.getElementById("create-business-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -252,9 +346,9 @@
           }),
         });
         f.reset();
-        currentBusinessId = result.id;
+        tabBusinessId["businesses"] = result.id;
         await loadBusinessList();
-        document.getElementById("business-select").value = currentBusinessId;
+        document.getElementById("business-select-businesses").value = tabBusinessId["businesses"];
         await refresh();
       } catch (e) {
         showError("Failed to create business: " + e.message);
@@ -263,10 +357,11 @@
 
     document.getElementById("create-agent-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["agents-tasks"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       try {
-        await api(`/businesses/${currentBusinessId}/agents`, {
+        await api(`/businesses/${businessId}/agents`, {
           method: "POST",
           body: JSON.stringify({
             name: f.name.value,
@@ -284,10 +379,11 @@
 
     document.getElementById("create-task-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["agents-tasks"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       try {
-        await api(`/businesses/${currentBusinessId}/tasks`, {
+        await api(`/businesses/${businessId}/tasks`, {
           method: "POST",
           body: JSON.stringify({
             objective: f.objective.value,
@@ -304,10 +400,11 @@
 
     document.getElementById("create-job-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["admin"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       try {
-        await api(`/businesses/${currentBusinessId}/scheduled-jobs`, {
+        await api(`/businesses/${businessId}/scheduled-jobs`, {
           method: "POST",
           body: JSON.stringify({
             name: f.name.value,
@@ -326,7 +423,8 @@
 
     document.getElementById("research-opportunity-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["research"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       const urlsRaw = f.reference_urls.value.trim();
       const reference_urls = urlsRaw
@@ -337,7 +435,7 @@
         return;
       }
       try {
-        await api(`/businesses/${currentBusinessId}/opportunities/research`, {
+        await api(`/businesses/${businessId}/opportunities/research`, {
           method: "POST",
           body: JSON.stringify({ topic: f.topic.value, reference_urls }),
         });
@@ -350,7 +448,8 @@
 
     document.getElementById("research-roblox-trend-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["research"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       const urlsRaw = f.reference_urls.value.trim();
       const reference_urls = urlsRaw
@@ -361,7 +460,7 @@
         return;
       }
       try {
-        await api(`/businesses/${currentBusinessId}/roblox-trends/research`, {
+        await api(`/businesses/${businessId}/roblox-trends/research`, {
           method: "POST",
           body: JSON.stringify({ concept: f.concept.value, reference_urls }),
         });
@@ -374,7 +473,8 @@
 
     document.getElementById("research-app-feasibility-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["research"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       const urlsRaw = f.reference_urls.value.trim();
       const reference_urls = urlsRaw
@@ -385,7 +485,7 @@
         return;
       }
       try {
-        await api(`/businesses/${currentBusinessId}/app-feasibility/research`, {
+        await api(`/businesses/${businessId}/app-feasibility/research`, {
           method: "POST",
           body: JSON.stringify({ concept: f.concept.value, reference_urls }),
         });
@@ -398,7 +498,8 @@
 
     document.getElementById("research-real-estate-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["research"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       const urlsRaw = f.reference_urls.value.trim();
       const reference_urls = urlsRaw
@@ -409,7 +510,7 @@
         return;
       }
       try {
-        await api(`/businesses/${currentBusinessId}/real-estate/research`, {
+        await api(`/businesses/${businessId}/real-estate/research`, {
           method: "POST",
           body: JSON.stringify({ property_or_market: f.property_or_market.value, reference_urls }),
         });
@@ -422,14 +523,15 @@
 
     document.getElementById("create-trading-portfolio-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       const watchlistRaw = f.watchlist.value.trim();
       const watchlist = watchlistRaw
         ? watchlistRaw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
         : [];
       try {
-        await api(`/businesses/${currentBusinessId}/trading/portfolio`, {
+        await api(`/businesses/${businessId}/trading/portfolio`, {
           method: "POST",
           body: JSON.stringify({
             starting_cash_usd: parseFloat(f.starting_cash_usd.value) || 10000,
@@ -445,10 +547,11 @@
 
     document.getElementById("enable-auto-trading-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       try {
-        await api(`/businesses/${currentBusinessId}/trading/enable-auto-trading`, {
+        await api(`/businesses/${businessId}/trading/enable-auto-trading`, {
           method: "POST",
           body: JSON.stringify({
             cycle_interval_seconds: parseInt(f.cycle_interval_seconds.value, 10) || 21600,
@@ -463,9 +566,10 @@
     });
 
     document.getElementById("trigger-cycle-btn").addEventListener("click", async () => {
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       try {
-        await api(`/businesses/${currentBusinessId}/trading/cycle`, { method: "POST", body: "{}" });
+        await api(`/businesses/${businessId}/trading/cycle`, { method: "POST", body: "{}" });
         await refresh();
       } catch (e) {
         showError("Failed to trigger trading cycle: " + e.message);
@@ -473,9 +577,10 @@
     });
 
     document.getElementById("trigger-review-btn").addEventListener("click", async () => {
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       try {
-        await api(`/businesses/${currentBusinessId}/trading/strategy-review`, { method: "POST", body: "{}" });
+        await api(`/businesses/${businessId}/trading/strategy-review`, { method: "POST", body: "{}" });
         await refresh();
       } catch (e) {
         showError("Failed to trigger strategy review: " + e.message);
@@ -484,7 +589,8 @@
 
     document.getElementById("enable-live-trading-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       if (!f.confirm_real_money.checked) {
         showError("Check the confirmation box to enable real-money trading.");
@@ -497,7 +603,7 @@
         return;
       }
       try {
-        await api(`/businesses/${currentBusinessId}/trading/live/enable`, {
+        await api(`/businesses/${businessId}/trading/live/enable`, {
           method: "POST",
           body: JSON.stringify({
             confirm_real_money: true,
@@ -512,9 +618,10 @@
     });
 
     document.getElementById("disable-live-trading-btn").addEventListener("click", async () => {
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       try {
-        await api(`/businesses/${currentBusinessId}/trading/live/disable`, { method: "POST", body: "{}" });
+        await api(`/businesses/${businessId}/trading/live/disable`, { method: "POST", body: "{}" });
         await refresh();
       } catch (e) {
         showError("Failed to disable live trading: " + e.message);
@@ -522,9 +629,10 @@
     });
 
     document.getElementById("trigger-live-cycle-btn").addEventListener("click", async () => {
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       try {
-        await api(`/businesses/${currentBusinessId}/trading/live/cycle`, { method: "POST", body: "{}" });
+        await api(`/businesses/${businessId}/trading/live/cycle`, { method: "POST", body: "{}" });
         await refresh();
       } catch (e) {
         showError("Failed to trigger live trading cycle: " + e.message);
@@ -533,10 +641,11 @@
 
     document.getElementById("trigger-backtest-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       try {
-        await api(`/businesses/${currentBusinessId}/trading/backtest`, {
+        await api(`/businesses/${businessId}/trading/backtest`, {
           method: "POST",
           body: JSON.stringify({
             train_start_date: f.train_start_date.value,
@@ -552,7 +661,7 @@
     });
 
     document.getElementById("trigger-ops-review-btn").addEventListener("click", async () => {
-      // Business-independent -- no currentBusinessId guard needed, unlike
+      // Business-independent -- no business-selection guard needed, unlike
       // the trading triggers above.
       try {
         await api("/ops/review", { method: "POST", body: "{}" });
@@ -599,11 +708,12 @@
 
     document.getElementById("allocate-arc-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      if (!currentBusinessId) { showError("Select a business first."); return; }
+      const businessId = tabBusinessId["agents-tasks"];
+      if (!businessId) { showError("Select a business first."); return; }
       const f = ev.target;
       if (!f.agent_id.value) { showError("No agent selected to allocate ARC to."); return; }
       try {
-        await api(`/businesses/${currentBusinessId}/banker/allocate`, {
+        await api(`/businesses/${businessId}/banker/allocate`, {
           method: "POST",
           body: JSON.stringify({
             agent_id: f.agent_id.value,
@@ -672,7 +782,8 @@
           });
           await refresh();
         } else if (action === "delete-abandoned-order") {
-          if (!currentBusinessId) return;
+          const businessId = tabBusinessId["admin"];
+          if (!businessId) return;
           if (!window.confirm(
             "Delete this order? Only do this after confirming in Stripe (use the \"View in Stripe\" " +
             "link on this row) that the customer never actually paid -- this removes it from this " +
@@ -680,26 +791,31 @@
           )) {
             return;
           }
-          await api(`/businesses/${currentBusinessId}/orders/${t.dataset.id}`, { method: "DELETE" });
+          await api(`/businesses/${businessId}/orders/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         } else if (action === "delete-opportunity") {
-          if (!currentBusinessId) return;
-          await api(`/businesses/${currentBusinessId}/opportunities/${t.dataset.id}`, { method: "DELETE" });
+          const businessId = tabBusinessId["research"];
+          if (!businessId) return;
+          await api(`/businesses/${businessId}/opportunities/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         } else if (action === "delete-roblox-trend") {
-          if (!currentBusinessId) return;
-          await api(`/businesses/${currentBusinessId}/roblox-trends/${t.dataset.id}`, { method: "DELETE" });
+          const businessId = tabBusinessId["research"];
+          if (!businessId) return;
+          await api(`/businesses/${businessId}/roblox-trends/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         } else if (action === "delete-app-feasibility") {
-          if (!currentBusinessId) return;
-          await api(`/businesses/${currentBusinessId}/app-feasibility/${t.dataset.id}`, { method: "DELETE" });
+          const businessId = tabBusinessId["research"];
+          if (!businessId) return;
+          await api(`/businesses/${businessId}/app-feasibility/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         } else if (action === "delete-real-estate") {
-          if (!currentBusinessId) return;
-          await api(`/businesses/${currentBusinessId}/real-estate/${t.dataset.id}`, { method: "DELETE" });
+          const businessId = tabBusinessId["research"];
+          if (!businessId) return;
+          await api(`/businesses/${businessId}/real-estate/${t.dataset.id}`, { method: "DELETE" });
           await refresh();
         } else if (action === "promote-backtest-candidate") {
-          if (!currentBusinessId) return;
+          const businessId = tabBusinessId["trading-banker"];
+          if (!businessId) return;
           const run = lastBacktestRuns.find((r) => r.id === t.dataset.runId);
           const candidate = run && run.candidates && run.candidates[parseInt(t.dataset.candidateIndex, 10)];
           if (!candidate) {
@@ -712,7 +828,7 @@
           )) {
             return;
           }
-          await api(`/businesses/${currentBusinessId}/trading/strategy-override`, {
+          await api(`/businesses/${businessId}/trading/strategy-override`, {
             method: "POST",
             body: JSON.stringify({
               parameters: candidate.parameters,
@@ -723,7 +839,8 @@
           });
           await refresh();
         } else if (LAUNCH_ACTION_API_PATHS[action]) {
-          if (!currentBusinessId) return;
+          const businessId = tabBusinessId["research"];
+          if (!businessId) return;
           const title = t.dataset.title;
           const name = window.prompt(
             `Name for the new business, launched from this researched record:\n"${title}"`,
@@ -738,16 +855,24 @@
             return;
           }
           const result = await api(
-            `/businesses/${currentBusinessId}/${LAUNCH_ACTION_API_PATHS[action]}/${t.dataset.id}/launch`,
+            `/businesses/${businessId}/${LAUNCH_ACTION_API_PATHS[action]}/${t.dataset.id}/launch`,
             { method: "POST", body: JSON.stringify({ name: name || undefined }) },
           );
-          // Land the owner on the new business's (empty) dashboard --
-          // same pattern as the create-business form below -- so the
-          // launch visibly did something real, not just a silent flag
-          // flip on the research card.
-          currentBusinessId = result.business_id;
+          // Land the owner on the new business's (empty) dashboard, on
+          // the SAME tab the launch button was clicked from -- same
+          // pattern as the create-business form (which does this for
+          // its own Businesses tab) -- so the launch visibly did
+          // something real, not just a silent flag flip on the
+          // research card. Other tabs' independent selections are left
+          // untouched, per the per-tab selector design.
+          tabBusinessId["research"] = result.business_id;
           await loadBusinessList();
-          document.getElementById("business-select").value = currentBusinessId;
+          document.getElementById("business-select-research").value = tabBusinessId["research"];
+          await refresh();
+        } else if (action === "refresh-tab") {
+          // Plain manual refresh -- refresh() already reloads every tab
+          // and the global overview, so no tab-specific work is needed
+          // here beyond triggering it.
           await refresh();
         } else if (action === "set-orders-range") {
           // Pure display state over data already in hand -- no network

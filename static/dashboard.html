@@ -34,326 +34,374 @@
     </div>
   </header>
 
+  <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
+    <button type="button" class="tab-btn active" data-tab="overview" role="tab" aria-selected="true" id="tab-btn-overview" aria-controls="tab-panel-overview">Overview</button>
+    <button type="button" class="tab-btn" data-tab="businesses" role="tab" aria-selected="false" id="tab-btn-businesses" aria-controls="tab-panel-businesses">Businesses</button>
+    <button type="button" class="tab-btn" data-tab="agents-tasks" role="tab" aria-selected="false" id="tab-btn-agents-tasks" aria-controls="tab-panel-agents-tasks">Agents &amp; Tasks</button>
+    <button type="button" class="tab-btn" data-tab="trading-banker" role="tab" aria-selected="false" id="tab-btn-trading-banker" aria-controls="tab-panel-trading-banker">Trading &amp; Banker</button>
+    <button type="button" class="tab-btn" data-tab="research" role="tab" aria-selected="false" id="tab-btn-research" aria-controls="tab-panel-research">Research</button>
+    <button type="button" class="tab-btn" data-tab="admin" role="tab" aria-selected="false" id="tab-btn-admin" aria-controls="tab-panel-admin">Admin</button>
+  </nav>
+
   <div id="error-banner" class="error-banner hidden"></div>
   <div id="chart-tooltip" class="chart-tooltip hidden" aria-hidden="true"></div>
 
   <main class="layout">
-    <section class="panel system-core-panel no-tilt" id="system-core-section">
-      <h3>System Core</h3>
-      <div class="core-hud-center" id="system-core-center"></div>
-      <div class="core-orbital">
-        <canvas id="system-core-globe" class="core-globe-canvas" aria-hidden="true"></canvas>
-        <div class="core-orbital-overlay" id="core-orbital-overlay"></div>
-      </div>
-    </section>
 
-    <section class="panel panel-approvals" id="global-approvals-section">
-      <h3>Owner Approvals Awaiting Decision — all businesses</h3>
-      <div id="global-approvals-list"></div>
-      <p class="panel-note">Shown here regardless of which business is selected below — an
-        approval on a business you aren't currently viewing used to be easy to miss entirely.</p>
-    </section>
+    <div class="tab-panel active" data-tab-panel="overview" id="tab-panel-overview" role="tabpanel" aria-labelledby="tab-btn-overview">
+      <section class="panel system-core-panel no-tilt" id="system-core-section">
+        <h3>System Core</h3>
+        <div class="core-hud-center" id="system-core-center"></div>
+        <div class="core-orbital">
+          <canvas id="system-core-globe" class="core-globe-canvas" aria-hidden="true"></canvas>
+          <div class="core-orbital-overlay" id="core-orbital-overlay"></div>
+        </div>
+      </section>
 
-    <section class="panel">
-      <h3>Command Metrics</h3>
-      <div id="command-stat-row"></div>
-    </section>
+      <section class="panel panel-approvals" id="global-approvals-section">
+        <h3>Owner Approvals Awaiting Decision — all businesses</h3>
+        <div id="global-approvals-list"></div>
+        <p class="panel-note">Shown here regardless of which business is selected on any other
+          tab — an approval on a business you aren't currently viewing used to be easy to miss
+          entirely.</p>
+      </section>
 
-    <section class="panel">
-      <h3>Live Activity Feed</h3>
-      <div id="activity-feed-list"></div>
-    </section>
+      <section class="panel">
+        <h3>Command Metrics</h3>
+        <div id="command-stat-row"></div>
+      </section>
 
-    <section class="panel panel-chat no-tilt" id="chat-section">
-      <h3>Ask</h3>
-      <div id="chat-log" class="chat-log"></div>
-      <form id="chat-form" class="inline-form">
-        <input id="chat-input" name="message" type="text" autocomplete="off" required
-               placeholder="Ask about approvals, trading P&amp;L, system health, or a researched idea...">
-        <button type="submit" class="btn-small">Ask</button>
-      </form>
-      <p class="panel-note">Read-only for now — answers real, current data across every
-        business, but can't yet take actions (launch a business, approve something, delete
-        anything). Use the dashboard for those.</p>
-    </section>
+      <section class="panel">
+        <h3>Live Activity Feed</h3>
+        <div id="activity-feed-list"></div>
+      </section>
 
-    <section class="panel">
-      <h3>System Health — Ops/Maintenance</h3>
-      <div id="ops-report"></div>
-      <button id="trigger-ops-review-btn" type="button" class="btn-small">Run Ops Review Now</button>
-      <p class="panel-note">Watches this system's own infrastructure (stuck tasks/approvals/
-        orders, silent scheduled jobs, database growth, recent errors, missing optional config)
-        and only ever recommends — it never restarts, deletes, or changes anything on its own.
-        Runs automatically every
-        <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
-        the approvals panel above.</p>
-      <button id="trigger-owner-digest-btn" type="button" class="btn-small">Send Owner Digest Now</button>
-      <p class="panel-note">Emails <code>OWNER_EMAIL</code> a summary of pending approvals,
-        system health, revenue, new research, and trading P&amp;L across every business. Runs
-        automatically every <code>OWNER_DIGEST_INTERVAL_SECONDS</code> (default 24h); requires
-        <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
-        configured, or it fails loudly rather than sending nothing silently.</p>
-    </section>
+      <section class="panel panel-chat no-tilt" id="chat-section">
+        <h3>Ask</h3>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="chat-form" class="inline-form">
+          <input id="chat-input" name="message" type="text" autocomplete="off" required
+                 placeholder="Ask about approvals, trading P&amp;L, system health, or a researched idea...">
+          <button type="submit" class="btn-small">Ask</button>
+        </form>
+        <p class="panel-note">Read-only for now — answers real, current data across every
+          business, but can't yet take actions (launch a business, approve something, delete
+          anything). Use the other tabs for those.</p>
+      </section>
+    </div>
 
-    <section class="panel panel-scanner">
-      <h3>Command Center Overview</h3>
-      <div id="global-stats"></div>
-      <div id="businesses-overview-table"></div>
-    </section>
+    <div class="tab-panel" data-tab-panel="businesses" id="tab-panel-businesses" role="tabpanel" aria-labelledby="tab-btn-businesses" hidden>
+      <section class="panel panel-scanner">
+        <h3>Command Center Overview</h3>
+        <div id="global-stats"></div>
+        <div id="businesses-overview-table"></div>
+      </section>
 
-    <section class="panel panel-select no-tilt">
-      <label for="business-select">Business</label>
-      <select id="business-select"></select>
-      <button id="refresh-btn" class="btn-small">Refresh</button>
-    </section>
+      <section class="panel panel-select no-tilt">
+        <label for="business-select-businesses">Business</label>
+        <select id="business-select-businesses"></select>
+        <button id="refresh-btn-businesses" class="btn-small" data-action="refresh-tab" data-tab="businesses">Refresh</button>
+      </section>
 
-    <section id="business-header" class="panel"></section>
+      <section id="business-header" class="panel"></section>
 
-    <section class="panel">
-      <h3>Agents</h3>
-      <div id="agents-table"></div>
-      <form id="create-agent-form" class="inline-form">
-        <input name="name" placeholder="Agent name" required>
-        <input name="role" placeholder="Role">
-        <input name="department" placeholder="Department">
-        <input name="permission_level" type="number" min="0" max="7" value="1" title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
-        <button type="submit" class="btn-small">Add Agent</button>
-      </form>
-    </section>
+      <section class="panel">
+        <h3>Create a New Business</h3>
+        <form id="create-business-form" class="inline-form">
+          <input name="name" placeholder="Business name" required>
+          <input name="type" placeholder="Type (e.g. opportunity_discovery)">
+          <input name="objective" placeholder="Objective">
+          <input name="budget_usd" type="number" min="0" step="0.01" value="0" title="Authorized USD ceiling — never moved automatically">
+          <button type="submit" class="btn-small">Create Business</button>
+        </form>
+      </section>
+    </div>
 
-    <section class="panel">
-      <h3>Tasks</h3>
-      <div id="tasks-table"></div>
-      <form id="create-task-form" class="inline-form">
-        <input name="objective" placeholder="Task objective" required>
-        <input name="department" placeholder="Department">
-        <input name="permission_level_required" type="number" min="0" max="7" value="1"
-               title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
-        <button type="submit" class="btn-small">Add Task</button>
-      </form>
-    </section>
+    <div class="tab-panel" data-tab-panel="agents-tasks" id="tab-panel-agents-tasks" role="tabpanel" aria-labelledby="tab-btn-agents-tasks" hidden>
+      <section class="panel panel-select no-tilt">
+        <label for="business-select-agents-tasks">Business</label>
+        <select id="business-select-agents-tasks"></select>
+        <button id="refresh-btn-agents-tasks" class="btn-small" data-action="refresh-tab" data-tab="agents-tasks">Refresh</button>
+      </section>
 
-    <section class="panel">
-      <h3>ARC (internal virtual economy — never real money)</h3>
-      <div id="arc-summary"></div>
-      <form id="allocate-arc-form" class="inline-form">
-        <select name="agent_id" id="allocate-arc-agent-select" required></select>
-        <input name="amount" type="number" min="0.01" step="0.01" placeholder="Amount" required>
-        <input name="reason" placeholder="Reason (optional)">
-        <button type="submit" class="btn-small">Allocate ARC</button>
-      </form>
-      <p class="panel-note">New agents get a starting ARC budget automatically. Use this to
-        top up an existing agent's balance — e.g. if task costs have run it down, or you're
-        funding an agent created before this feature existed.</p>
-    </section>
+      <section class="panel">
+        <h3>Agents</h3>
+        <div id="agents-table"></div>
+        <form id="create-agent-form" class="inline-form">
+          <input name="name" placeholder="Agent name" required>
+          <input name="role" placeholder="Role">
+          <input name="department" placeholder="Department">
+          <input name="permission_level" type="number" min="0" max="7" value="1" title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
+          <button type="submit" class="btn-small">Add Agent</button>
+        </form>
+      </section>
 
-    <section class="panel">
-      <h3>Banker — ARC Ledger, All Businesses</h3>
-      <div id="global-arc-summary"></div>
-    </section>
+      <section class="panel">
+        <h3>Tasks</h3>
+        <div id="tasks-table"></div>
+        <form id="create-task-form" class="inline-form">
+          <input name="objective" placeholder="Task objective" required>
+          <input name="department" placeholder="Department">
+          <input name="permission_level_required" type="number" min="0" max="7" value="1"
+                 title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
+          <button type="submit" class="btn-small">Add Task</button>
+        </form>
+      </section>
 
-    <section class="panel">
-      <h3>Trading Strategy Evolution — All Businesses</h3>
-      <div id="trading-evolution-summary"></div>
-    </section>
+      <section class="panel">
+        <h3>ARC (internal virtual economy — never real money)</h3>
+        <div id="arc-summary"></div>
+        <form id="allocate-arc-form" class="inline-form">
+          <select name="agent_id" id="allocate-arc-agent-select" required></select>
+          <input name="amount" type="number" min="0.01" step="0.01" placeholder="Amount" required>
+          <input name="reason" placeholder="Reason (optional)">
+          <button type="submit" class="btn-small">Allocate ARC</button>
+        </form>
+        <p class="panel-note">New agents get a starting ARC budget automatically. Use this to
+          top up an existing agent's balance — e.g. if task costs have run it down, or you're
+          funding an agent created before this feature existed.</p>
+      </section>
+    </div>
 
-    <section class="panel panel-opportunities">
-      <h3>Opportunity Discovery — Researched Opportunities</h3>
-      <div id="opportunities-list"></div>
-      <form id="research-opportunity-form" class="inline-form">
-        <input name="topic" placeholder="Topic or niche to research" required>
-        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
-        <button type="submit" class="btn-small">Research This Opportunity</button>
-      </form>
-      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
-        see confidence_level on each card. Runs in the background; results appear
-        automatically once the executor thread finishes (typically within ~10-15s
-        with a real API key set).</p>
-    </section>
+    <div class="tab-panel" data-tab-panel="trading-banker" id="tab-panel-trading-banker" role="tabpanel" aria-labelledby="tab-btn-trading-banker" hidden>
+      <section class="panel">
+        <h3>Banker — ARC Ledger, All Businesses</h3>
+        <div id="global-arc-summary"></div>
+      </section>
 
-    <section class="panel panel-opportunities">
-      <h3>Roblox Game Development — Researched Concepts</h3>
-      <div id="roblox-trends-list"></div>
-      <form id="research-roblox-trend-form" class="inline-form">
-        <input name="concept" placeholder="Game genre, mechanic, or concept to research" required>
-        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
-        <button type="submit" class="btn-small">Research This Concept</button>
-      </form>
-      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
-        see confidence_level on each card. The model is explicitly instructed to never
-        suggest fake engagement, bots, or other tactics that violate Roblox's Terms of
-        Service. Runs in the background; results appear automatically once the executor
-        thread finishes.</p>
-    </section>
+      <section class="panel">
+        <h3>Trading Strategy Evolution — All Businesses</h3>
+        <div id="trading-evolution-summary"></div>
+      </section>
 
-    <section class="panel panel-opportunities">
-      <h3>App Development — Feasibility Assessments</h3>
-      <div id="app-feasibility-list"></div>
-      <form id="research-app-feasibility-form" class="inline-form">
-        <input name="concept" placeholder="App idea or concept to assess" required>
-        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
-        <button type="submit" class="btn-small">Assess Feasibility</button>
-      </form>
-      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
-        see confidence_level on each card. Timelines and costs are rough ranges, never
-        promises. Any concept touching a regulated domain (payments, health data, minors,
-        etc.) is flagged as a risk requiring dedicated legal/compliance review, not resolved
-        here. Runs in the background; results appear automatically once the executor thread
-        finishes.</p>
-    </section>
+      <section class="panel panel-select no-tilt">
+        <label for="business-select-trading-banker">Business</label>
+        <select id="business-select-trading-banker"></select>
+        <button id="refresh-btn-trading-banker" class="btn-small" data-action="refresh-tab" data-tab="trading-banker">Refresh</button>
+      </section>
 
-    <section class="panel panel-opportunities">
-      <h3>Real Estate — Investment Research</h3>
-      <div id="real-estate-list"></div>
-      <form id="research-real-estate-form" class="inline-form">
-        <input name="property_or_market" placeholder="Property address or market to research" required>
-        <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
-        <button type="submit" class="btn-small">Research This Property/Market</button>
-      </form>
-      <p class="panel-note">Every field above is the model's estimate, not a guarantee —
-        see confidence_level on each card. This is research only: never a licensed appraisal,
-        never a brokered transaction. Anything jurisdiction-specific (zoning, disclosure law,
-        rent control, licensing) is flagged as needing a licensed real estate agent, appraiser,
-        or attorney, not resolved here. Runs in the background; results appear automatically
-        once the executor thread finishes.</p>
-    </section>
+      <section class="panel panel-trading">
+        <h3>Automated Stock Trading — PAPER TRADING ONLY, no real money moves</h3>
+        <div id="trading-portfolio"></div>
+        <form id="create-trading-portfolio-form" class="inline-form">
+          <input name="starting_cash_usd" type="number" min="1" step="0.01" value="10000"
+                 title="Starting simulated cash">
+          <input name="watchlist" placeholder="Watchlist tickers, comma-separated (optional, default AAPL,MSFT,GOOGL,AMZN,NVDA)">
+          <button type="submit" class="btn-small">Create Paper Portfolio</button>
+        </form>
+        <form id="enable-auto-trading-form" class="inline-form">
+          <input name="cycle_interval_seconds" type="number" min="30" value="21600"
+                 title="Seconds between trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
+          <input name="review_interval_seconds" type="number" min="30" value="86400"
+                 title="Seconds between strategy reviews (default 86400 = 24 hours)">
+          <button type="submit" class="btn-small">Enable Auto-Trading</button>
+        </form>
+        <div class="inline-form">
+          <button id="trigger-cycle-btn" type="button" class="btn-small">Run Trading Cycle Now</button>
+          <button id="trigger-review-btn" type="button" class="btn-small">Run Strategy Review Now</button>
+        </div>
+        <h4>Positions</h4>
+        <div id="trading-positions"></div>
+        <h4>Trade History</h4>
+        <div id="trading-trades"></div>
+        <h4>Strategy Versions (self-improvement history)</h4>
+        <div id="trading-strategy-versions"></div>
+        <p class="panel-note">No brokerage integration exists anywhere in this codebase — nothing
+          here can ever place a real order. Every trade shows the model's stated confidence and
+          rationale; the system (not the model) enforces every position/trade/exposure limit. A
+          drawdown past the active strategy's threshold automatically pauses the trading agent for
+          owner review — find it in the Agents &amp; Tasks tab and click Resume once you're ready to
+          let it trade again. "Enable Auto-Trading" requires TWELVEDATA_API_KEY to be set — without
+          it, cycles fail loudly rather than trading on fabricated prices.</p>
+      </section>
 
-    <section class="panel panel-trading">
-      <h3>Automated Stock Trading — PAPER TRADING ONLY, no real money moves</h3>
-      <div id="trading-portfolio"></div>
-      <form id="create-trading-portfolio-form" class="inline-form">
-        <input name="starting_cash_usd" type="number" min="1" step="0.01" value="10000"
-               title="Starting simulated cash">
-        <input name="watchlist" placeholder="Watchlist tickers, comma-separated (optional, default AAPL,MSFT,GOOGL,AMZN,NVDA)">
-        <button type="submit" class="btn-small">Create Paper Portfolio</button>
-      </form>
-      <form id="enable-auto-trading-form" class="inline-form">
-        <input name="cycle_interval_seconds" type="number" min="30" value="21600"
-               title="Seconds between trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
-        <input name="review_interval_seconds" type="number" min="30" value="86400"
-               title="Seconds between strategy reviews (default 86400 = 24 hours)">
-        <button type="submit" class="btn-small">Enable Auto-Trading</button>
-      </form>
-      <div class="inline-form">
-        <button id="trigger-cycle-btn" type="button" class="btn-small">Run Trading Cycle Now</button>
-        <button id="trigger-review-btn" type="button" class="btn-small">Run Strategy Review Now</button>
-      </div>
-      <h4>Positions</h4>
-      <div id="trading-positions"></div>
-      <h4>Trade History</h4>
-      <div id="trading-trades"></div>
-      <h4>Strategy Versions (self-improvement history)</h4>
-      <div id="trading-strategy-versions"></div>
-      <p class="panel-note">No brokerage integration exists anywhere in this codebase — nothing
-        here can ever place a real order. Every trade shows the model's stated confidence and
-        rationale; the system (not the model) enforces every position/trade/exposure limit. A
-        drawdown past the active strategy's threshold automatically pauses the trading agent for
-        owner review — find it in the Agents panel above and click Resume once you're ready to
-        let it trade again. "Enable Auto-Trading" requires TWELVEDATA_API_KEY to be set — without
-        it, cycles fail loudly rather than trading on fabricated prices.</p>
-    </section>
+      <section class="panel panel-live-trading">
+        <h3>Live Trading — REAL MONEY, real brokerage orders</h3>
+        <div id="live-trading-status"></div>
+        <form id="enable-live-trading-form" class="inline-form">
+          <label class="confirm-checkbox">
+            <input name="confirm_real_money" type="checkbox" required>
+            I understand this places real orders with real cash
+          </label>
+          <input name="cycle_interval_seconds" type="number" min="30" value="21600"
+                 title="Seconds between live trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
+          <button type="submit" class="btn-small btn-danger">Enable Live Trading</button>
+        </form>
+        <div class="inline-form">
+          <button id="disable-live-trading-btn" type="button" class="btn-small">Disable Live Trading</button>
+          <button id="trigger-live-cycle-btn" type="button" class="btn-small">Run Live Cycle Now</button>
+        </div>
+        <h4>Real Trade History</h4>
+        <div id="live-trading-trades"></div>
+        <p class="panel-note">Reuses the SAME strategy (watchlist, position/trade/exposure limits)
+          as paper trading above — only execution differs. Every trade also passes a second,
+          independent absolute-dollar safety layer (per-trade cap, daily-loss circuit breaker) before
+          it ever reaches the broker; see <code>tasks/live_trading_safety.py</code>. Requires
+          <code>ALPACA_API_KEY</code>/<code>ALPACA_API_SECRET</code>/<code>ALPACA_BASE_URL</code> to
+          be configured — without an explicit live <code>ALPACA_BASE_URL</code>, orders can only ever
+          reach Alpaca's own paper simulator, never real money. Set
+          <code>LIVE_TRADING_KILL_SWITCH=1</code> to halt all live trading instantly, no deploy
+          required.</p>
+      </section>
 
-    <section class="panel panel-live-trading">
-      <h3>Live Trading — REAL MONEY, real brokerage orders</h3>
-      <div id="live-trading-status"></div>
-      <form id="enable-live-trading-form" class="inline-form">
-        <label class="confirm-checkbox">
-          <input name="confirm_real_money" type="checkbox" required>
-          I understand this places real orders with real cash
-        </label>
-        <input name="cycle_interval_seconds" type="number" min="30" value="21600"
-               title="Seconds between live trading cycles (default 21600 = 6 hours; keep watchlist size x cycles/day under your market-data provider's daily quota)">
-        <button type="submit" class="btn-small btn-danger">Enable Live Trading</button>
-      </form>
-      <div class="inline-form">
-        <button id="disable-live-trading-btn" type="button" class="btn-small">Disable Live Trading</button>
-        <button id="trigger-live-cycle-btn" type="button" class="btn-small">Run Live Cycle Now</button>
-      </div>
-      <h4>Real Trade History</h4>
-      <div id="live-trading-trades"></div>
-      <p class="panel-note">Reuses the SAME strategy (watchlist, position/trade/exposure limits)
-        as paper trading above — only execution differs. Every trade also passes a second,
-        independent absolute-dollar safety layer (per-trade cap, daily-loss circuit breaker) before
-        it ever reaches the broker; see <code>tasks/live_trading_safety.py</code>. Requires
-        <code>ALPACA_API_KEY</code>/<code>ALPACA_API_SECRET</code>/<code>ALPACA_BASE_URL</code> to
-        be configured — without an explicit live <code>ALPACA_BASE_URL</code>, orders can only ever
-        reach Alpaca's own paper simulator, never real money. Set
-        <code>LIVE_TRADING_KILL_SWITCH=1</code> to halt all live trading instantly, no deploy
-        required.</p>
-    </section>
+      <section class="panel panel-backtest">
+        <h3>Strategy Backtesting — tests against real historical data, no real or paper money moves</h3>
+        <form id="trigger-backtest-form" class="inline-form">
+          <input name="train_start_date" type="date" required title="Train window start date">
+          <input name="validation_split_date" type="date" required
+                 title="Validation window start date (train window ends the day before)">
+          <input name="validation_end_date" type="date" required title="Validation window end date">
+          <input name="max_candidates" type="number" min="1" max="10" value="5"
+                 title="Max candidate strategies to try (bounded, never open-ended)">
+          <button type="submit" class="btn-small">Run Backtest Search</button>
+        </form>
+        <div id="backtest-runs"></div>
+        <p class="panel-note">Reuses the exact same decision/risk-limit logic as paper trading, run
+          against real historical daily prices instead of live quotes. Every candidate is scored on
+          a held-out VALIDATION window it was never tuned against — the defense against a strategy
+          that looks great on the data it was shaped by and nowhere else; a candidate's real bar is
+          never win rate alone, but net P&amp;L, profit factor, sample size, and max drawdown
+          together. Bounded to at most max_candidates tries — "none of these were good enough yet"
+          is a normal, expected result, not a bug. Nothing here is ever auto-activated; promote a
+          candidate yourself via the strategy override, below. Requires
+          <code>TWELVEDATA_API_KEY</code>; each simulated day is one real LLM call, so cost scales
+          with (days) &times; (candidates tried).</p>
+      </section>
+    </div>
 
-    <section class="panel panel-backtest">
-      <h3>Strategy Backtesting — tests against real historical data, no real or paper money moves</h3>
-      <form id="trigger-backtest-form" class="inline-form">
-        <input name="train_start_date" type="date" required title="Train window start date">
-        <input name="validation_split_date" type="date" required
-               title="Validation window start date (train window ends the day before)">
-        <input name="validation_end_date" type="date" required title="Validation window end date">
-        <input name="max_candidates" type="number" min="1" max="10" value="5"
-               title="Max candidate strategies to try (bounded, never open-ended)">
-        <button type="submit" class="btn-small">Run Backtest Search</button>
-      </form>
-      <div id="backtest-runs"></div>
-      <p class="panel-note">Reuses the exact same decision/risk-limit logic as paper trading, run
-        against real historical daily prices instead of live quotes. Every candidate is scored on
-        a held-out VALIDATION window it was never tuned against — the defense against a strategy
-        that looks great on the data it was shaped by and nowhere else; a candidate's real bar is
-        never win rate alone, but net P&amp;L, profit factor, sample size, and max drawdown
-        together. Bounded to at most max_candidates tries — "none of these were good enough yet"
-        is a normal, expected result, not a bug. Nothing here is ever auto-activated; promote a
-        candidate yourself via the strategy override, below. Requires
-        <code>TWELVEDATA_API_KEY</code>; each simulated day is one real LLM call, so cost scales
-        with (days) &times; (candidates tried).</p>
-    </section>
+    <div class="tab-panel" data-tab-panel="research" id="tab-panel-research" role="tabpanel" aria-labelledby="tab-btn-research" hidden>
+      <section class="panel panel-select no-tilt">
+        <label for="business-select-research">Business</label>
+        <select id="business-select-research"></select>
+        <button id="refresh-btn-research" class="btn-small" data-action="refresh-tab" data-tab="research">Refresh</button>
+      </section>
 
-    <section class="panel">
-      <h3>Scheduled Jobs (recurring tasks)</h3>
-      <div id="jobs-table"></div>
-      <form id="create-job-form" class="inline-form">
-        <input name="name" placeholder="Job name" required>
-        <input name="objective" placeholder="Task objective it creates" required>
-        <input name="interval_seconds" type="number" min="30" value="3600" title="Minimum 30 seconds">
-        <input name="department" placeholder="Department">
-        <input name="permission_level_required" type="number" min="0" max="7" value="1"
-               title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
-        <button type="submit" class="btn-small">Add Scheduled Job</button>
-      </form>
-    </section>
+      <section class="panel panel-opportunities">
+        <h3>Opportunity Discovery — Researched Opportunities</h3>
+        <div id="opportunities-list"></div>
+        <form id="research-opportunity-form" class="inline-form">
+          <input name="topic" placeholder="Topic or niche to research" required>
+          <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+          <button type="submit" class="btn-small">Research This Opportunity</button>
+        </form>
+        <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+          see confidence_level on each card. Runs in the background; results appear
+          automatically once the executor thread finishes (typically within ~10-15s
+          with a real API key set).</p>
+      </section>
 
-    <section class="panel">
-      <h3>Revenue Trend</h3>
-      <div class="chart-range-toggle" role="group" aria-label="Time range">
-        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="7" aria-pressed="true">7D</button>
-        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="30" aria-pressed="false">30D</button>
-        <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="90" aria-pressed="false">90D</button>
-      </div>
-      <div id="orders-chart"></div>
-      <p class="chart-selection" id="orders-chart-selection" aria-live="polite"></p>
-      <p class="panel-note">Counts only orders that actually collected payment (<code>paid</code>
-        or <code>fulfilled</code>) — a pending or failed checkout never appears here. Scoped to
-        the currently-selected business, same as Store Orders below. Click a bar for its exact
-        figure.</p>
-    </section>
+      <section class="panel panel-opportunities">
+        <h3>Roblox Game Development — Researched Concepts</h3>
+        <div id="roblox-trends-list"></div>
+        <form id="research-roblox-trend-form" class="inline-form">
+          <input name="concept" placeholder="Game genre, mechanic, or concept to research" required>
+          <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+          <button type="submit" class="btn-small">Research This Concept</button>
+        </form>
+        <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+          see confidence_level on each card. The model is explicitly instructed to never
+          suggest fake engagement, bots, or other tactics that violate Roblox's Terms of
+          Service. Runs in the background; results appear automatically once the executor
+          thread finishes.</p>
+      </section>
 
-    <section class="panel">
-      <h3>Store Orders</h3>
-      <div id="orders-table"></div>
-      <p class="panel-note">Only shows orders for the currently-selected business — this is
-        populated by the storefront (<code>/static/store.html</code>), not from anything
-        submitted here. A <code>failed</code> order was already charged in Stripe and needs a
-        manual refund there — see DEPLOY.md's Storefront section.</p>
-    </section>
+      <section class="panel panel-opportunities">
+        <h3>App Development — Feasibility Assessments</h3>
+        <div id="app-feasibility-list"></div>
+        <form id="research-app-feasibility-form" class="inline-form">
+          <input name="concept" placeholder="App idea or concept to assess" required>
+          <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+          <button type="submit" class="btn-small">Assess Feasibility</button>
+        </form>
+        <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+          see confidence_level on each card. Timelines and costs are rough ranges, never
+          promises. Any concept touching a regulated domain (payments, health data, minors,
+          etc.) is flagged as a risk requiring dedicated legal/compliance review, not resolved
+          here. Runs in the background; results appear automatically once the executor thread
+          finishes.</p>
+      </section>
 
-    <section class="panel">
-      <h3>Create a New Business</h3>
-      <form id="create-business-form" class="inline-form">
-        <input name="name" placeholder="Business name" required>
-        <input name="type" placeholder="Type (e.g. opportunity_discovery)">
-        <input name="objective" placeholder="Objective">
-        <input name="budget_usd" type="number" min="0" step="0.01" value="0" title="Authorized USD ceiling — never moved automatically">
-        <button type="submit" class="btn-small">Create Business</button>
-      </form>
-    </section>
+      <section class="panel panel-opportunities">
+        <h3>Real Estate — Investment Research</h3>
+        <div id="real-estate-list"></div>
+        <form id="research-real-estate-form" class="inline-form">
+          <input name="property_or_market" placeholder="Property address or market to research" required>
+          <input name="reference_urls" placeholder="Reference URLs, comma-separated (optional, max 3)">
+          <button type="submit" class="btn-small">Research This Property/Market</button>
+        </form>
+        <p class="panel-note">Every field above is the model's estimate, not a guarantee —
+          see confidence_level on each card. This is research only: never a licensed appraisal,
+          never a brokered transaction. Anything jurisdiction-specific (zoning, disclosure law,
+          rent control, licensing) is flagged as needing a licensed real estate agent, appraiser,
+          or attorney, not resolved here. Runs in the background; results appear automatically
+          once the executor thread finishes.</p>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="admin" id="tab-panel-admin" role="tabpanel" aria-labelledby="tab-btn-admin" hidden>
+      <section class="panel">
+        <h3>System Health — Ops/Maintenance</h3>
+        <div id="ops-report"></div>
+        <button id="trigger-ops-review-btn" type="button" class="btn-small">Run Ops Review Now</button>
+        <p class="panel-note">Watches this system's own infrastructure (stuck tasks/approvals/
+          orders, silent scheduled jobs, database growth, recent errors, missing optional config)
+          and only ever recommends — it never restarts, deletes, or changes anything on its own.
+          Runs automatically every
+          <code>OPS_REVIEW_INTERVAL_SECONDS</code> (default 24h); business-independent, same as
+          the approvals panel on the Overview tab.</p>
+        <button id="trigger-owner-digest-btn" type="button" class="btn-small">Send Owner Digest Now</button>
+        <p class="panel-note">Emails <code>OWNER_EMAIL</code> a summary of pending approvals,
+          system health, revenue, new research, and trading P&amp;L across every business. Runs
+          automatically every <code>OWNER_DIGEST_INTERVAL_SECONDS</code> (default 24h); requires
+          <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
+          configured, or it fails loudly rather than sending nothing silently.</p>
+      </section>
+
+      <section class="panel panel-select no-tilt">
+        <label for="business-select-admin">Business</label>
+        <select id="business-select-admin"></select>
+        <button id="refresh-btn-admin" class="btn-small" data-action="refresh-tab" data-tab="admin">Refresh</button>
+      </section>
+
+      <section class="panel">
+        <h3>Scheduled Jobs (recurring tasks)</h3>
+        <div id="jobs-table"></div>
+        <form id="create-job-form" class="inline-form">
+          <input name="name" placeholder="Job name" required>
+          <input name="objective" placeholder="Task objective it creates" required>
+          <input name="interval_seconds" type="number" min="30" value="3600" title="Minimum 30 seconds">
+          <input name="department" placeholder="Department">
+          <input name="permission_level_required" type="number" min="0" max="7" value="1"
+                 title="0=OBSERVE_ONLY, 1=RESEARCH, 2=RECOMMEND, 3=SIMULATE, 4=EXECUTE_LOW_RISK, 5=EXECUTE_WITH_BUDGET, 6=REQUIRE_APPROVAL (always needs owner approval), 7=HUMAN_ONLY (approval required, never auto-executed even after approval)">
+          <button type="submit" class="btn-small">Add Scheduled Job</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h3>Revenue Trend</h3>
+        <div class="chart-range-toggle" role="group" aria-label="Time range">
+          <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="7" aria-pressed="true">7D</button>
+          <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="30" aria-pressed="false">30D</button>
+          <button type="button" class="btn-small btn-range" data-action="set-orders-range" data-range="90" aria-pressed="false">90D</button>
+        </div>
+        <div id="orders-chart"></div>
+        <p class="chart-selection" id="orders-chart-selection" aria-live="polite"></p>
+        <p class="panel-note">Counts only orders that actually collected payment (<code>paid</code>
+          or <code>fulfilled</code>) — a pending or failed checkout never appears here. Scoped to
+          the business selected above, same as Store Orders below. Click a bar for its exact
+          figure.</p>
+      </section>
+
+      <section class="panel">
+        <h3>Store Orders</h3>
+        <div id="orders-table"></div>
+        <p class="panel-note">Only shows orders for the business selected above — this is
+          populated by the storefront (<code>/static/store.html</code>), not from anything
+          submitted here. A <code>failed</code> order was already charged in Stripe and needs a
+          manual refund there — see DEPLOY.md's Storefront section.</p>
+      </section>
+    </div>
+
   </main>
 
   <script src="/static/dashboard-render.js"></script>
