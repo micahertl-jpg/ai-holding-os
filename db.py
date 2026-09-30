@@ -80,6 +80,7 @@ _COLUMN_MIGRATIONS = [
     ("roblox_trends", "launched_business_id", "TEXT REFERENCES businesses(id)"),
     ("app_feasibility_assessments", "launched_business_id", "TEXT REFERENCES businesses(id)"),
     ("real_estate_assessments", "launched_business_id", "TEXT REFERENCES businesses(id)"),
+    ("tasks", "cancel_requested", "INTEGER DEFAULT 0"),
 ]
 
 

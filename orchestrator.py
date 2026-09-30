@@ -229,6 +229,48 @@ class Orchestrator:
         self.db.audit("system", "complete_task", "task", task_id,
                        {"cost_arc": cost_arc, "reward_arc": reward_arc})
 
+    def cancel_task(self, task_id, cost_arc=0.0, reason=""):
+        """Owner-requested stop on a task that had already made real,
+        billable progress (currently only strategy_backtest_search, via
+        its should_stop cooperative check) -- charges cost_arc like
+        complete_task() does, but marks the task 'cancelled' rather
+        than 'completed', and never rewards anything (there's no
+        verified successful output to reward). Distinct from both:
+        - complete_task(): that's a real success with a saved result.
+        - fail_task(): that charges NOTHING, which would be wrong here
+          -- the LLM calls this task made before the stop were real API
+          calls with real cost, not nothing-happened work to disregard.
+
+        Same no-op-on-lost-race behavior as fail_task() (not
+        complete_task()'s raise-on-lost-race): called from executor.
+        run_once()'s exception handler, where raising would escape
+        uncaught and abort the rest of that pass. A task that already
+        reached a terminal state by the time this runs — e.g. it
+        finished successfully in the same instant the owner clicked
+        Stop — simply stays whatever it already legitimately became."""
+        task = self.db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+        if not task:
+            raise ValueError("unknown task")
+
+        updated = self.db.execute(
+            "UPDATE tasks SET status='cancelled', result=?, cost_arc=?, "
+            "completed_at=datetime('now') WHERE id=? AND status IN ('assigned','in_progress')",
+            (reason, cost_arc, task_id),
+        )
+        if updated.rowcount == 0:
+            return
+
+        if cost_arc > 0:
+            self.banker.charge(task["agent_id"], task["business_id"], cost_arc,
+                                reason=f"task cost (cancelled by owner): {task['objective']}",
+                                task_id=task_id)
+
+        if task["agent_id"]:
+            self.db.execute("UPDATE agents SET status='idle', updated_at=datetime('now') "
+                             "WHERE id=?", (task["agent_id"],))
+        self.db.audit("owner", "cancel_task", "task", task_id,
+                       {"cost_arc": cost_arc, "reason": reason})
+
     def fail_task(self, task_id, reason):
         task = self.db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
         if not task:

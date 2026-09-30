@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     permission_level_required INTEGER DEFAULT 1,
     result TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    cancel_requested INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS arc_ledger (

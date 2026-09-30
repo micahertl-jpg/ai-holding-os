@@ -749,6 +749,17 @@
         } else if (action === "retire-agent") {
           await api(`/agents/${t.dataset.agentId}/retire`, { method: "POST", body: "{}" });
           await refresh();
+        } else if (action === "cancel-task") {
+          if (!window.confirm(
+            "Stop this task? A task already running (like a strategy backtest search) keeps " +
+            "any real cost it's already spent -- stopping only prevents further calls, it " +
+            "doesn't refund what already happened. A queued task that hasn't started yet is " +
+            "cancelled immediately at no cost."
+          )) {
+            return;
+          }
+          await api(`/tasks/${t.dataset.taskId}/cancel`, { method: "POST", body: "{}" });
+          await refresh();
         } else if (action === "approve") {
           await api(`/approvals/${t.dataset.approvalId}/approve`, { method: "POST", body: "{}" });
           await refresh();

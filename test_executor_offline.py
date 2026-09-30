@@ -983,6 +983,96 @@ def test_strategy_backtest_search_task_runs_and_saves_a_report():
     os.remove(TEST_DB_PATH)
 
 
+class _CancelMidRunLLMClient:
+    """Wraps another LLM client and, right after its Nth real call
+    completes, sets cancel_requested=1 directly on task_id's row --
+    simulates the owner clicking Stop on the dashboard while this
+    backtest is mid-run, without needing a real second concurrent
+    request. Duck-types .complete()/.last_usage like every other test
+    double here, delegating both to the wrapped client."""
+
+    def __init__(self, inner, db, task_id, cancel_after_calls):
+        self.inner = inner
+        self.db = db
+        self.task_id = task_id
+        self.cancel_after_calls = cancel_after_calls
+        self.calls = 0
+
+    @property
+    def last_usage(self):
+        return self.inner.last_usage
+
+    def complete(self, messages, system=None, max_tokens=1000):
+        result = self.inner.complete(messages, system=system, max_tokens=max_tokens)
+        self.calls += 1
+        if self.calls == self.cancel_after_calls:
+            self.db.execute("UPDATE tasks SET cancel_requested=1 WHERE id=?", (self.task_id,))
+        return result
+
+
+def test_strategy_backtest_search_task_stops_early_and_charges_real_partial_cost_when_cancelled():
+    """End-to-end regression test for the Stop button: POST /tasks/{id}/
+    cancel just sets cancel_requested=1 (see api.py) -- this proves what
+    actually happens next, inside a real executor.run_once() pass, when
+    a strategy_backtest_search task notices that flag mid-run."""
+    db, orch, biz_id, agent_id = _setup()
+    backtest_agent_id, _ = _setup_backtest_strategy(db, biz_id)
+    # Neither agent created above gets a starting ARC balance for free
+    # (that only happens through api.py's create-agent/enable-auto-
+    # trading endpoints, not the bare registry call these tests use) --
+    # fund both generously since which one _try_assign actually picks
+    # is an implementation detail this test doesn't need to pin down.
+    banker = Banker(db)
+    banker.allocate(biz_id, agent_id, 1000.0, reason="test funding")
+    banker.allocate(biz_id, backtest_agent_id, 1000.0, reason="test funding")
+
+    task_id = orch.create_task(
+        biz_id, "Backtest and search for a better trading strategy against real historical "
+                "price data", permission_level_required=2, task_type="strategy_backtest_search",
+        task_input={
+            "train_start_date": "2026-01-05", "validation_split_date": "2026-01-08",
+            "validation_end_date": "2026-01-10", "max_candidates": 1,
+        },
+    )
+    bars = {"AAPL": [_bt_bar(d, 100.0) for d in
+                      ["2026-01-05", "2026-01-06", "2026-01-07",
+                       "2026-01-08", "2026-01-09", "2026-01-10"]]}
+    fake_market = _FakeHistoricalMarketClient(bars)
+    inner_llm = _FakeCostClient(_bt_decisions(("AAPL", "hold", 0.0)), cost_usd_per_call=0.01)
+    llm = _CancelMidRunLLMClient(inner_llm, db, task_id, cancel_after_calls=2)
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=llm)
+
+    assert outcomes == [(task_id, "cancelled")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "cancelled"
+    assert task["result"] and "cancelled by owner" in task["result"], task["result"]
+    # Exactly 2 real LLM calls happened (train days 1-2) before the 3rd
+    # day's should_stop() check caught the flag and stopped everything
+    # -- 2 calls x $0.01 x 1000 ARC/USD = 20 ARC, charged for real since
+    # those 2 calls were real, billable work regardless of the stop.
+    assert inner_llm.calls == 2, inner_llm.calls
+    assert abs(task["cost_arc"] - 20.0) < 1e-9, task["cost_arc"]
+
+    agent = db.query_one("SELECT * FROM agents WHERE id=?", (task["agent_id"],))
+    assert agent["status"] == "idle", "must never be left stuck 'working' after a cancellation"
+    assert abs(agent["arc_balance"] - (1000.0 - 20.0)) < 1e-9, agent["arc_balance"]
+    # A cancelled run has no completed candidate search to report --
+    # never a partial/fabricated backtest_runs row.
+    assert db.query("SELECT * FROM backtest_runs WHERE task_id=?", (task_id,)) == []
+
+    audit_rows = db.query(
+        "SELECT * FROM audit_log WHERE action='cancel_task' AND target_id=?", (task_id,)
+    )
+    assert len(audit_rows) == 1
+    print("PASS: a strategy_backtest_search task stopped mid-run via cancel_requested is marked "
+          "'cancelled' (never 'failed'), charges exactly the real partial cost already "
+          "incurred, resets its agent to idle, and saves no backtest report")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_strategy_backtest_search_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted():
     db, orch, biz_id, agent_id = _setup()
     _setup_backtest_strategy(db, biz_id)  # watchlist=['AAPL'], needs 1 request
@@ -1307,6 +1397,7 @@ if __name__ == "__main__":
     test_live_trading_cycle_daily_loss_halt_pauses_the_live_agent()
     test_live_trading_cycle_without_a_portfolio_fails_loudly()
     test_strategy_backtest_search_task_runs_and_saves_a_report()
+    test_strategy_backtest_search_task_stops_early_and_charges_real_partial_cost_when_cancelled()
     test_strategy_backtest_search_refuses_before_any_fetch_once_the_shared_daily_quota_is_exhausted()
     test_strategy_backtest_search_never_touches_paper_or_live_trade_tables()
     test_strategy_backtest_search_requires_complete_date_range_in_task_input()

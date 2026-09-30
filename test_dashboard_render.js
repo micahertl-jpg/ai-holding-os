@@ -151,6 +151,34 @@ test("renderTasksTable escapes a task's result to prevent HTML injection, in bot
   assert.ok(!html.includes("<img"));
 });
 
+test("renderTasksTable shows a Stop button for a non-terminal task, wired to its own id", () => {
+  const tasks = [{
+    id: "task_running", objective: "Backtest and search for a better trading strategy",
+    status: "in_progress", priority: 3, cost_arc: 12.5,
+  }];
+  const html = R.renderTasksTable(tasks);
+  assert.ok(html.includes('data-action="cancel-task"'));
+  assert.ok(html.includes('data-task-id="task_running"'));
+  assert.ok(html.includes(">Stop<"));
+});
+
+test("renderTasksTable never shows a Stop button for a task that already reached a terminal state", () => {
+  ["completed", "failed", "cancelled"].forEach((status) => {
+    const tasks = [{ id: "task_1", objective: "x", status, priority: 3, cost_arc: 0 }];
+    const html = R.renderTasksTable(tasks);
+    assert.ok(!html.includes('data-action="cancel-task"'),
+      `a ${status} task must not offer Stop -- there is nothing left to stop`);
+  });
+});
+
+test("renderTasksTable escapes a task id in the Stop button's data attribute", () => {
+  const tasks = [{
+    id: 'task_1" onclick="alert(1)', objective: "x", status: "queued", priority: 3, cost_arc: 0,
+  }];
+  const html = R.renderTasksTable(tasks);
+  assert.ok(!html.includes('onclick="alert(1)"'));
+});
+
 test("every data-table renderer wraps its table in .table-scroll so wide columns are reachable, never clipped", () => {
   // Regression test: the backtest-runs table had exactly this bug (a
   // wide table silently clipped by its panel, with the last column

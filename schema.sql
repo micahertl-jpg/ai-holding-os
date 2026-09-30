@@ -57,7 +57,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     permission_level_required INTEGER DEFAULT 1,
     result TEXT,
     created_at TEXT DEFAULT (datetime('now')),
-    completed_at TEXT
+    completed_at TEXT,
+    cancel_requested INTEGER DEFAULT 0  -- owner asked this task to stop (see
+                                       -- POST /tasks/{id}/cancel). A long-running
+                                       -- handler (currently only
+                                       -- strategy_backtest_search) checks this
+                                       -- between simulated days and stops early;
+                                       -- other task types are single-LLM-call and
+                                       -- finish before this would ever matter.
 );
 
 CREATE TABLE IF NOT EXISTS arc_ledger (

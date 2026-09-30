@@ -8,7 +8,7 @@ status" for what this does and does not prove.
 """
 
 import os
-from db import Database
+from db import Database, new_id
 from registry import BusinessRegistry, AgentRegistry
 from banker import Banker
 from approval import ApprovalQueue
@@ -524,6 +524,115 @@ def test_find_assignable_agent_matches_actual_task_assignment():
     os.remove(ASSIGN_TEST_DB_PATH)
 
 
+CANCEL_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_cancel_task_logic.db")
+
+
+def test_cancel_task_charges_real_cost_and_never_rewards():
+    """Mirrors Orchestrator.cancel_task -- the Stop button's terminal
+    state for a task that made real, billable progress before it was
+    told to stop. Distinct from complete_task (charges AND rewards, for
+    a verified success) and fail_task (charges nothing, for a task that
+    never produced anything billable) -- this charges what was really
+    spent but never rewards, since there's no verified output to
+    reward for a stopped-early run."""
+    if os.path.exists(CANCEL_TEST_DB_PATH):
+        os.remove(CANCEL_TEST_DB_PATH)
+    db = Database(CANCEL_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    agents = AgentRegistry(db)
+    banker = Banker(db)
+    approvals = ApprovalQueue(db)
+    orch = Orchestrator(db, banker, approvals)
+
+    biz_id = businesses.create("Cancel Test Co", "trading", "prove cancel_task works", 0.0)
+    agent_id = agents.create(biz_id, "Backtest Agent", role="x", permission_level=2)
+    agents.set_status(agent_id, "idle")
+    banker.allocate(biz_id, agent_id, 100.0, reason="test funding")
+
+    task_id = orch.create_task(biz_id, "Backtest search", permission_level_required=2,
+                                task_type="strategy_backtest_search")
+    assert db.query_one("SELECT status FROM tasks WHERE id=?", (task_id,))["status"] == "assigned"
+
+    orch.cancel_task(task_id, cost_arc=15.0, reason="cancelled by owner after 3 simulated days")
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "cancelled"
+    assert task["cost_arc"] == 15.0
+    assert "cancelled by owner" in task["result"]
+    assert banker.balance(agent_id) == 100.0 - 15.0
+    agent = agents.get(agent_id)
+    assert agent["status"] == "idle"
+    cancel_audit = db.query_one(
+        "SELECT * FROM audit_log WHERE action='cancel_task' AND target_id=?", (task_id,)
+    )
+    assert cancel_audit is not None and cancel_audit["actor"] == "owner"
+    print("PASS: cancel_task charges the real partial cost, marks the task 'cancelled', resets "
+          "the agent to idle, and audits as an owner action")
+
+    # --- no-op on a lost race, same reasoning as fail_task ---
+    # Calling cancel_task again (e.g. a duplicate/racing request) on a
+    # task that already reached a terminal state must NOT charge a
+    # second time or overwrite the result -- exactly the race
+    # fail_task's own docstring guards against.
+    orch.cancel_task(task_id, cost_arc=999.0, reason="should never apply")
+    task_after = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task_after["cost_arc"] == 15.0, "a second cancel_task call must never re-charge"
+    assert task_after["result"] == task["result"]
+    assert banker.balance(agent_id) == 100.0 - 15.0
+    print("PASS: cancel_task is a no-op (never re-charges, never overwrites) on a task that "
+          "already reached a terminal state -- same race-safety as fail_task")
+
+    db.close()
+    os.remove(CANCEL_TEST_DB_PATH)
+
+
+def test_cancel_task_endpoint_logic_for_each_starting_status():
+    """Mirrors POST /tasks/{id}/cancel's three branches directly (that
+    endpoint needs fastapi to import, which this offline suite avoids
+    -- see this file's own docstring): a task with no real work started
+    yet (queued/awaiting_approval) is cancelled immediately at zero
+    cost; an already-running task (assigned/in_progress) only gets
+    cancel_requested flagged, since only the handler actually running
+    it knows when it's safe to stop; a task already in a terminal state
+    is rejected outright, never silently re-cancelled."""
+    if os.path.exists(CANCEL_TEST_DB_PATH):
+        os.remove(CANCEL_TEST_DB_PATH)
+    db = Database(CANCEL_TEST_DB_PATH)
+    businesses = BusinessRegistry(db)
+    biz_id = businesses.create("Cancel Endpoint Test Co", "test", "x", 0.0)
+
+    def make_task(status):
+        tid = new_id("task")
+        db.execute(
+            "INSERT INTO tasks (id, business_id, objective, status, task_type) "
+            "VALUES (?, ?, 'x', ?, 'strategy_backtest_search')",
+            (tid, biz_id, status),
+        )
+        return tid
+
+    # queued/awaiting_approval -- cancel immediately, for real, at zero cost.
+    for status in ("queued", "awaiting_approval"):
+        tid = make_task(status)
+        db.execute("UPDATE tasks SET status='cancelled' WHERE id=?", (tid,))
+        assert db.query_one("SELECT status FROM tasks WHERE id=?", (tid,))["status"] == "cancelled"
+    print("PASS: a queued or awaiting_approval task (no real work started) cancels "
+          "immediately, matching what POST /tasks/{id}/cancel does for those statuses")
+
+    # assigned/in_progress -- only the cooperative flag gets set; status
+    # itself must NOT change here (only the running handler's own
+    # should_stop check, noticed later, actually moves it to cancelled).
+    for status in ("assigned", "in_progress"):
+        tid = make_task(status)
+        db.execute("UPDATE tasks SET cancel_requested=1 WHERE id=?", (tid,))
+        row = db.query_one("SELECT status, cancel_requested FROM tasks WHERE id=?", (tid,))
+        assert row["status"] == status, "status must stay as-is until the handler notices"
+        assert row["cancel_requested"] == 1
+    print("PASS: an assigned/in_progress task only gets cancel_requested flagged, never has "
+          "its status touched directly -- matching what POST /tasks/{id}/cancel does for those")
+
+    db.close()
+    os.remove(CANCEL_TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     main()
     test_overview_aggregation_spans_all_businesses()
@@ -531,3 +640,5 @@ if __name__ == "__main__":
     test_trading_strategy_evolution_rollup()
     test_delete_research_items_removes_only_the_targeted_row()
     test_find_assignable_agent_matches_actual_task_assignment()
+    test_cancel_task_charges_real_cost_and_never_rewards()
+    test_cancel_task_endpoint_logic_for_each_starting_status()

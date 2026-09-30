@@ -11,7 +11,10 @@ exact trade/stats outcome to assert against.
 import json
 
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters
-from tasks.backtest import run_backtest, compute_backtest_stats, BacktestError, MIN_SELL_TRADES_FOR_SIGNAL
+from tasks.backtest import (
+    run_backtest, compute_backtest_stats, BacktestError, BacktestCancelled,
+    MIN_SELL_TRADES_FOR_SIGNAL,
+)
 
 
 class _ScriptedLLMClient:
@@ -69,6 +72,55 @@ def test_run_backtest_simulates_a_buy_then_sell_across_real_days():
     assert len(result["snapshots"]) == 3
     print("PASS: run_backtest simulates a real buy-then-sell sequence across historical days "
           "and records the exact realized P&L")
+
+
+def test_run_backtest_stops_early_when_should_stop_reports_true():
+    """Regression test for the Stop button (POST /tasks/{id}/cancel):
+    a 5-day backtest with should_stop flipping to True after the 2nd
+    real LLM call must raise BacktestCancelled and NEVER make a 3rd,
+    4th, or 5th call -- the whole point of stopping is that a call not
+    made never gets billed. A day not yet started never gets billed;
+    an in-flight call can't be un-billed, so the check happens BEFORE
+    each day's call, never after."""
+    bars = {"AAPL": [
+        _bar("2026-01-05", 100.0), _bar("2026-01-06", 101.0), _bar("2026-01-07", 102.0),
+        _bar("2026-01-08", 103.0), _bar("2026-01-09", 104.0),
+    ]}
+    llm = _ScriptedLLMClient([_decision_json("AAPL", "hold")] * 5)
+
+    calls_before_stop = {"n": 0}
+
+    def should_stop():
+        # Reports "stop" starting on the 3rd check (i.e. once 2 real
+        # calls have already happened) -- proves days 3-5 never run.
+        return llm.calls >= 2
+
+    try:
+        run_backtest(1000.0, AAPL_ONLY_PARAMS, bars, llm, should_stop=should_stop)
+        assert False, "expected BacktestCancelled"
+    except BacktestCancelled as e:
+        assert "2 simulated day" in str(e), str(e)
+
+    assert llm.calls == 2, (
+        f"expected exactly 2 real LLM calls before the cancellation was noticed, got {llm.calls} "
+        "-- any more means real money was spent on days that should never have run"
+    )
+    print("PASS: run_backtest stops immediately once should_stop() reports true, making zero "
+          "further real LLM calls -- proves a Stop click actually saves money, not just marks "
+          "the task cancelled after the fact")
+
+
+def test_run_backtest_without_should_stop_runs_to_completion_unchanged():
+    """should_stop is optional -- every existing caller that doesn't
+    pass it (the live smoke-tested paths before this feature existed)
+    must behave exactly as before."""
+    bars = {"AAPL": [_bar("2026-01-05", 100.0), _bar("2026-01-06", 101.0)]}
+    llm = _ScriptedLLMClient([_decision_json("AAPL", "hold")] * 2)
+    result = run_backtest(1000.0, AAPL_ONLY_PARAMS, bars, llm)
+    assert result["days_simulated"] == 2
+    assert llm.calls == 2
+    print("PASS: run_backtest with no should_stop given runs to completion exactly as before "
+          "this feature existed")
 
 
 def test_run_backtest_refuses_mock_historical_data():
@@ -167,6 +219,8 @@ def test_compute_backtest_stats_handles_no_trades_at_all():
 
 if __name__ == "__main__":
     test_run_backtest_simulates_a_buy_then_sell_across_real_days()
+    test_run_backtest_stops_early_when_should_stop_reports_true()
+    test_run_backtest_without_should_stop_runs_to_completion_unchanged()
     test_run_backtest_refuses_mock_historical_data()
     test_run_backtest_raises_with_no_historical_data()
     test_run_backtest_handles_a_symbol_missing_a_bar_on_some_days()

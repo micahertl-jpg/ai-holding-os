@@ -42,7 +42,7 @@ from tasks.trading_strategy_review import (
 from tasks.live_trading_safety import (
     apply_live_safety_caps, is_kill_switch_active, LIVE_MAX_DAILY_LOSS_USD,
 )
-from tasks.backtest import BacktestError
+from tasks.backtest import BacktestError, BacktestCancelled
 from tasks.strategy_backtest_search import (
     run_strategy_search, split_bars_by_date, StrategySearchError, DEFAULT_MAX_CANDIDATES,
 )
@@ -108,6 +108,24 @@ TRADING_PNL_REWARD_ARC_CAP = 50.0
 # level to scale a reward off of -- a small flat reward for successfully
 # composing and sending it, well below any model-driven task's reward.
 OWNER_DIGEST_REWARD_ARC = 2.0
+
+
+class TaskCancelledError(Exception):
+    """Raised by a handler that caught a BacktestCancelled (or any
+    future cooperative-cancellation signal) mid-run, to tell run_once()
+    below "the owner asked this to stop, and here's the REAL cost
+    already incurred getting to that point" -- deliberately distinct
+    from a bare Exception (which run_once treats as a genuine failure
+    and never charges anything for) since the LLM calls made before the
+    stop really did happen and really did cost real money; charging
+    nothing for them would make the Banker's ARC ledger silently
+    understate real spend, exactly the bug POST /tasks/{id}/cancel's
+    partner fix (agent-selection consistency, see Orchestrator.
+    find_assignable_agent) was written to stop happening."""
+
+    def __init__(self, message, cost_arc=0.0):
+        super().__init__(message)
+        self.cost_arc = cost_arc
 
 
 def _require_affordable(task_row, db, cost_arc):
@@ -868,11 +886,29 @@ def _handle_strategy_backtest_search(task_row, client, db):
     train_bars, validation_bars = split_bars_by_date(historical_bars_by_symbol, validation_split_date)
 
     tracked_client = CostTrackingClient(client)
+    # Re-reads cancel_requested fresh from the DB on every simulated day
+    # (see run_backtest's should_stop param) rather than a value captured
+    # once at the top of this handler -- the whole point is noticing a
+    # POST /tasks/{id}/cancel that arrives WHILE this is running, possibly
+    # minutes into a run that can take hours.
+    task_id = task_row["id"]
+    def should_stop():
+        row = db.query_one("SELECT cancel_requested FROM tasks WHERE id=?", (task_id,))
+        return bool(row and row["cancel_requested"])
+
     try:
         search_result = run_strategy_search(
             starting_cash_usd, strategy_params, train_bars, validation_bars,
-            tracked_client, max_candidates=max_candidates,
+            tracked_client, max_candidates=max_candidates, should_stop=should_stop,
         )
+    except BacktestCancelled as e:
+        # Real LLM calls already happened before the stop was noticed --
+        # that cost is real USD either way, so it's reported up to
+        # run_once() to charge (via TaskCancelledError.cost_arc), never
+        # silently dropped the way a genuine failure charges nothing.
+        raise TaskCancelledError(
+            str(e), cost_arc=tracked_client.total_cost_usd * ARC_PER_USD,
+        ) from e
     except (BacktestError, StrategySearchError) as e:
         raise ValueError(str(e)) from e
 
@@ -1092,6 +1128,21 @@ def run_once(db, orchestrator, client=None):
                 db.execute("UPDATE agents SET status=?, updated_at=datetime('now') WHERE id=?",
                            (forced_agent_status, task["agent_id"]))
             outcomes.append((task["id"], "completed"))
+        except TaskCancelledError as e:
+            # Distinct from the generic except below: a cancelled task
+            # DID incur real cost (e.cost_arc) before it stopped, so it
+            # gets charged and marked 'cancelled', never 'failed' (which
+            # charges nothing -- see fail_task's docstring). Wrapped in
+            # its own try so a charge failure here (e.g. somehow still
+            # under-funded) falls back to the same safe fail_task path
+            # as everything else, instead of crashing this whole pass.
+            try:
+                _require_affordable(task, db, e.cost_arc)
+                orchestrator.cancel_task(task["id"], cost_arc=e.cost_arc, reason=str(e))
+                outcomes.append((task["id"], "cancelled"))
+            except Exception as inner_e:
+                orchestrator.fail_task(task["id"], reason=f"executor error: {inner_e}")
+                outcomes.append((task["id"], f"failed: {inner_e}"))
         except Exception as e:
             orchestrator.fail_task(task["id"], reason=f"executor error: {e}")
             outcomes.append((task["id"], f"failed: {e}"))

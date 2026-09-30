@@ -12,6 +12,7 @@ import json
 from unittest.mock import patch
 
 from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters
+from tasks.backtest import BacktestCancelled
 from tasks.strategy_backtest_search import (
     split_bars_by_date, meets_bar, run_strategy_search, StrategySearchError,
 )
@@ -125,6 +126,71 @@ def test_run_strategy_search_never_exceeds_max_candidates_when_nothing_passes():
           "and reports failure plainly rather than looping indefinitely")
 
 
+def test_run_strategy_search_propagates_cancellation_from_inside_a_candidate():
+    """A BacktestCancelled raised mid-candidate (see test_backtest_
+    offline.py for that check itself) must come straight out of
+    run_strategy_search UNCHANGED -- never caught and treated like a
+    BacktestError (which means "bad candidate, try the next one").
+    Stopping means stop the whole search, not silently move on to
+    candidate 2 and keep spending."""
+    bars = {"AAPL": [_bar("2026-01-05", 100.0), _bar("2026-01-06", 100.0),
+                      _bar("2026-01-07", 100.0)]}
+    hold_only = _decisions(("AAPL", "hold", 0.0))
+    llm = _MultiPurposeLLMClient(decision_responses=[hold_only])
+
+    def should_stop():
+        # True starting on the 2nd real decision call -- mid-candidate-0,
+        # well before it would ever finish or a 2nd candidate begins.
+        return llm.decision_calls >= 1
+
+    try:
+        run_strategy_search(1000.0, AAPL_ONLY_PARAMS, bars, bars, llm, max_candidates=3,
+                             should_stop=should_stop)
+        assert False, "expected BacktestCancelled to propagate"
+    except BacktestCancelled:
+        pass
+    print("PASS: a cancellation raised mid-candidate propagates straight out of "
+          "run_strategy_search, never swallowed as an ordinary failed-candidate case")
+
+
+def test_run_strategy_search_checks_should_stop_between_candidates_too():
+    """should_stop is also checked once per candidate, not only inside
+    run_backtest's day loop -- so a stop requested right after
+    candidate 0 finishes (before candidate 1's proposal call) is
+    noticed immediately, not only after candidate 1 has already started
+    spending on its own backtest."""
+    train_bars = {"AAPL": [_bar("2026-01-05", 100.0)]}
+    validation_bars = {"AAPL": [_bar("2026-01-06", 100.0)]}
+    hold_only = _decisions(("AAPL", "hold", 0.0))
+    llm = _MultiPurposeLLMClient(
+        decision_responses=[hold_only],  # never trades, candidate 0 never meets the bar
+        proposal_responses=[_PROPOSAL_JSON],
+    )
+
+    def should_stop():
+        # Candidate 0 makes exactly 2 decision calls (1 train day + 1
+        # validation day). True only once both are done.
+        return llm.decision_calls >= 2
+
+    with patch("tasks.backtest.MIN_SELL_TRADES_FOR_SIGNAL", 1):
+        try:
+            run_strategy_search(1000.0, AAPL_ONLY_PARAMS, train_bars, validation_bars, llm,
+                                 max_candidates=3, should_stop=should_stop)
+            assert False, "expected BacktestCancelled"
+        except BacktestCancelled:
+            pass
+
+    # Only candidate 0's 2 decision calls happened -- no proposal call
+    # for a candidate 1 that should never have been attempted.
+    assert llm.decision_calls == 2, llm.decision_calls
+    assert llm.proposal_calls == 0, (
+        "a stop noticed between candidates must never let a new candidate's proposal call "
+        "happen at all"
+    )
+    print("PASS: run_strategy_search checks should_stop between candidates too, stopping "
+          "before a new candidate's proposal call ever fires")
+
+
 def test_run_strategy_search_ranks_by_validation_net_pnl_not_train_or_win_rate():
     train_bars = {"AAPL": [_bar("2026-01-01", 100.0)]}
     validation_bars = {"AAPL": [_bar("2026-01-05", 100.0), _bar("2026-01-06", 90.0)]}
@@ -168,6 +234,8 @@ if __name__ == "__main__":
     test_meets_bar_requires_all_four_conditions()
     test_run_strategy_search_stops_early_when_current_strategy_already_meets_the_bar()
     test_run_strategy_search_never_exceeds_max_candidates_when_nothing_passes()
+    test_run_strategy_search_propagates_cancellation_from_inside_a_candidate()
+    test_run_strategy_search_checks_should_stop_between_candidates_too()
     test_run_strategy_search_ranks_by_validation_net_pnl_not_train_or_win_rate()
     test_run_strategy_search_raises_if_the_current_strategy_cannot_be_backtested()
     print("\nAll strategy_backtest_search.py offline tests passed.")
