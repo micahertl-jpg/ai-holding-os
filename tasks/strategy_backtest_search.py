@@ -38,7 +38,7 @@ POST /businesses/{id}/trading/strategy-override endpoint), same as any
 other strategy change in this codebase.
 """
 
-from tasks.backtest import run_backtest, compute_backtest_stats, BacktestError
+from tasks.backtest import run_backtest, compute_backtest_stats, BacktestError, BacktestCancelled
 from tasks.trading_strategy_review import propose_strategy_update, TradingStrategyReviewError
 
 DEFAULT_MAX_CANDIDATES = 5
@@ -99,15 +99,21 @@ def _recent_trades_summary(trades: list, n: int = 10) -> str:
     return "\n".join(lines) if lines else "(no trades yet)"
 
 
-def _evaluate_candidate(starting_cash_usd, params, train_bars, validation_bars, llm_client):
+def _evaluate_candidate(starting_cash_usd, params, train_bars, validation_bars, llm_client,
+                         should_stop=None):
     """Backtests one candidate's parameters on both windows. Raises
     BacktestError up through to the caller unchanged -- a candidate
     that can't even be backtested (e.g. a data gap) is a real failure,
-    never silently skipped."""
-    train_result = run_backtest(starting_cash_usd, params, train_bars, llm_client)
+    never silently skipped. should_stop is passed straight through to
+    both run_backtest() calls; a BacktestCancelled it raises also
+    propagates unchanged -- see run_strategy_search for why that must
+    never be caught here as just another failed candidate."""
+    train_result = run_backtest(starting_cash_usd, params, train_bars, llm_client,
+                                 should_stop=should_stop)
     train_stats = compute_backtest_stats(train_result["trades"], train_result["snapshots"])
 
-    validation_result = run_backtest(starting_cash_usd, params, validation_bars, llm_client)
+    validation_result = run_backtest(starting_cash_usd, params, validation_bars, llm_client,
+                                      should_stop=should_stop)
     validation_stats = compute_backtest_stats(validation_result["trades"], validation_result["snapshots"])
 
     return {
@@ -130,7 +136,8 @@ def _candidate_rank_key(candidate):
 
 
 def run_strategy_search(starting_cash_usd, current_params, train_bars, validation_bars,
-                         llm_client, max_candidates: int = DEFAULT_MAX_CANDIDATES) -> dict:
+                         llm_client, max_candidates: int = DEFAULT_MAX_CANDIDATES,
+                         should_stop=None) -> dict:
     """Evaluates the current strategy, then proposes and backtests up to
     (max_candidates - 1) further candidates via
     trading_strategy_review.propose_strategy_update() -- reusing that
@@ -143,6 +150,17 @@ def run_strategy_search(starting_cash_usd, current_params, train_bars, validatio
     the bar; "none of these are good enough yet" is reported plainly,
     never disguised as a pass.
 
+    should_stop, if given, is checked once per candidate (before its
+    proposal call) in addition to being passed down into every
+    run_backtest() call, so an owner-requested stop is noticed between
+    candidates as well as mid-candidate. A BacktestCancelled raised
+    anywhere below is deliberately NOT caught here -- unlike
+    BacktestError (a bad candidate; move on to the next one), a
+    cancellation means stop the whole search now, so it propagates
+    straight out to the caller with none of the work-so-far returned
+    (see executor.py's handler for what happens to the real cost
+    already incurred getting there).
+
     Raises StrategySearchError if the very first (current-parameters)
     candidate can't be backtested at all (e.g. no real historical data)
     -- there's nothing meaningful to report in that case."""
@@ -151,13 +169,17 @@ def run_strategy_search(starting_cash_usd, current_params, train_bars, validatio
 
     try:
         candidates = [_evaluate_candidate(starting_cash_usd, current_params, train_bars,
-                                           validation_bars, llm_client)]
+                                           validation_bars, llm_client, should_stop=should_stop)]
     except BacktestError as e:
         raise StrategySearchError(f"could not backtest the current strategy: {e}") from e
 
     stopped_early = candidates[0]["validation_meets_bar"]
 
     while not stopped_early and len(candidates) < max_candidates:
+        if should_stop is not None and should_stop():
+            raise BacktestCancelled(
+                f"cancelled by owner after {len(candidates)} candidate(s) evaluated"
+            )
         basis = candidates[-1]
         try:
             proposal = propose_strategy_update(
@@ -172,7 +194,8 @@ def run_strategy_search(starting_cash_usd, current_params, train_bars, validatio
 
         try:
             candidate = _evaluate_candidate(starting_cash_usd, proposal["parameters"],
-                                             train_bars, validation_bars, llm_client)
+                                             train_bars, validation_bars, llm_client,
+                                             should_stop=should_stop)
         except BacktestError:
             break
         candidate["rationale"] = proposal["rationale"]

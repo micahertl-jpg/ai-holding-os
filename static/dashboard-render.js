@@ -214,6 +214,12 @@
           <td class="task-result-cell" title="${t.result ? escapeHtml(t.result) : ""}">${
             t.result ? escapeHtml(t.result) : ""
           }</td>
+          <td>${
+            TERMINAL_TASK_STATUSES[t.status]
+              ? ""
+              : `<button type="button" class="btn-small btn-reject" data-action="cancel-task" ` +
+                `data-task-id="${escapeHtml(t.id)}">Stop</button>`
+          }</td>
         </tr>`
       )
       .join("");
@@ -228,7 +234,7 @@
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>Objective</th><th>Status</th><th>Priority</th><th>Cost (ARC)</th>
-            <th>Result / Error</th></tr></thead>
+            <th>Result / Error</th><th>Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>

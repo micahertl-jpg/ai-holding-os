@@ -44,6 +44,16 @@ class BacktestError(Exception):
     pass
 
 
+class BacktestCancelled(Exception):
+    """Raised when should_stop() (see run_backtest) reports the owner
+    asked this task to stop, mid-run. Deliberately NOT a BacktestError
+    subclass: callers that catch BacktestError to mean "this candidate
+    couldn't be backtested, try the next one" must never treat an
+    owner-requested stop as just another failed candidate -- a stop
+    means halt everything now, not move on."""
+    pass
+
+
 def _bars_to_daily_quotes(bars_by_symbol_by_date, date):
     """For one simulated day, builds the quotes dict decide_trades()/
     apply_risk_limits() expect: {symbol: {"symbol","price","as_of","mock"}}
@@ -60,7 +70,7 @@ def _bars_to_daily_quotes(bars_by_symbol_by_date, date):
 
 
 def run_backtest(starting_cash_usd, strategy_params, historical_bars_by_symbol, llm_client,
-                  max_days=None) -> dict:
+                  max_days=None, should_stop=None) -> dict:
     """Steps day-by-day through the union of trading dates present
     across historical_bars_by_symbol (oldest first, optionally capped
     at max_days), running the exact same decide/apply_risk_limits pair
@@ -69,6 +79,15 @@ def run_backtest(starting_cash_usd, strategy_params, historical_bars_by_symbol, 
     same field shape as paper_trades/trading_snapshots rows (plus a
     "date" field), so compute_backtest_stats() below (and anything that
     already knows how to read a paper_trades row) works unchanged.
+
+    should_stop, if given, is a zero-arg callable checked before each
+    simulated day's real LLM call -- this is the only point in the loop
+    cheap to check against (once per call, not sub-call) and the only
+    point where stopping actually saves money (a day not yet started
+    never gets billed). If it returns truthy, raises BacktestCancelled
+    immediately, before that day's call -- never mid-call, since an
+    in-flight API call can't be aborted without losing track of whether
+    it was actually billed.
 
     Raises BacktestError up front if given ANY mock historical bar, or
     if a simulated day's model call fails structurally (never silently
@@ -102,6 +121,12 @@ def run_backtest(starting_cash_usd, strategy_params, historical_bars_by_symbol, 
     recent_trades_summary = "(no trades yet)"
 
     for date in sorted_dates:
+        if should_stop is not None and should_stop():
+            raise BacktestCancelled(
+                f"cancelled by owner after {len(trades)} trade(s) across "
+                f"{sorted_dates.index(date)} simulated day(s) (of {len(sorted_dates)} planned)"
+            )
+
         quotes = _bars_to_daily_quotes(bars_by_symbol_by_date, date)
         if not quotes:
             continue  # no symbol has a bar this date (holiday/gap) -- skip the day entirely

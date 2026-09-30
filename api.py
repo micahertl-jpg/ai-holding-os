@@ -1145,6 +1145,43 @@ def fail_task(task_id: str, req: FailTaskRequest):
     return {"status": "failed"}
 
 
+@app.post("/tasks/{task_id}/cancel")
+def cancel_task(task_id: str):
+    """Owner-requested stop, e.g. for a long-running
+    strategy_backtest_search that's about to burn through more real API
+    cost than intended. A task that hasn't started real work yet
+    (queued -- no agent has even been assigned -- or awaiting_approval)
+    is cancelled immediately here, for real, no waiting. An
+    already-running task (assigned/in_progress) can't be stopped from
+    this request/response cycle -- only the handler actually running it
+    knows when it's safe to stop and how much real cost was already
+    incurred -- so this just flags cancel_requested=1 and the handler's
+    own cooperative check (currently only strategy_backtest_search's,
+    via should_stop) notices it and stops itself, typically within one
+    simulated day/LLM call. A task type without such a check simply
+    finishes normally and ignores the flag -- every other task type
+    here is a single LLM call, done in seconds either way, so there's
+    nothing meaningful a mid-flight stop could save for those."""
+    db = state["db"]
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task["status"] in ("completed", "failed", "cancelled"):
+        raise HTTPException(status_code=400,
+                             detail=f"task already reached a terminal state ({task['status']})")
+    if task["status"] in ("queued", "awaiting_approval"):
+        db.execute("UPDATE tasks SET status='cancelled' WHERE id=?", (task_id,))
+        if task["agent_id"]:
+            db.execute("UPDATE agents SET status='idle', updated_at=datetime('now') WHERE id=?",
+                       (task["agent_id"],))
+        db.audit("owner", "cancel_task", "task", task_id,
+                  {"status_before": task["status"], "cost_arc": 0.0})
+        return {"status": "cancelled"}
+    db.execute("UPDATE tasks SET cancel_requested=1 WHERE id=?", (task_id,))
+    db.audit("owner", "request_cancel_task", "task", task_id, {"status_before": task["status"]})
+    return {"status": "cancel_requested"}
+
+
 # ---------------------------------------------------------------------
 # Banker (ARC)
 # ---------------------------------------------------------------------
