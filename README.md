@@ -1454,6 +1454,115 @@ dashboard's System Health panel (or wait for
 arrive summarizing pending approvals, system health, revenue, new research,
 and trading P&L across every business.
 
+## Overseer — status (calls your real phone the moment anything needs you)
+
+The owner digest above is a daily summary; the Overseer is the
+opposite end of the urgency spectrum — it calls `OWNER_PHONE_NUMBER`
+(a real phone call, via Twilio's Voice API) the moment ANY approval is
+pending, so something that needs a decision doesn't just sit quietly
+until the next digest or a dashboard visit.
+
+**What's new:**
+- `caller.py` — a thin, stdlib-only Twilio REST client
+  (`urllib`/`base64`/`json`, no `requests` dependency), same pattern as
+  `emailer.py`: `place_call(to_number, message)` speaks `message` aloud
+  via inline TwiML (`<Say>`, XML-escaped) — no hosted webhook needed.
+  Raises `CallError` on any failure (missing
+  `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`, a
+  network error, or a non-2xx Twilio response) — never fabricates a
+  "called" result.
+- `tasks/overseer_review.py` — deliberately code-only, no model call,
+  same reasoning as `owner_digest`: `find_uncalled_pending_approvals()`
+  reuses the exact pending-approvals query `owner_digest` already uses,
+  filtered to approvals with no row yet in the new `overseer_calls`
+  table (the "one call per issue" dedup — a still-pending approval is
+  never called about twice, but a genuinely new one always triggers a
+  fresh call, even seconds after a previous one). `is_quiet_hours()`
+  checks an optional `[OVERSEER_QUIET_HOURS_START,
+  OVERSEER_QUIET_HOURS_END)` local-time window (in `OVERSEER_TIMEZONE`,
+  default UTC) — correctly handles a window crossing midnight (e.g.
+  `22:00` → `07:00`); both start/end must be set for quiet hours to
+  apply at all, matching this codebase's "never a surprise default"
+  pattern. `format_call_message()` is pure string formatting — a short
+  spoken message naming the count and (for multiple) the single
+  highest-risk approval, always pointing to the dashboard for full
+  detail.
+- New `overseer_calls` table (`id`, `approval_id`, `call_sid`,
+  `created_at`) — one row per approval a call has already covered.
+- `executor.py`'s `overseer_review` handler calls
+  `run_overseer_review()` and records the real Twilio call sid in the
+  audit log. A missing `OWNER_PHONE_NUMBER` **fails the task loudly**
+  (same reasoning as `owner_digest`'s missing `OWNER_EMAIL`) — calling
+  is this task's entire purpose, so a misconfiguration must never
+  silently "complete" having called no one.
+- **No owner setup step beyond Twilio itself**, same as Ops/Maintenance
+  and Owner Digest: a recurring `overseer_review` scheduled job
+  (default every 5m, `OVERSEER_REVIEW_INTERVAL_SECONDS` — far shorter
+  than the daily digest, since the whole point is calling *promptly*
+  once something is actually pending) is created automatically under
+  the same internal "System Operations" business the first time the
+  app starts, backfilling onto an already-running deployment via the
+  same `_ensure_scheduled_job()` idempotent-per-job-type mechanism
+  `owner_digest` introduced.
+- `POST /overseer/call-now` + a "Call Me Now (Overseer)" button (System
+  Health panel, next to the ops review/owner digest triggers) — same
+  on-demand pattern, for the same reason: confirming a just-fixed
+  Twilio/`OWNER_PHONE_NUMBER` configuration works shouldn't require
+  waiting on the next scheduled run. Still fully subject to the dedup
+  and quiet-hours rules — it never forces a call for an approval
+  already called about.
+
+**What was actually verified in this session:**
+- `test_caller_offline.py`: refuses to fabricate a call with no real
+  Twilio credentials or no `TWILIO_FROM_NUMBER`; a real call sends the
+  correct To/From/Twiml and Basic-auth header and returns Twilio's
+  response; the spoken message is XML-escaped; a real Twilio API error
+  surfaces as `CallError`, never a silent success.
+- `test_overseer_review_offline.py`: `is_quiet_hours()` correctly
+  bounds a same-day window (half-open — the end minute itself is not
+  quiet), correctly handles a window crossing midnight, and evaluates
+  the window in the configured local timezone, not UTC;
+  `find_uncalled_pending_approvals()` excludes already-called and
+  non-pending approvals; `format_call_message()` names the single
+  approval directly and, for multiple, leads with the count plus the
+  single highest-risk item; `run_overseer_review()` places no call
+  during quiet hours, calls at any hour with no quiet hours configured,
+  is a real no-op (not an error) with nothing pending, places exactly
+  one call covering every uncalled pending approval and records each,
+  never calls twice about the same still-pending approval, and still
+  calls again for a genuinely new one.
+- `test_executor_offline.py`: a real call is placed and recorded and
+  the task completes with zero cost; a missing `OWNER_PHONE_NUMBER`
+  fails the task loudly; the task completes (no call) when nothing is
+  pending; a real `CallError` fails the task and nothing is recorded as
+  called.
+- `test_ops_business_provisioning_offline.py` and
+  `test_manual_triggers_offline.py` updated for the third scheduled
+  job/manual trigger, including the backfill case (a database seeded
+  to look like a deployment from before this feature existed gets
+  `overseer_review` backfilled without touching its existing
+  business/agent/other jobs).
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+- Live-verified against a real Postgres DB + running server + a real
+  browser via Playwright: clicked "Call Me Now (Overseer)", confirmed a
+  real `overseer_review` task was created and ran through the real
+  executor pipeline (failing with the expected `OWNER_PHONE_NUMBER not
+  configured` message, since this sandbox has no real Twilio
+  credentials), with zero console errors.
+
+**What was NOT verified** (needs a real `OWNER_PHONE_NUMBER` +
+`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`, same
+limitation as every other real-external-API path in this project):
+- An actual phone ringing and speaking a real message.
+
+**To verify it yourself:** set `OWNER_PHONE_NUMBER` and the three
+`TWILIO_*` env vars (a Twilio trial account works — see DEPLOY.md),
+create a pending approval (e.g. trigger any action requiring one), then
+click "Call Me Now (Overseer)" on the dashboard's System Health panel
+(or wait for `OVERSEER_REVIEW_INTERVAL_SECONDS` after startup) — your
+phone should actually ring.
+
 ## Owner Chat — status (the conversational layer, "personal assistant" feature)
 
 Free-text Q&A: the owner types a question into a new "Ask" panel on

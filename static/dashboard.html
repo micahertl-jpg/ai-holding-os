@@ -391,6 +391,18 @@
           <code>OWNER_EMAIL</code>/<code>RESEND_API_KEY</code>/<code>RESEND_FROM_EMAIL</code> all
           configured, or it fails loudly rather than sending nothing silently.</p>
         </details>
+        <button id="trigger-overseer-review-btn" type="button" class="btn-small">Call Me Now (Overseer)</button>
+        <details class="panel-note">
+          <summary>About this panel</summary>
+          <p>Calls <code>OWNER_PHONE_NUMBER</code> via Twilio the moment any approval is
+          pending, never more than once per still-unresolved approval. Runs automatically every
+          <code>OVERSEER_REVIEW_INTERVAL_SECONDS</code> (default 5m); requires
+          <code>OWNER_PHONE_NUMBER</code>/<code>TWILIO_ACCOUNT_SID</code>/
+          <code>TWILIO_AUTH_TOKEN</code>/<code>TWILIO_FROM_NUMBER</code> all configured, or it
+          fails loudly rather than placing no call silently. Optional
+          <code>OVERSEER_QUIET_HOURS_START</code>/<code>_END</code> (both required together) and
+          <code>OVERSEER_TIMEZONE</code> suppress calls during a configured local-time window.</p>
+        </details>
       </section>
 
       <section class="panel panel-select no-tilt">

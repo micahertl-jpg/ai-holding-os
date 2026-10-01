@@ -1370,6 +1370,105 @@ def test_owner_digest_propagates_a_real_email_send_failure_as_a_task_failure():
     os.remove(TEST_DB_PATH)
 
 
+def test_overseer_review_task_places_a_real_call_and_completes():
+    db, orch, biz_id, agent_id = _setup()
+    approvals = ApprovalQueue(db)
+    approvals.request("launch_business", "Launch the pet grooming idea", business_id=biz_id,
+                       risk_level="high")
+    task_id = orch.create_task(
+        biz_id, "Call the owner about any pending approval that hasn't been called about yet",
+        permission_level_required=1, task_type="overseer_review")
+
+    with patch.object(executor, "OWNER_PHONE_NUMBER", "+15551234567"), \
+         patch.object(executor.caller_module, "place_call",
+                      return_value={"sid": "CAtest123"}) as mock_call:
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "completed"
+    assert task["cost_arc"] == 0.0, "overseer_review never calls a model, so it has no real cost"
+    assert "CAtest123" in task["result"]
+    assert mock_call.call_count == 1
+    call_args = mock_call.call_args[0]
+    assert call_args[0] == "+15551234567"
+    assert "Launch the pet grooming idea" in call_args[1] or "high" in call_args[1]
+    row = db.query_one("SELECT * FROM overseer_calls")
+    assert row is not None and row["call_sid"] == "CAtest123"
+    print("PASS: an overseer_review task places a real call for a pending approval, records it, "
+          "and completes with zero cost")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_overseer_review_fails_loudly_with_no_owner_phone_configured():
+    db, orch, biz_id, agent_id = _setup()
+    ApprovalQueue(db).request("launch_business", "Launch it", business_id=biz_id)
+    task_id = orch.create_task(
+        biz_id, "Call the owner about any pending approval that hasn't been called about yet",
+        permission_level_required=1, task_type="overseer_review")
+
+    with patch.object(executor, "OWNER_PHONE_NUMBER", None), \
+         patch.object(executor.caller_module, "place_call") as mock_call:
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "failed: OWNER_PHONE_NUMBER is not configured -- there is "
+                                   "no number to call. Set OWNER_PHONE_NUMBER (see README "
+                                   "ACTION REQUIRED) and this will start calling.")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "failed"
+    assert mock_call.call_count == 0
+    print("PASS: overseer_review fails loudly (never silently no-ops) with no "
+          "OWNER_PHONE_NUMBER configured")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_overseer_review_completes_with_no_call_when_nothing_pending():
+    db, orch, biz_id, agent_id = _setup()
+    task_id = orch.create_task(
+        biz_id, "Call the owner about any pending approval that hasn't been called about yet",
+        permission_level_required=1, task_type="overseer_review")
+
+    with patch.object(executor, "OWNER_PHONE_NUMBER", "+15551234567"), \
+         patch.object(executor.caller_module, "place_call") as mock_call:
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    assert mock_call.call_count == 0, "no pending approval means nothing to call about"
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert "no call placed" in task["result"]
+    print("PASS: overseer_review completes without placing a call when there is nothing "
+          "pending to call about")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_overseer_review_propagates_a_real_call_failure_as_a_task_failure():
+    db, orch, biz_id, agent_id = _setup()
+    ApprovalQueue(db).request("launch_business", "Launch it", business_id=biz_id)
+    task_id = orch.create_task(
+        biz_id, "Call the owner about any pending approval that hasn't been called about yet",
+        permission_level_required=1, task_type="overseer_review")
+
+    from caller import CallError
+    with patch.object(executor, "OWNER_PHONE_NUMBER", "+15551234567"), \
+         patch.object(executor.caller_module, "place_call",
+                      side_effect=CallError("Twilio is down")):
+        outcomes = executor.run_once(db, orch, client=MockClient())
+
+    assert outcomes == [(task_id, "failed: Twilio is down")], outcomes
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert task["status"] == "failed", \
+        "a real call failure must fail the task itself, never silently 'complete' with no " \
+        "call actually placed"
+    assert db.query_one("SELECT * FROM overseer_calls") is None, \
+        "a failed call must never be recorded as if it went through"
+    print("PASS: a real call failure fails the overseer_review task itself, not swallowed")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_summarize_urls_task_gets_executed_and_completed()
     test_research_opportunity_task_gets_executed_and_saved()
@@ -1411,4 +1510,8 @@ if __name__ == "__main__":
     test_owner_digest_task_sends_a_real_email_and_completes()
     test_owner_digest_fails_loudly_with_no_owner_email_configured()
     test_owner_digest_propagates_a_real_email_send_failure_as_a_task_failure()
+    test_overseer_review_task_places_a_real_call_and_completes()
+    test_overseer_review_fails_loudly_with_no_owner_phone_configured()
+    test_overseer_review_completes_with_no_call_when_nothing_pending()
+    test_overseer_review_propagates_a_real_call_failure_as_a_task_failure()
     print("\nAll executor.py offline tests passed.")

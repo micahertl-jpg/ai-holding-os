@@ -681,6 +681,16 @@
       }
     });
 
+    document.getElementById("trigger-overseer-review-btn").addEventListener("click", async () => {
+      // Business-independent, same reasoning as the ops review trigger above.
+      try {
+        await api("/overseer/call-now", { method: "POST", body: "{}" });
+        await refresh();
+      } catch (e) {
+        showError("Failed to trigger overseer review: " + e.message);
+      }
+    });
+
     document.getElementById("chat-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       // Business-independent, same as ops review above -- chat answers

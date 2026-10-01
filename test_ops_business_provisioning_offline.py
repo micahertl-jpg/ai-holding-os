@@ -8,10 +8,11 @@ The real bug this guards against: ensure_ops_business_provisioned()
 used to return immediately once the System Operations business already
 existed, which meant a job type added AFTER that business was first
 provisioned (owner_digest, added after ops_maintenance_review had
-already shipped) would never get scheduled on an already-running
-deployment -- only a brand-new install would ever see it. The fix
-makes job provisioning idempotent PER JOB TYPE, independent of whether
-the business itself is new or already existed.
+already shipped; overseer_review, added after both) would never get
+scheduled on an already-running deployment -- only a brand-new install
+would ever see it. The fix makes job provisioning idempotent PER JOB
+TYPE, independent of whether the business itself is new or already
+existed.
 
 Requires fastapi/pydantic installed (`.venv/bin/python3`).
 """
@@ -44,8 +45,8 @@ def test_first_call_creates_the_business_agent_and_both_scheduled_jobs():
     assert agent is not None
 
     job_types = {r["task_type"] for r in jobs.list(business_id)}
-    assert job_types == {"ops_maintenance_review", "owner_digest"}
-    print("PASS: the first call provisions the business, its agent, and both scheduled jobs")
+    assert job_types == {"ops_maintenance_review", "owner_digest", "overseer_review"}
+    print("PASS: the first call provisions the business, its agent, and all scheduled jobs")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -59,7 +60,7 @@ def test_a_second_call_is_a_complete_no_op():
     assert len(businesses.list()) == 1
     assert db.query_one("SELECT COUNT(*) as c FROM agents WHERE business_id=?",
                          (first_id,))["c"] == 1
-    assert len(jobs.list(first_id)) == 2, "a restart must never create duplicate scheduled jobs"
+    assert len(jobs.list(first_id)) == 3, "a restart must never create duplicate scheduled jobs"
     print("PASS: a second call (e.g. every real restart) creates nothing new")
     db.close()
     os.remove(TEST_DB_PATH)
@@ -86,13 +87,14 @@ def test_backfills_a_new_job_type_onto_an_already_provisioned_business():
     assert db.query_one("SELECT COUNT(*) as c FROM agents WHERE business_id=?",
                          (business_id,))["c"] == 1, "must never create a second agent"
     job_rows = jobs.list(business_id)
-    assert len(job_rows) == 2
+    assert len(job_rows) == 3
     job_types = {r["task_type"] for r in job_rows}
-    assert job_types == {"ops_maintenance_review", "owner_digest"}
+    assert job_types == {"ops_maintenance_review", "owner_digest", "overseer_review"}
     assert any(r["id"] == old_job_id for r in job_rows), \
         "the pre-existing ops review job must be left exactly as it was, not recreated"
-    print("PASS: a previously-provisioned deployment gets the NEW owner_digest job backfilled, "
-          "without touching its existing business/agent/ops-review job")
+    print("PASS: a previously-provisioned deployment gets every missing job backfilled "
+          "(owner_digest and overseer_review), without touching its existing "
+          "business/agent/ops-review job")
     db.close()
     os.remove(TEST_DB_PATH)
 

@@ -50,11 +50,13 @@ from tasks.ops_maintenance_review import (
     collect_system_metrics, analyze_system_health, OpsMaintenanceReviewError,
 )
 from tasks.owner_digest import find_window_start, collect_owner_digest, format_digest_email
+from tasks.overseer_review import run_overseer_review
 import market_data
 from alpaca_client import get_default_client as get_default_alpaca_client, AlpacaError
 from db import new_id
 from permission_levels import HUMAN_ONLY_LEVEL
 from emailer import send_email, EmailError
+import caller as caller_module
 
 # Same optional alert address fulfillment.py uses for a failed storefront
 # order -- one "tell the owner something needs a look" address, reused
@@ -62,6 +64,16 @@ from emailer import send_email, EmailError
 # OWNER_EMAIL never blocks the review itself from running and saving.
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
 OPS_ALERT_SEVERITIES = {"warning", "critical"}
+
+# The Overseer's one real-world side effect: the phone number it calls
+# when any approval is pending. Unset by default -- same "never a
+# surprise default" pattern as OWNER_EMAIL and quiet hours below.
+OWNER_PHONE_NUMBER = os.environ.get("OWNER_PHONE_NUMBER")
+# Both unset by default -- quiet hours only apply once BOTH are
+# configured (see tasks/overseer_review.run_overseer_review).
+OVERSEER_QUIET_HOURS_START = os.environ.get("OVERSEER_QUIET_HOURS_START")
+OVERSEER_QUIET_HOURS_END = os.environ.get("OVERSEER_QUIET_HOURS_END")
+OVERSEER_TIMEZONE = os.environ.get("OVERSEER_TIMEZONE", "UTC")
 
 # ---------------------------------------------------------------------
 # ARC accounting policy for the executor's task handlers.
@@ -108,6 +120,12 @@ TRADING_PNL_REWARD_ARC_CAP = 50.0
 # level to scale a reward off of -- a small flat reward for successfully
 # composing and sending it, well below any model-driven task's reward.
 OWNER_DIGEST_REWARD_ARC = 2.0
+
+# Same reasoning as OWNER_DIGEST_REWARD_ARC -- no model call, no
+# confidence level, a flat reward only for an actual real call placed
+# (a quiet-hours or nothing-new skip earns nothing, see
+# _handle_overseer_review below).
+OVERSEER_REWARD_ARC = 2.0
 
 
 class TaskCancelledError(Exception):
@@ -1048,6 +1066,36 @@ def _handle_owner_digest(task_row, client, db):
     return result_text, 0.0, OWNER_DIGEST_REWARD_ARC
 
 
+# ---------------------------------------------------------------------
+# Overseer — calls the owner's real phone the moment any approval is
+# pending, dashboard/digest aside. See tasks/overseer_review.py. No
+# model call, so no LLM cost either way.
+# ---------------------------------------------------------------------
+
+def _handle_overseer_review(task_row, client, db):
+    if not OWNER_PHONE_NUMBER:
+        raise RuntimeError(
+            "OWNER_PHONE_NUMBER is not configured -- there is no number to call. Set "
+            "OWNER_PHONE_NUMBER (see README ACTION REQUIRED) and this will start calling."
+        )
+    result = run_overseer_review(
+        db, caller_module, OWNER_PHONE_NUMBER,
+        quiet_start=OVERSEER_QUIET_HOURS_START, quiet_end=OVERSEER_QUIET_HOURS_END,
+        tz_name=OVERSEER_TIMEZONE,
+    )
+    if not result["called"]:
+        result_text = f"Overseer review: no call placed ({result['reason']})"
+        return result_text, 0.0, 0.0
+
+    db.audit("executor", "overseer_call_placed", "task", task_row["id"],
+              {"approval_count": result["approval_count"], "call_sid": result["call_sid"]})
+    result_text = (
+        f"Overseer called {OWNER_PHONE_NUMBER} about {result['approval_count']} "
+        f"pending approval(s) (call sid={result['call_sid']})"
+    )
+    return result_text, 0.0, OVERSEER_REWARD_ARC
+
+
 # Registry of task_type -> handler(task_row, client, db) -> (result_text, cost_arc, reward_arc).
 # 'manual' is deliberately absent — those tasks are never auto-executed.
 HANDLERS = {
@@ -1062,6 +1110,7 @@ HANDLERS = {
     "strategy_backtest_search": _handle_strategy_backtest_search,
     "ops_maintenance_review": _handle_ops_maintenance_review,
     "owner_digest": _handle_owner_digest,
+    "overseer_review": _handle_overseer_review,
 }
 
 

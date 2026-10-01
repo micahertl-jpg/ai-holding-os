@@ -177,6 +177,14 @@ OPS_REVIEW_INTERVAL_SECONDS = int(os.environ.get("OPS_REVIEW_INTERVAL_SECONDS", 
 # internal System Operations business -- it's cross-business and
 # system-wide, same reasoning as the ops review job itself.
 OWNER_DIGEST_INTERVAL_SECONDS = int(os.environ.get("OWNER_DIGEST_INTERVAL_SECONDS", "86400"))  # 24h
+# The Overseer (see tasks/overseer_review.py) also lives under System
+# Operations, same reasoning -- but runs far more often than the daily
+# digest: its whole point is calling promptly once something is
+# actually pending, not once a day, so the default is minutes, not
+# hours. A review that finds nothing new to call about costs nothing
+# (no model call either way -- see executor.py's OVERSEER_REWARD_ARC
+# comment), so a short interval is cheap to default to.
+OVERSEER_REVIEW_INTERVAL_SECONDS = int(os.environ.get("OVERSEER_REVIEW_INTERVAL_SECONDS", "300"))  # 5m
 
 
 def _ensure_scheduled_job(db, jobs, business_id, task_type, name, objective,
@@ -237,6 +245,12 @@ def ensure_ops_business_provisioned(db, businesses, agents, banker, jobs):
         name="Owner daily digest",
         objective="Compile and email the owner a digest across all businesses",
         interval_seconds=OWNER_DIGEST_INTERVAL_SECONDS, permission_level_required=1,
+    )
+    _ensure_scheduled_job(
+        db, jobs, business_id, task_type="overseer_review",
+        name="Overseer phone review",
+        objective="Call the owner about any pending approval that hasn't been called about yet",
+        interval_seconds=OVERSEER_REVIEW_INTERVAL_SECONDS, permission_level_required=1,
     )
     return business_id
 
@@ -931,6 +945,26 @@ def trigger_owner_digest():
     task_id = state["orchestrator"].create_task(
         business_id, "Compile and email the owner a digest across all businesses",
         permission_level_required=1, task_type="owner_digest",
+    )
+    return {"task_id": task_id}
+
+
+@app.post("/overseer/call-now")
+def trigger_overseer_review():
+    """Manually trigger one overseer_review task right now, outside its
+    scheduled job -- same on-demand pattern as trigger_ops_review()/
+    trigger_owner_digest() above: confirming a just-fixed Twilio/
+    OWNER_PHONE_NUMBER configuration actually works shouldn't require
+    waiting up to OVERSEER_REVIEW_INTERVAL_SECONDS for the next
+    scheduled run. Still fully subject to the dedup and quiet-hours
+    rules in tasks/overseer_review.py -- this does not force a call for
+    an approval that's already been called about."""
+    business_id = ensure_ops_business_provisioned(
+        state["db"], state["businesses"], state["agents"], state["banker"], state["jobs"],
+    )
+    task_id = state["orchestrator"].create_task(
+        business_id, "Call the owner about any pending approval that hasn't been called about yet",
+        permission_level_required=1, task_type="overseer_review",
     )
     return {"task_id": task_id}
 
