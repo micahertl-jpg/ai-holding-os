@@ -45,6 +45,29 @@ ABSOLUTE_MIN_DRAWDOWN_HALT_PCT = 0.05  # never allow disabling the circuit break
 # far" is a legitimate strategy, unlike an unbounded loss.
 ABSOLUTE_MAX_STOP_LOSS_PCT = 0.5
 ABSOLUTE_MAX_TAKE_PROFIT_PCT = 5.0
+# Ceiling for the two OPTIONAL automatic (volatility/ATR-based)
+# multiples below -- an ATR multiple past 10x would make even a
+# genuinely volatile symbol's stop wider than ABSOLUTE_MAX_STOP_LOSS_PCT
+# anyway (see apply_auto_volatility_stops in trading_strategy_review.py,
+# which clamps the computed result to that same hard ceiling regardless).
+ABSOLUTE_MAX_ATR_MULTIPLE = 10.0
+
+# How many most-recent daily True Range values compute_atr_pct() averages
+# over -- the standard Average True Range lookback (Wilder's original
+# ATR uses 14).
+ATR_PERIOD_DAYS = 14
+# Below this many real daily bars, a volatility estimate is too thin to
+# act on -- compute_atr_pct() refuses (returns None) rather than compute
+# a number from almost nothing.
+MIN_ATR_BARS = 5
+# Calendar days of historical bars to fetch for an ATR computation --
+# comfortably more than ATR_PERIOD_DAYS trading days once weekends/
+# holidays are accounted for.
+ATR_HISTORY_LOOKBACK_DAYS = 30
+# A computed stop/take-profit is also never allowed below this floor,
+# even for an unusually calm symbol -- a near-zero distance would
+# trigger on ordinary day-to-day noise, defeating the point of a stop.
+MIN_AUTO_STOP_PCT = 0.005
 
 DEFAULT_STRATEGY_PARAMS = {
     "watchlist": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"],
@@ -71,6 +94,16 @@ DEFAULT_STRATEGY_PARAMS = {
     # before this feature existed is still valid with neither set.
     "stop_loss_pct": None,
     "take_profit_pct": None,
+    # OPTIONAL automatic mode: when set, stop_loss_pct/take_profit_pct
+    # above are IGNORED and instead recomputed fresh from each
+    # watchlist symbol's real recent volatility (Average True Range)
+    # every time trading_strategy_review runs (or the owner saves an
+    # override with one of these set) -- see
+    # apply_auto_volatility_stops() in tasks/trading_strategy_review.py.
+    # Both None (disabled, i.e. stop_loss_pct/take_profit_pct are used
+    # as literal, manually-set fractions) by default.
+    "auto_stop_loss_atr_multiple": None,
+    "auto_take_profit_atr_multiple": None,
 }
 
 
@@ -144,6 +177,8 @@ def validate_parameters(params: dict) -> dict:
 
     stop_loss_pct = _optional_pct("stop_loss_pct", ABSOLUTE_MAX_STOP_LOSS_PCT)
     take_profit_pct = _optional_pct("take_profit_pct", ABSOLUTE_MAX_TAKE_PROFIT_PCT)
+    auto_stop_loss_atr_multiple = _optional_pct("auto_stop_loss_atr_multiple", ABSOLUTE_MAX_ATR_MULTIPLE)
+    auto_take_profit_atr_multiple = _optional_pct("auto_take_profit_atr_multiple", ABSOLUTE_MAX_ATR_MULTIPLE)
 
     return {
         "watchlist": [s.upper() for s in watchlist],
@@ -154,4 +189,59 @@ def validate_parameters(params: dict) -> dict:
         "min_confidence_to_trade": min_confidence,
         "stop_loss_pct": stop_loss_pct,
         "take_profit_pct": take_profit_pct,
+        "auto_stop_loss_atr_multiple": auto_stop_loss_atr_multiple,
+        "auto_take_profit_atr_multiple": auto_take_profit_atr_multiple,
     }
+
+
+def compute_atr_pct(bars: list, period: int = ATR_PERIOD_DAYS) -> float:
+    """Average True Range over the most recent `period` days (or fewer,
+    if not that many are available), expressed as a fraction of the
+    latest bar's close price -- the same units as stop_loss_pct/
+    take_profit_pct, so it can be multiplied directly into an automatic
+    stop/take-profit distance.
+
+    `bars` must be real (mock=False), oldest-first daily OHLC dicts —
+    the same shape market_data.get_daily_history()/tasks/backtest.py
+    use. Returns None (never fabricates a number) if there are fewer
+    than MIN_ATR_BARS bars, or if any bar is mock data."""
+    if len(bars) < MIN_ATR_BARS:
+        return None
+    if any(b.get("mock") for b in bars):
+        return None
+
+    true_ranges = [bars[0]["high"] - bars[0]["low"]]
+    for i in range(1, len(bars)):
+        prev_close = bars[i - 1]["close"]
+        true_ranges.append(max(
+            bars[i]["high"] - bars[i]["low"],
+            abs(bars[i]["high"] - prev_close),
+            abs(bars[i]["low"] - prev_close),
+        ))
+
+    recent = true_ranges[-period:]
+    atr = sum(recent) / len(recent)
+    latest_close = bars[-1]["close"]
+    if latest_close <= 0:
+        return None
+    return atr / latest_close
+
+
+def compute_average_atr_pct(bars_by_symbol: dict) -> float:
+    """compute_atr_pct() for every symbol, simple-averaged into one
+    strategy-wide volatility figure (stop_loss_pct/take_profit_pct are
+    single strategy-wide values today, not per-symbol). Returns None —
+    never a partial/best-effort average — if bars_by_symbol is empty or
+    ANY symbol's ATR can't be computed: an automatic stop built on an
+    incomplete picture of the watchlist's volatility is worse than
+    refusing outright, same reasoning run_trading_cycle uses to refuse
+    rather than trade on a missing quote."""
+    if not bars_by_symbol:
+        return None
+    per_symbol = []
+    for bars in bars_by_symbol.values():
+        atr_pct = compute_atr_pct(bars)
+        if atr_pct is None:
+            return None
+        per_symbol.append(atr_pct)
+    return sum(per_symbol) / len(per_symbol)

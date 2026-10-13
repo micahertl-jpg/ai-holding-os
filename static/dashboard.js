@@ -610,10 +610,14 @@
       const f = ev.target;
       const stopLossRaw = f.stop_loss_pct.value.trim();
       const takeProfitRaw = f.take_profit_pct.value.trim();
+      const autoStopLossRaw = f.auto_stop_loss_atr_multiple.value.trim();
+      const autoTakeProfitRaw = f.auto_take_profit_atr_multiple.value.trim();
       // Blank or 0 means "disabled" (null), matching how renderTradingStrategyVersions
       // displays an unset value -- not an error, and not left as whatever it was before.
       params.stop_loss_pct = stopLossRaw ? parseFloat(stopLossRaw) / 100 : null;
       params.take_profit_pct = takeProfitRaw ? parseFloat(takeProfitRaw) / 100 : null;
+      params.auto_stop_loss_atr_multiple = autoStopLossRaw ? parseFloat(autoStopLossRaw) : null;
+      params.auto_take_profit_atr_multiple = autoTakeProfitRaw ? parseFloat(autoTakeProfitRaw) : null;
       try {
         await api(`/businesses/${businessId}/trading/strategy-override`, {
           method: "POST",

@@ -46,7 +46,12 @@ import fulfillment as fulfillment_module
 import stripe_client
 import dashboard_auth
 from rate_limiter import RateLimiter
-from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
+from tasks.trading_common import (
+    DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError, ATR_HISTORY_LOOKBACK_DAYS,
+)
+from tasks.trading_strategy_review import apply_auto_volatility_stops, TradingStrategyReviewError
+import market_data
+from market_data import MarketDataError
 from tasks.ops_maintenance_review import STUCK_ORDER_THRESHOLD_HOURS, age_hours as _order_age_hours
 from llm_client import get_default_client
 from owner_chat import answer_message
@@ -1654,6 +1659,22 @@ def override_trading_strategy(business_id: str, req: TradingStrategyOverrideRequ
         params = validate_parameters(req.parameters)
     except StrategyParameterError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if params.get("auto_stop_loss_atr_multiple") or params.get("auto_take_profit_atr_multiple"):
+        # Apply immediately, same as trading_strategy_review's own
+        # automatic path -- the owner shouldn't have to also separately
+        # trigger a strategy review just to see a just-enabled
+        # volatility-based stop actually take effect.
+        try:
+            market_client = market_data.get_default_client()
+            bars_by_symbol = market_data.fetch_watchlist_bars(
+                db, market_client, params["watchlist"], ATR_HISTORY_LOOKBACK_DAYS,
+                "trading_strategy_override_volatility",
+            )
+            params = apply_auto_volatility_stops(params, bars_by_symbol)
+            params = validate_parameters(params)
+        except (MarketDataError, TradingStrategyReviewError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     new_version = current["version"] + 1
     db.execute("UPDATE trading_strategy_versions SET active=0 WHERE business_id=? AND active=1",

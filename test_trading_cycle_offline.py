@@ -12,7 +12,10 @@ section at all, so the guarantee doesn't depend on model behavior.
 import json
 
 from market_data import MarketDataError
-from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError
+from tasks.trading_common import (
+    DEFAULT_STRATEGY_PARAMS, validate_parameters, StrategyParameterError,
+    compute_atr_pct, compute_average_atr_pct, MIN_ATR_BARS,
+)
 from tasks.trading_cycle import (
     decide_trades, apply_risk_limits, run_trading_cycle, TradingCycleError,
 )
@@ -152,6 +155,118 @@ def test_validate_parameters_rejects_non_numeric_stop_loss():
     except StrategyParameterError:
         pass
     print("PASS: validate_parameters rejects a non-numeric stop_loss_pct")
+
+
+def test_validate_parameters_accepts_and_defaults_atr_multiples():
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    params["auto_stop_loss_atr_multiple"] = 2.0
+    params["auto_take_profit_atr_multiple"] = 3.5
+    validated = validate_parameters(params)
+    assert validated["auto_stop_loss_atr_multiple"] == 2.0
+    assert validated["auto_take_profit_atr_multiple"] == 3.5
+
+    old = {k: v for k, v in DEFAULT_STRATEGY_PARAMS.items()
+           if k not in ("auto_stop_loss_atr_multiple", "auto_take_profit_atr_multiple")}
+    assert validate_parameters(old)["auto_stop_loss_atr_multiple"] is None
+    print("PASS: validate_parameters accepts real ATR multiples and defaults them to None "
+          "(disabled) when omitted entirely")
+
+
+def test_validate_parameters_rejects_atr_multiple_over_absolute_ceiling():
+    bad = dict(DEFAULT_STRATEGY_PARAMS)
+    bad["auto_stop_loss_atr_multiple"] = 20.0  # above ABSOLUTE_MAX_ATR_MULTIPLE (10.0)
+    try:
+        validate_parameters(bad)
+        assert False, "expected StrategyParameterError"
+    except StrategyParameterError:
+        pass
+    print("PASS: validate_parameters rejects an auto_stop_loss_atr_multiple above its "
+          "absolute ceiling")
+
+
+# ---------------------------------------------------------------------
+# compute_atr_pct / compute_average_atr_pct — real volatility math
+# behind the automatic (ATR-based) stop-loss/take-profit feature
+# ---------------------------------------------------------------------
+
+def _atr_bar(date, high, low, close, mock=False):
+    return {"date": date, "open": close, "high": high, "low": low, "close": close,
+            "volume": 1000000, "mock": mock}
+
+
+def test_compute_atr_pct_matches_a_hand_computed_value():
+    # Every day's true range is exactly 4.0 (constructed so H-L and both
+    # gap-based measures agree) across 6 days -- ATR = 4.0, latest close
+    # 110.0, so ATR% must be exactly 4/110.
+    bars = [
+        _atr_bar("2026-01-01", 102, 98, 100),
+        _atr_bar("2026-01-02", 104, 100, 102),
+        _atr_bar("2026-01-03", 106, 102, 104),
+        _atr_bar("2026-01-04", 108, 104, 106),
+        _atr_bar("2026-01-05", 110, 106, 108),
+        _atr_bar("2026-01-06", 112, 108, 110),
+    ]
+    atr_pct = compute_atr_pct(bars)
+    assert abs(atr_pct - (4.0 / 110.0)) < 1e-9, atr_pct
+    print("PASS: compute_atr_pct matches a hand-computed Average True Range percentage")
+
+
+def test_compute_atr_pct_uses_the_gap_based_true_range_not_just_high_minus_low():
+    # A gap UP overnight: day 2 trades in a narrow 101-103 range (H-L=2)
+    # but opens/gaps from day 1's close of 90 -- the TRUE range must
+    # capture that 13-point gap (|103 - 90|), not just the narrow 2-point
+    # intraday range, or a volatility measure built on it would badly
+    # understate real risk around gaps.
+    bars = [
+        _atr_bar("2026-01-01", 92, 88, 90),
+        _atr_bar("2026-01-02", 103, 101, 102),
+        _atr_bar("2026-01-03", 104, 100, 102),
+        _atr_bar("2026-01-04", 104, 100, 102),
+        _atr_bar("2026-01-05", 104, 100, 102),
+    ]
+    atr_pct = compute_atr_pct(bars)
+    # day1 TR=4, day2 TR=max(2, |103-90|=13, |101-90|=11)=13, days 3-5 TR=4 each
+    expected_atr = (4 + 13 + 4 + 4 + 4) / 5
+    assert abs(atr_pct - expected_atr / 102.0) < 1e-9, atr_pct
+    print("PASS: compute_atr_pct's true range captures an overnight gap, not just the "
+          "intraday high-low range")
+
+
+def test_compute_atr_pct_refuses_with_too_few_bars():
+    bars = [_atr_bar(f"2026-01-0{i}", 102, 98, 100) for i in range(1, MIN_ATR_BARS)]
+    assert len(bars) < MIN_ATR_BARS
+    assert compute_atr_pct(bars) is None
+    print("PASS: compute_atr_pct refuses (returns None) with fewer than MIN_ATR_BARS real bars")
+
+
+def test_compute_atr_pct_refuses_mock_bars():
+    bars = [_atr_bar(f"2026-01-0{i}", 102, 98, 100, mock=(i == 3)) for i in range(1, 7)]
+    assert compute_atr_pct(bars) is None
+    print("PASS: compute_atr_pct refuses to compute a volatility figure from mock historical "
+          "data, same rule run_trading_cycle already applies to live quotes")
+
+
+def test_compute_average_atr_pct_averages_across_symbols():
+    calm = [_atr_bar(f"2026-01-0{i}", 101, 99, 100) for i in range(1, 7)]  # TR=2 every day
+    volatile = [_atr_bar(f"2026-01-0{i}", 110, 90, 100) for i in range(1, 7)]  # TR=20 every day
+    avg = compute_average_atr_pct({"CALM": calm, "VOLATILE": volatile})
+    expected = ((2 / 100.0) + (20 / 100.0)) / 2
+    assert abs(avg - expected) < 1e-9, avg
+    print("PASS: compute_average_atr_pct simple-averages each symbol's real ATR% across the "
+          "whole watchlist")
+
+
+def test_compute_average_atr_pct_refuses_if_any_symbol_cannot_be_computed():
+    enough = [_atr_bar(f"2026-01-0{i}", 101, 99, 100) for i in range(1, 7)]
+    too_few = [_atr_bar("2026-01-01", 101, 99, 100)]
+    assert compute_average_atr_pct({"AAPL": enough, "MSFT": too_few}) is None
+    print("PASS: compute_average_atr_pct refuses (never a partial/best-effort average) if even "
+          "one watchlist symbol's volatility can't be computed")
+
+
+def test_compute_average_atr_pct_refuses_with_an_empty_watchlist():
+    assert compute_average_atr_pct({}) is None
+    print("PASS: compute_average_atr_pct refuses with no symbols given at all")
 
 
 # ---------------------------------------------------------------------
@@ -525,6 +640,15 @@ if __name__ == "__main__":
     test_validate_parameters_rejects_stop_loss_over_absolute_ceiling()
     test_validate_parameters_rejects_take_profit_over_absolute_ceiling()
     test_validate_parameters_rejects_non_numeric_stop_loss()
+    test_validate_parameters_accepts_and_defaults_atr_multiples()
+    test_validate_parameters_rejects_atr_multiple_over_absolute_ceiling()
+    test_compute_atr_pct_matches_a_hand_computed_value()
+    test_compute_atr_pct_uses_the_gap_based_true_range_not_just_high_minus_low()
+    test_compute_atr_pct_refuses_with_too_few_bars()
+    test_compute_atr_pct_refuses_mock_bars()
+    test_compute_average_atr_pct_averages_across_symbols()
+    test_compute_average_atr_pct_refuses_if_any_symbol_cannot_be_computed()
+    test_compute_average_atr_pct_refuses_with_an_empty_watchlist()
     test_decide_trades_parses_a_valid_response()
     test_decide_trades_rejects_non_json()
     test_decide_trades_rejects_decision_for_unquoted_symbol()

@@ -253,6 +253,80 @@ def test_reserve_budget_respects_a_raised_limit_for_an_upgraded_plan():
     os.remove(TEST_DB_PATH)
 
 
+# ---------------------------------------------------------------------
+# fetch_watchlist_bars — shared historical-bars fetch, used by the
+# automatic (ATR-based) stop-loss/take-profit feature
+# ---------------------------------------------------------------------
+
+class _FakeHistoricalClient:
+    """is_mock=False (reserve_budget treats it as real), returns canned
+    bars per symbol for get_daily_history() -- records the exact
+    (symbol, start_date, end_date) each call was made with, so a test
+    can assert fetch_watchlist_bars asked for the real requested range,
+    not just that SOME call happened."""
+    is_mock = False
+
+    def __init__(self, bars_by_symbol, raise_for=()):
+        self.bars_by_symbol = bars_by_symbol
+        self.raise_for = set(raise_for)
+        self.calls = []
+
+    def get_daily_history(self, symbol, start_date, end_date):
+        self.calls.append((symbol, start_date, end_date))
+        if symbol in self.raise_for:
+            raise market_data.MarketDataError(f"no data for {symbol}")
+        return self.bars_by_symbol[symbol]
+
+
+def test_fetch_watchlist_bars_reserves_budget_and_fetches_every_symbol():
+    db = _setup_db()
+    client = _FakeHistoricalClient({"AAPL": [{"date": "2026-01-01"}], "MSFT": [{"date": "2026-01-01"}]})
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 25):
+        result = market_data.fetch_watchlist_bars(
+            db, client, ["AAPL", "MSFT"], 30, "trading_strategy_review_volatility", now=NOW,
+        )
+    assert result == {"AAPL": [{"date": "2026-01-01"}], "MSFT": [{"date": "2026-01-01"}]}
+    assert market_data.used_today(db, now=NOW) == 2, "one request reserved per symbol"
+    assert len(client.calls) == 2
+    symbol, start_date, end_date = client.calls[0]
+    assert end_date == "2026-01-02"
+    assert start_date == "2025-12-03"  # 30 days before end_date
+    print("PASS: fetch_watchlist_bars reserves one request per symbol and fetches the real "
+          "requested lookback range, ending today")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_fetch_watchlist_bars_refuses_before_any_fetch_once_quota_is_exhausted():
+    db = _setup_db()
+    client = _FakeHistoricalClient({"AAPL": []})
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 0):
+        try:
+            market_data.fetch_watchlist_bars(db, client, ["AAPL"], 30, "test", now=NOW)
+            assert False, "expected MarketDataError"
+        except market_data.MarketDataError:
+            pass
+    assert client.calls == [], "no real fetch must happen once the budget check itself fails"
+    print("PASS: fetch_watchlist_bars refuses before any real fetch once the shared quota "
+          "is exhausted")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_fetch_watchlist_bars_propagates_a_real_fetch_failure():
+    db = _setup_db()
+    client = _FakeHistoricalClient({"AAPL": []}, raise_for=["AAPL"])
+    with patch.object(market_data, "DAILY_REQUEST_LIMIT", 25):
+        try:
+            market_data.fetch_watchlist_bars(db, client, ["AAPL"], 30, "test", now=NOW)
+            assert False, "expected MarketDataError"
+        except market_data.MarketDataError as e:
+            assert "no data for AAPL" in str(e)
+    print("PASS: fetch_watchlist_bars propagates a real per-symbol fetch failure unchanged")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 if __name__ == "__main__":
     test_get_quote_parses_a_real_shaped_response()
     test_get_quote_raises_on_rate_limit_error()
@@ -270,4 +344,7 @@ if __name__ == "__main__":
     test_reserve_budget_records_usage_for_a_real_client_within_budget()
     test_reserve_budget_raises_and_records_nothing_once_the_daily_quota_is_exhausted()
     test_reserve_budget_respects_a_raised_limit_for_an_upgraded_plan()
+    test_fetch_watchlist_bars_reserves_budget_and_fetches_every_symbol()
+    test_fetch_watchlist_bars_refuses_before_any_fetch_once_quota_is_exhausted()
+    test_fetch_watchlist_bars_propagates_a_real_fetch_failure()
     print("\nAll market_data.py offline tests passed.")

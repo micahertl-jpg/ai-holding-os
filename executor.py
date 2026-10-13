@@ -37,8 +37,10 @@ from tasks.research_app_feasibility import (
 from tasks.research_real_estate import research_real_estate, RealEstateAssessmentError
 from tasks.trading_cycle import run_trading_cycle, TradingCycleError
 from tasks.trading_strategy_review import (
-    compute_stats, propose_strategy_update, TradingStrategyReviewError,
+    compute_stats, propose_strategy_update, apply_auto_volatility_stops, TradingStrategyReviewError,
 )
+from tasks.trading_common import validate_parameters as validate_trading_strategy_parameters, \
+    ATR_HISTORY_LOOKBACK_DAYS
 from tasks.live_trading_safety import (
     apply_live_safety_caps, is_kill_switch_active, LIVE_MAX_DAILY_LOSS_USD,
 )
@@ -563,13 +565,38 @@ def _handle_trading_strategy_review(task_row, client, db):
     cost_arc = tracked_client.total_cost_usd * ARC_PER_USD
     _require_affordable(task_row, db, cost_arc)
 
+    final_params = proposal["parameters"]
+    auto_note = ""
+    if final_params.get("auto_stop_loss_atr_multiple") or final_params.get("auto_take_profit_atr_multiple"):
+        # Real recent volatility, not the model's own guess, decides the
+        # actual stop_loss_pct/take_profit_pct saved below -- see
+        # apply_auto_volatility_stops()'s docstring. A fetch/volatility
+        # failure here (MarketDataError or TradingStrategyReviewError)
+        # fails this whole task loudly, same as a bad model proposal
+        # would -- never silently falls back to a stale flat percentage.
+        market_client = market_data.get_default_client()
+        bars_by_symbol = market_data.fetch_watchlist_bars(
+            db, market_client, final_params["watchlist"], ATR_HISTORY_LOOKBACK_DAYS,
+            "trading_strategy_review_volatility",
+        )
+        final_params = apply_auto_volatility_stops(final_params, bars_by_symbol)
+        final_params = validate_trading_strategy_parameters(final_params)
+        sl = final_params.get("stop_loss_pct")
+        tp = final_params.get("take_profit_pct")
+        sl_str = f"{sl:.1%}" if sl is not None else "n/a"
+        tp_str = f"{tp:.1%}" if tp is not None else "n/a"
+        auto_note = (
+            f" (stop_loss_pct/take_profit_pct recomputed from real recent volatility: "
+            f"stop={sl_str}, take_profit={tp_str})"
+        )
+
     new_version = strategy_row["version"] + 1
     db.execute("UPDATE trading_strategy_versions SET active=0 WHERE business_id=? AND active=1",
                (business_id,))
     db.execute(
         "INSERT INTO trading_strategy_versions (id, business_id, version, parameters, rationale, "
         "confidence_level, source, active) VALUES (?, ?, ?, ?, ?, ?, 'strategy_review', 1)",
-        (new_id("strat"), business_id, new_version, json.dumps(proposal["parameters"]),
+        (new_id("strat"), business_id, new_version, json.dumps(final_params),
          proposal["rationale"], proposal["confidence_level"]),
     )
     db.audit("executor", "trading_strategy_updated", "trading_strategy_version", None, {
@@ -583,7 +610,7 @@ def _handle_trading_strategy_review(task_row, client, db):
         f"(proposal confidence: {proposal['confidence_level']}).\n"
         f"Stats at review time: {stats['sell_trades']} completed trades, win rate {win_rate_str}, "
         f"total realized P&L ${stats['total_realized_pnl_usd']:.2f}.\n"
-        f"Rationale: {proposal['rationale']}"
+        f"Rationale: {proposal['rationale']}{auto_note}"
     )
     reward_arc = CONFIDENCE_REWARD_ARC.get(proposal["confidence_level"], 0.0)
     return result_text, cost_arc, reward_arc
