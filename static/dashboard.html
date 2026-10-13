@@ -215,6 +215,21 @@
         <div id="trading-trades"></div>
         <h4>Strategy Versions (self-improvement history)</h4>
         <div id="trading-strategy-versions"></div>
+        <form id="set-stop-loss-take-profit-form" class="inline-form">
+          <input name="stop_loss_pct" type="number" min="0" max="50" step="0.5"
+                 placeholder="Stop-loss % (blank = disabled)"
+                 title="Force-close a position the instant its unrealized loss crosses this % (ignored if an ATR multiple below is set)">
+          <input name="take_profit_pct" type="number" min="0" max="500" step="0.5"
+                 placeholder="Take-profit % (blank = disabled)"
+                 title="Force-close a position the instant its unrealized gain crosses this % (ignored if an ATR multiple below is set)">
+          <input name="auto_stop_loss_atr_multiple" type="number" min="0" max="10" step="0.1"
+                 placeholder="Stop-loss ATR multiple (blank = manual %)"
+                 title="Automatic mode: recompute the stop-loss from this many x each symbol's real recent volatility (Average True Range) instead of a fixed %">
+          <input name="auto_take_profit_atr_multiple" type="number" min="0" max="10" step="0.1"
+                 placeholder="Take-profit ATR multiple (blank = manual %)"
+                 title="Automatic mode: recompute the take-profit from this many x each symbol's real recent volatility (Average True Range) instead of a fixed %">
+          <button type="submit" class="btn-small">Set Stop-Loss / Take-Profit</button>
+        </form>
         <details class="panel-note">
           <summary>About this panel</summary>
           <p>No brokerage integration exists anywhere in this codebase — nothing
@@ -223,7 +238,10 @@
           drawdown past the active strategy's threshold automatically pauses the trading agent for
           owner review — find it in the Agents &amp; Tasks tab and click Resume once you're ready to
           let it trade again. "Enable Auto-Trading" requires TWELVEDATA_API_KEY to be set — without
-          it, cycles fail loudly rather than trading on fabricated prices.</p>
+          it, cycles fail loudly rather than trading on fabricated prices. Setting an ATR multiple
+          above computes the stop-loss/take-profit automatically from each watchlist symbol's real
+          recent volatility instead of a fixed %, applied immediately and refreshed on every
+          strategy review (requires TWELVEDATA_API_KEY, same as any other historical-data fetch).</p>
         </details>
       </section>
 

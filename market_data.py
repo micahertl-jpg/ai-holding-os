@@ -292,3 +292,23 @@ def get_default_client():
     if key:
         return TwelveDataClient(api_key=key)
     return MockMarketDataClient()
+
+
+def fetch_watchlist_bars(db, market_client, symbols: list, lookback_days: int,
+                          purpose: str, now: datetime.datetime = None) -> dict:
+    """Reserves budget (one request per symbol, via reserve_budget()
+    above) then fetches `lookback_days` of real daily history for each
+    symbol, ending today. Returns {symbol: bars}. Shared by any caller
+    that needs recent historical bars for every symbol in a watchlist in
+    one shot — currently tasks/trading_strategy_review.py's automatic
+    (ATR-based) stop-loss/take-profit, reusing the exact fetch+budget
+    pattern tasks/strategy_backtest_search.py already established for
+    its own historical-bars fetch. Propagates MarketDataError from
+    either reserve_budget() or get_daily_history() unchanged -- never
+    silently returns partial/fabricated history."""
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    reserve_budget(db, market_client, len(symbols), purpose, now=now)
+    end_date = now.date().isoformat()
+    start_date = (now.date() - datetime.timedelta(days=lookback_days)).isoformat()
+    return {symbol: market_client.get_daily_history(symbol, start_date, end_date)
+            for symbol in symbols}

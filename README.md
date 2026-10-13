@@ -615,6 +615,168 @@ confidence and rationale, and (if it decided to buy/sell) a real paper
 trade in the Trade History table. Try **Run Strategy Review Now** too,
 though it's more informative after a handful of real trades exist.
 
+### Stop-loss / take-profit — status (optional per-position circuit breakers)
+
+Until this, the ONLY thing that could ever close a position was the
+model itself deciding to sell on a given cycle — a position could sit
+open indefinitely if the model kept holding, with no way to cap a loss
+or lock in a gain automatically. These are two new, OPTIONAL fields on
+the same strategy-parameter schema everything else above already uses.
+
+**What's new:**
+- `tasks/trading_common.py`: `stop_loss_pct`/`take_profit_pct`, both
+  `None` (disabled) by default — unlike every other field in the
+  schema, these are NOT required, so a strategy version saved before
+  this feature existed is still valid with neither set. Bounded by
+  `ABSOLUTE_MAX_STOP_LOSS_PCT` (0.5) / `ABSOLUTE_MAX_TAKE_PROFIT_PCT`
+  (5.0), same "hard ceiling, never just a clamp" enforcement as every
+  other field.
+- `tasks/trading_cycle.py`'s `apply_risk_limits()`: the instant an open
+  position's unrealized P&L crosses either threshold, it is force-closed
+  in full — **before** the model's own decision for that symbol is even
+  looked at, and **never gated by `min_confidence_to_trade`** (a risk
+  control, not a trade suggestion the model can veto by hedging its
+  confidence). Since both paper trading, live trading, and the
+  backtester all call this exact same function, all three honor these
+  settings automatically with no separate wiring — a value can be tuned
+  and proven out in a backtest before ever running paper or live.
+- `tasks/trading_strategy_review.py`'s self-improvement loop can now
+  also propose these two fields, with the same "only tighten, don't
+  loosen just to dodge it" guidance already given for
+  `drawdown_halt_pct`.
+- The owner can set them directly, no review cycle needed: a new "Set
+  Stop-Loss / Take-Profit" form on the dashboard's Trading panel submits
+  through the existing `POST .../trading/strategy-override` endpoint
+  (no new endpoint — it already accepted a full parameters dict),
+  preserving every other field of the current active strategy.
+
+**What was actually verified in this session:**
+- New `tasks/trading_common.py`/`tasks/trading_cycle.py` checks in
+  `test_trading_cycle_offline.py`: both fields default to `None` for an
+  older params dict missing them entirely; real values are accepted and
+  out-of-ceiling/non-numeric ones rejected; a losing/winning position is
+  force-closed in full regardless of the model's own hold/buy decision
+  for that symbol; the forced close bypasses `min_confidence_to_trade`;
+  with both disabled (the default) a losing position is never
+  force-closed, unchanged from before this feature; a symbol with no
+  open position is unaffected; the exact boundary value triggers
+  (inclusive).
+- `test_dashboard_render.js`: the Strategy Versions panel shows the real
+  configured percentages, or "disabled" when null.
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+- Live-verified against a real Postgres DB + running server: confirmed
+  a freshly-created strategy defaults both fields to `null`; the
+  override endpoint accepts valid values and rejects an over-ceiling one
+  with the real validation message; and, via a real browser (Playwright),
+  filled in and submitted the new dashboard form, confirming it created
+  a new strategy version with the real values while leaving every other
+  field untouched.
+
+**To verify it yourself:** on the dashboard's Trading panel, under
+Strategy Versions, fill in **Stop-Loss %** / **Take-Profit %** and click
+**Set Stop-Loss / Take-Profit** — a new strategy version appears
+immediately showing the configured values. Hold a position and watch it
+force-close the moment its unrealized P&L crosses what you set, on the
+very next trading cycle (or backtest day), independent of what the model
+itself decides that cycle.
+
+### Automatic (ATR-based) stop-loss/take-profit — status
+
+A flat stop-loss/take-profit % (above) has to be guessed by hand and
+never adapts — 8% might be tight for a volatile stock and loose for a
+calm one. This adds a second, OPTIONAL mode: instead of a fixed %,
+stop_loss_pct/take_profit_pct are computed automatically from each
+watchlist symbol's REAL recent price volatility (Average True Range,
+the standard measure — "how much does this symbol typically move in a
+day"), so the distance adapts to the symbol and changes over time as
+volatility does.
+
+**What's new:**
+- `tasks/trading_common.py`: `compute_atr_pct(bars)` — real Average
+  True Range (correctly using the gap-based true range formula, not
+  just each day's high-low, so an overnight gap is never understated)
+  expressed as a % of price; refuses (returns `None`, never fabricates
+  a number) with fewer than `MIN_ATR_BARS` (5) real bars or any mock
+  bar. `compute_average_atr_pct()` simple-averages this across the
+  whole watchlist, refusing entirely (not a partial average) if even
+  one symbol's volatility can't be computed.
+- Two new OPTIONAL strategy fields, `auto_stop_loss_atr_multiple` /
+  `auto_take_profit_atr_multiple` (e.g. `2.0` means "set the stop at
+  ~2x this watchlist's typical daily range") — both `None` (disabled,
+  i.e. the flat % above is used literally) by default.
+  `tasks/trading_strategy_review.py`'s `apply_auto_volatility_stops()`
+  overwrites `stop_loss_pct`/`take_profit_pct` with the real computed
+  value the instant either multiple is set — ignoring whatever flat %
+  the model (or the owner) also gave for those two fields — clamped to
+  the same absolute ceilings a manual value is bound by, never
+  exceeding them even for an unusually volatile symbol.
+- `market_data.py`: `fetch_watchlist_bars()` — one real historical-bars
+  fetch per watchlist symbol (reusing `get_daily_history()` and the
+  same shared-quota `reserve_budget()` every other historical fetch in
+  this codebase already goes through), covering the last 30 calendar
+  days.
+- Applied in TWO places, both fail the whole operation loudly (never
+  silently fall back to a stale/fabricated value) if real volatility
+  can't be computed: `executor.py`'s `trading_strategy_review` handler
+  (recomputed on every scheduled/triggered review) and `api.py`'s
+  `override_trading_strategy` endpoint (applied immediately when the
+  owner sets an ATR multiple directly from the dashboard, without
+  having to also wait for or trigger a review).
+- The model's own self-improvement loop can propose enabling/adjusting
+  these multiples too — same conservatism rule as every other risk
+  field: only tighten, never loosen one just to dodge a recent stop-out.
+- Dashboard: two more fields on the existing "Set Stop-Loss /
+  Take-Profit" form (Stop-Loss ATR multiple / Take-Profit ATR
+  multiple), and the Strategy Versions panel shows `(auto, 2.0x ATR)`
+  alongside the computed % whenever automatic mode is active.
+
+**What was actually verified in this session:**
+- New `tasks/trading_common.py` checks in `test_trading_cycle_offline.py`:
+  `compute_atr_pct` matches a hand-computed value exactly; correctly
+  uses the gap-based true range (not just high-low) across an overnight
+  gap; refuses with too few bars or any mock bar;
+  `compute_average_atr_pct` averages correctly across symbols and
+  refuses entirely if even one symbol fails; the two new fields
+  validate/default/reject exactly like `stop_loss_pct`/`take_profit_pct`
+  already do.
+- New `test_market_data_offline.py` checks: `fetch_watchlist_bars`
+  reserves one request per symbol and fetches the real requested range;
+  refuses before any real fetch once the shared quota is exhausted;
+  propagates a real per-symbol fetch failure.
+- New `test_trading_strategy_review_offline.py` checks:
+  `apply_auto_volatility_stops` overrides the flat %s with the real
+  computed value; is a complete no-op with neither multiple set; only
+  recomputes the one field whose multiple is actually set; clamps to
+  the absolute ceiling; raises rather than silently falling back when
+  volatility can't be computed; never mutates its input.
+- New `test_executor_offline.py` checks: an end-to-end
+  `trading_strategy_review` task with an ATR multiple set saves a
+  version with the real computed %, not the model's own flat guess; a
+  real volatility-fetch failure fails the whole task loudly, saving
+  nothing.
+- New `test_trading_strategy_override_offline.py` checks: an override
+  with no ATR multiple behaves exactly as before; setting one applies
+  real volatility immediately through the override endpoint itself,
+  without needing a separate review; a fetch failure fails the
+  override loudly, saving nothing.
+- `test_dashboard_render.js`: the Strategy Versions panel shows the
+  `(auto, Nx ATR)` suffix when a multiple is set.
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+
+**What was NOT verified** (needs a real `TWELVEDATA_API_KEY`, same
+limitation as every other real historical-data fetch in this project):
+- A real automatic stop/take-profit computed against actual live market
+  volatility.
+
+**To verify it yourself:** set `TWELVEDATA_API_KEY`, then on the
+dashboard's Trading panel fill in **Stop-Loss ATR multiple** (e.g.
+`2.0`) and click **Set Stop-Loss / Take-Profit** — the new strategy
+version should immediately show a real computed `Stop-loss: -X% (auto,
+2.0x ATR)`, where X reflects your actual watchlist's real recent
+volatility, not a number you typed in.
+
 ## Live Trading — status (REAL MONEY, opt-in per business — see DEPLOY.md)
 
 A separate, deliberately harder-to-reach feature on top of everything

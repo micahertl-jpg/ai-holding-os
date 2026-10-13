@@ -10,6 +10,7 @@ hiding it.
 
 import os
 import json
+import datetime
 from unittest.mock import patch
 
 from db import Database, new_id
@@ -1235,6 +1236,84 @@ def test_trading_strategy_review_rejects_an_out_of_bounds_proposal():
     os.remove(TEST_DB_PATH)
 
 
+def _recent_dates(n):
+    """n consecutive real calendar dates ending today (UTC), oldest
+    first -- matches market_data.fetch_watchlist_bars' own [today-30,
+    today] fetch window exactly, so a fake historical client's canned
+    bars actually survive its real date-range filtering regardless of
+    whatever day this test happens to run on."""
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    return [(today - datetime.timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
+
+
+def test_trading_strategy_review_applies_automatic_atr_based_stops():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Review paper-trading strategy performance",
+                                permission_level_required=3, task_type="trading_strategy_review")
+
+    proposal = json.dumps({
+        "parameters": {**params, "watchlist": ["AAPL"], "stop_loss_pct": 0.5, "take_profit_pct": 0.5,
+                       "auto_stop_loss_atr_multiple": 2.0, "auto_take_profit_atr_multiple": 3.0},
+        "rationale": "Switching to a volatility-adaptive stop given recent choppiness.",
+        "confidence_level": "medium",
+    })
+    # _bt_bar's shape gives every day a true range of exactly 2.0 against
+    # a constant $100 close -> real ATR% = 0.02 -- so a 2x/3x multiple
+    # MUST produce exactly 0.04/0.06, not the 0.5/0.5 the proposal also
+    # (irrelevantly) carries.
+    bars = {"AAPL": [_bt_bar(d, 100.0) for d in _recent_dates(6)]}
+    fake_market = _FakeHistoricalMarketClient(bars)
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=proposal))
+
+    assert outcomes == [(task_id, "completed")], outcomes
+    versions = db.query(
+        "SELECT * FROM trading_strategy_versions WHERE business_id=? ORDER BY version", (biz_id,),
+    )
+    new_params = json.loads(versions[-1]["parameters"])
+    assert abs(new_params["stop_loss_pct"] - 0.04) < 1e-9, new_params["stop_loss_pct"]
+    assert abs(new_params["take_profit_pct"] - 0.06) < 1e-9, new_params["take_profit_pct"]
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    assert "recomputed from real recent volatility" in task["result"]
+    print("PASS: a trading_strategy_review task with an ATR multiple set recomputes "
+          "stop_loss_pct/take_profit_pct from real historical volatility before saving, "
+          "overriding whatever flat % the model's own proposal also carried")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
+def test_trading_strategy_review_fails_loudly_when_volatility_cannot_be_computed():
+    db, orch, biz_id, agent_id = _setup()
+    trading_agent_id, portfolio_id, params = _setup_trading(db, biz_id)
+
+    task_id = orch.create_task(biz_id, "Review paper-trading strategy performance",
+                                permission_level_required=3, task_type="trading_strategy_review")
+    proposal = json.dumps({
+        "parameters": {**params, "watchlist": ["AAPL"], "auto_stop_loss_atr_multiple": 2.0},
+        "rationale": "x", "confidence_level": "medium",
+    })
+    # Only 1 real bar -- below MIN_ATR_BARS, so volatility can't be computed.
+    bars = {"AAPL": [_bt_bar(_recent_dates(1)[0], 100.0)]}
+    fake_market = _FakeHistoricalMarketClient(bars)
+
+    with patch("executor.market_data.get_default_client", return_value=fake_market):
+        outcomes = executor.run_once(db, orch, client=MockClient(canned_response=proposal))
+
+    assert len(outcomes) == 1 and outcomes[0][1].startswith("failed:")
+    versions = db.query("SELECT * FROM trading_strategy_versions WHERE business_id=?", (biz_id,))
+    assert len(versions) == 1, (
+        "a proposal that can't have its automatic stop computed must never be saved, same as "
+        "an out-of-bounds proposal"
+    )
+    print("PASS: trading_strategy_review fails the task loudly (never silently falls back to a "
+          "stale value) when an ATR multiple is set but real volatility can't be computed")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_ops_maintenance_review_task_gets_executed_and_saved():
     db, orch, biz_id, agent_id = _setup()
     task_id = orch.create_task(biz_id, "Review this system's own infrastructure health",
@@ -1405,6 +1484,8 @@ if __name__ == "__main__":
     test_strategy_backtest_search_without_an_active_strategy_fails_loudly()
     test_trading_strategy_review_task_promotes_a_new_validated_version()
     test_trading_strategy_review_rejects_an_out_of_bounds_proposal()
+    test_trading_strategy_review_applies_automatic_atr_based_stops()
+    test_trading_strategy_review_fails_loudly_when_volatility_cannot_be_computed()
     test_ops_maintenance_review_task_gets_executed_and_saved()
     test_ops_maintenance_review_alerts_owner_on_warning_severity()
     test_ops_maintenance_review_broken_owner_alert_does_not_fail_the_task()

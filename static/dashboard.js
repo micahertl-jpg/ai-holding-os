@@ -50,6 +50,12 @@
   // here instead, refreshed on every loadTradingBankerTab() like lastOrders.
   let lastBacktestRuns = [];
 
+  // Setting stop-loss/take-profit (see "set-stop-loss-take-profit" below)
+  // needs the CURRENT active strategy's full parameters dict so it can
+  // submit a complete, valid override (only stop_loss_pct/take_profit_pct
+  // change) -- same reasoning/pattern as lastBacktestRuns above.
+  let lastTradingStrategyVersions = [];
+
   // Tasks table: whether the completed-task history is expanded (see
   // renderTasksTable's showAll param). Toggling this is a pure local
   // display choice over data already in hand, so it re-renders from
@@ -238,8 +244,9 @@
     setHtmlIfChanged("trading-positions",
       R.renderTradingPositions(data.trading_portfolio ? data.trading_portfolio.positions : []));
     setHtmlIfChanged("trading-trades", R.renderTradingTrades(data.trading_trades));
+    lastTradingStrategyVersions = data.trading_strategy_versions || [];
     setHtmlIfChanged("trading-strategy-versions",
-      R.renderTradingStrategyVersions(data.trading_strategy_versions));
+      R.renderTradingStrategyVersions(lastTradingStrategyVersions));
     setHtmlIfChanged("live-trading-status", R.renderLiveTrading(data.live_trading));
     setHtmlIfChanged("live-trading-trades",
       R.renderLiveTradingTrades(data.live_trading ? data.live_trading.trades : []));
@@ -584,6 +591,45 @@
         await refresh();
       } catch (e) {
         showError("Failed to trigger strategy review: " + e.message);
+      }
+    });
+
+    document.getElementById("set-stop-loss-take-profit-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const businessId = tabBusinessId["trading-banker"];
+      if (!businessId) { showError("Select a business first."); return; }
+      const active = lastTradingStrategyVersions.find((v) => v.active);
+      if (!active) { showError("No active trading strategy yet -- create a paper portfolio first."); return; }
+      let params;
+      try {
+        params = JSON.parse(active.parameters);
+      } catch (e) {
+        showError("Could not read the current strategy's parameters -- refresh and try again.");
+        return;
+      }
+      const f = ev.target;
+      const stopLossRaw = f.stop_loss_pct.value.trim();
+      const takeProfitRaw = f.take_profit_pct.value.trim();
+      const autoStopLossRaw = f.auto_stop_loss_atr_multiple.value.trim();
+      const autoTakeProfitRaw = f.auto_take_profit_atr_multiple.value.trim();
+      // Blank or 0 means "disabled" (null), matching how renderTradingStrategyVersions
+      // displays an unset value -- not an error, and not left as whatever it was before.
+      params.stop_loss_pct = stopLossRaw ? parseFloat(stopLossRaw) / 100 : null;
+      params.take_profit_pct = takeProfitRaw ? parseFloat(takeProfitRaw) / 100 : null;
+      params.auto_stop_loss_atr_multiple = autoStopLossRaw ? parseFloat(autoStopLossRaw) : null;
+      params.auto_take_profit_atr_multiple = autoTakeProfitRaw ? parseFloat(autoTakeProfitRaw) : null;
+      try {
+        await api(`/businesses/${businessId}/trading/strategy-override`, {
+          method: "POST",
+          body: JSON.stringify({
+            parameters: params,
+            rationale: "Owner set stop-loss/take-profit from the dashboard.",
+          }),
+        });
+        f.reset();
+        await refresh();
+      } catch (e) {
+        showError("Failed to set stop-loss/take-profit: " + e.message);
       }
     });
 

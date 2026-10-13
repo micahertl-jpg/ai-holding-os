@@ -8,9 +8,9 @@ saved as if it were valid).
 
 import json
 
-from tasks.trading_common import DEFAULT_STRATEGY_PARAMS
+from tasks.trading_common import DEFAULT_STRATEGY_PARAMS, ABSOLUTE_MAX_STOP_LOSS_PCT
 from tasks.trading_strategy_review import (
-    compute_stats, propose_strategy_update, TradingStrategyReviewError,
+    compute_stats, propose_strategy_update, apply_auto_volatility_stops, TradingStrategyReviewError,
 )
 
 
@@ -138,6 +138,83 @@ def test_propose_strategy_update_rejects_invalid_confidence_level():
     print("PASS: propose_strategy_update rejects an invalid top-level confidence_level")
 
 
+# ---------------------------------------------------------------------
+# apply_auto_volatility_stops — the automatic (ATR-based) stop-loss/
+# take-profit: real volatility, computed in code, overriding whatever
+# flat stop_loss_pct/take_profit_pct the model (or the owner) proposed
+# ---------------------------------------------------------------------
+
+def _atr_bar(date, high, low, close):
+    return {"date": date, "open": close, "high": high, "low": low, "close": close,
+            "volume": 1000000, "mock": False}
+
+
+def test_apply_auto_volatility_stops_overrides_the_flat_percentages():
+    # Every day's true range is exactly 2.0 against a $100 close -> real
+    # ATR% = 0.02. A 2x stop-loss multiple and 3x take-profit multiple
+    # must produce exactly 0.04 and 0.06, NOT whatever flat stop_loss_pct/
+    # take_profit_pct the params dict also happens to carry.
+    bars = {"AAPL": [_atr_bar(f"2026-01-0{i}", 101, 99, 100) for i in range(1, 7)]}
+    params = {**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.5, "take_profit_pct": 0.5,
+              "auto_stop_loss_atr_multiple": 2.0, "auto_take_profit_atr_multiple": 3.0}
+    result = apply_auto_volatility_stops(params, bars)
+    assert abs(result["stop_loss_pct"] - 0.04) < 1e-9, result["stop_loss_pct"]
+    assert abs(result["take_profit_pct"] - 0.06) < 1e-9, result["take_profit_pct"]
+    print("PASS: apply_auto_volatility_stops overrides stop_loss_pct/take_profit_pct with "
+          "values computed from real volatility, ignoring whatever flat % was also set")
+
+
+def test_apply_auto_volatility_stops_is_a_no_op_when_neither_multiple_is_set():
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    params["stop_loss_pct"] = 0.08
+    result = apply_auto_volatility_stops(params, {})
+    assert result["stop_loss_pct"] == 0.08
+    print("PASS: apply_auto_volatility_stops leaves stop_loss_pct/take_profit_pct exactly "
+          "as given when no ATR multiple is configured, never touching the network/bars")
+
+
+def test_apply_auto_volatility_stops_only_overrides_the_one_multiple_thats_set():
+    bars = {"AAPL": [_atr_bar(f"2026-01-0{i}", 101, 99, 100) for i in range(1, 7)]}
+    params = {**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.5, "take_profit_pct": 0.5,
+              "auto_stop_loss_atr_multiple": 2.0, "auto_take_profit_atr_multiple": None}
+    result = apply_auto_volatility_stops(params, bars)
+    assert abs(result["stop_loss_pct"] - 0.04) < 1e-9
+    assert result["take_profit_pct"] == 0.5, "take-profit is untouched -- its own multiple is unset"
+    print("PASS: apply_auto_volatility_stops only recomputes the field whose own multiple is set")
+
+
+def test_apply_auto_volatility_stops_clamps_to_the_absolute_ceiling():
+    # A huge multiple x this volatility would exceed ABSOLUTE_MAX_STOP_LOSS_PCT
+    # (0.5) -- must clamp, never silently save an unbounded stop.
+    bars = {"AAPL": [_atr_bar(f"2026-01-0{i}", 120, 80, 100) for i in range(1, 7)]}  # ATR%=0.4
+    params = {**DEFAULT_STRATEGY_PARAMS, "auto_stop_loss_atr_multiple": 10.0,
+              "auto_take_profit_atr_multiple": None}
+    result = apply_auto_volatility_stops(params, bars)
+    assert result["stop_loss_pct"] == ABSOLUTE_MAX_STOP_LOSS_PCT
+    print("PASS: apply_auto_volatility_stops clamps a computed stop to the same absolute "
+          "ceiling a manually-set one is bound by, never exceeding it")
+
+
+def test_apply_auto_volatility_stops_raises_when_volatility_cannot_be_computed():
+    params = {**DEFAULT_STRATEGY_PARAMS, "auto_stop_loss_atr_multiple": 2.0}
+    try:
+        apply_auto_volatility_stops(params, {"AAPL": [_atr_bar("2026-01-01", 101, 99, 100)]})
+        assert False, "expected TradingStrategyReviewError"
+    except TradingStrategyReviewError as e:
+        assert "volatility" in str(e)
+    print("PASS: apply_auto_volatility_stops refuses loudly rather than silently keeping a "
+          "stale/arbitrary value when real volatility can't be computed")
+
+
+def test_apply_auto_volatility_stops_never_mutates_the_input_dict():
+    bars = {"AAPL": [_atr_bar(f"2026-01-0{i}", 101, 99, 100) for i in range(1, 7)]}
+    params = {**DEFAULT_STRATEGY_PARAMS, "auto_stop_loss_atr_multiple": 2.0, "stop_loss_pct": 0.5}
+    original = dict(params)
+    apply_auto_volatility_stops(params, bars)
+    assert params == original, "the caller's own dict must never be mutated in place"
+    print("PASS: apply_auto_volatility_stops returns a new dict, never mutates its input")
+
+
 if __name__ == "__main__":
     test_compute_stats_on_empty_history()
     test_compute_stats_win_rate_and_realized_pnl()
@@ -147,4 +224,10 @@ if __name__ == "__main__":
     test_propose_strategy_update_rejects_missing_top_level_field()
     test_propose_strategy_update_rejects_non_json()
     test_propose_strategy_update_rejects_invalid_confidence_level()
+    test_apply_auto_volatility_stops_overrides_the_flat_percentages()
+    test_apply_auto_volatility_stops_is_a_no_op_when_neither_multiple_is_set()
+    test_apply_auto_volatility_stops_only_overrides_the_one_multiple_thats_set()
+    test_apply_auto_volatility_stops_clamps_to_the_absolute_ceiling()
+    test_apply_auto_volatility_stops_raises_when_volatility_cannot_be_computed()
+    test_apply_auto_volatility_stops_never_mutates_the_input_dict()
     print("\nAll trading_strategy_review.py offline tests passed.")

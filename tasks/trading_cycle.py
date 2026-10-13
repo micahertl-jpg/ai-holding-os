@@ -99,8 +99,15 @@ def _format_context(cash_usd, positions, quotes, strategy_params, recent_trades_
         f"max {strategy_params['max_position_pct']*100:.0f}% of equity in one symbol, "
         f"max {strategy_params['max_trade_pct_of_cash']*100:.0f}% of cash per trade, "
         f"max {strategy_params['max_open_positions']} open positions, "
-        f"minimum confidence to act on: {strategy_params['min_confidence_to_trade']}.\n\n"
-        f"Recent trade history:\n{recent_trades_summary or '(no trades yet)'}"
+        f"minimum confidence to act on: {strategy_params['min_confidence_to_trade']}"
+        + (f", automatic stop-loss at -{strategy_params['stop_loss_pct']*100:.0f}% unrealized"
+           if strategy_params.get("stop_loss_pct") else "")
+        + (f", automatic take-profit at +{strategy_params['take_profit_pct']*100:.0f}% unrealized"
+           if strategy_params.get("take_profit_pct") else "")
+        + (". A position already past either threshold is force-closed before you're even "
+           "asked, regardless of what you decide for it"
+           if strategy_params.get("stop_loss_pct") or strategy_params.get("take_profit_pct") else "")
+        + f".\n\nRecent trade history:\n{recent_trades_summary or '(no trades yet)'}"
     )
 
 
@@ -178,12 +185,45 @@ def decide_trades(cash_usd, positions, strategy_params, recent_trades_summary, q
     return validated
 
 
+def _stop_loss_or_take_profit_reason(position, price, strategy_params):
+    """Returns a human-readable trigger reason the instant this open
+    position's unrealized P&L crosses the configured stop_loss_pct
+    (down) or take_profit_pct (up), else None. Both are optional
+    (default disabled, see trading_common.DEFAULT_STRATEGY_PARAMS).
+    Pure and deterministic, same as the rest of this function — no
+    model involved in deciding whether this fires."""
+    avg_cost = position.get("avg_cost_usd") or 0.0
+    if avg_cost <= 0:
+        return None
+    pct_change = (price - avg_cost) / avg_cost
+
+    stop_loss_pct = strategy_params.get("stop_loss_pct")
+    if stop_loss_pct is not None and pct_change <= -stop_loss_pct:
+        return (f"stop-loss triggered: price ${price:.2f} is {pct_change:+.1%} from avg cost "
+                f"${avg_cost:.2f}, past the configured -{stop_loss_pct:.0%} stop_loss_pct")
+
+    take_profit_pct = strategy_params.get("take_profit_pct")
+    if take_profit_pct is not None and pct_change >= take_profit_pct:
+        return (f"take-profit triggered: price ${price:.2f} is {pct_change:+.1%} from avg cost "
+                f"${avg_cost:.2f}, past the configured +{take_profit_pct:.0%} take_profit_pct")
+
+    return None
+
+
 def apply_risk_limits(decisions, cash_usd, positions, quotes, strategy_params) -> list:
     """Pure, deterministic, no LLM/network involved — this is the
     function that actually enforces safety, independent of model
     behavior. Every decision comes back as exactly one record: either
     executed=True with a clamped quantity/price, or executed=False with a
     skip_reason explaining exactly why. Nothing is ever silently dropped.
+
+    Before even looking at what the model decided for a symbol, a
+    position whose unrealized P&L has crossed the configured
+    stop_loss_pct/take_profit_pct is force-closed in full here — this
+    overrides the model's decision for that symbol entirely (even an
+    explicit "hold" or "buy") and is never gated by
+    min_confidence_to_trade: a stop-loss/take-profit is a risk control,
+    not a trade suggestion the model can veto by being unconfident.
     """
     positions_by_symbol = {p["symbol"]: p for p in positions}
     watchlist = set(strategy_params["watchlist"])
@@ -205,6 +245,19 @@ def apply_risk_limits(decisions, cash_usd, positions, quotes, strategy_params) -
         price = quotes[symbol]["price"]
         base = {"symbol": symbol, "action": d["action"],
                 "confidence_level": d["confidence_level"], "rationale": d["rationale"]}
+
+        existing_position = positions_by_symbol.get(symbol)
+        if existing_position and existing_position["quantity"] > 0:
+            forced_reason = _stop_loss_or_take_profit_reason(existing_position, price, strategy_params)
+            if forced_reason:
+                quantity = existing_position["quantity"]
+                positions_by_symbol[symbol] = {"quantity": 0.0,
+                                                "avg_cost_usd": existing_position.get("avg_cost_usd", 0)}
+                open_count -= 1
+                results.append({**base, "action": "sell", "confidence_level": "high",
+                                 "rationale": forced_reason, "executed": True, "side": "sell",
+                                 "quantity": quantity, "price": price})
+                continue
 
         if d["action"] == "hold":
             results.append({**base, "executed": False, "skip_reason": "model chose hold"})
