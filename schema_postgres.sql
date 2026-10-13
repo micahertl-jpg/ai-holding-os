@@ -362,3 +362,12 @@ CREATE TABLE IF NOT EXISTS real_estate_assessments (
     launched_business_id TEXT REFERENCES businesses(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Overseer — see schema.sql for the full explanation; this mirrors it
+-- exactly.
+CREATE TABLE IF NOT EXISTS overseer_calls (
+    id TEXT PRIMARY KEY,
+    approval_id TEXT REFERENCES approvals(id),
+    call_sid TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);

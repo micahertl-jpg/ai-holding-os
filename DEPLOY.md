@@ -185,6 +185,49 @@ button to trigger one immediately instead of waiting. A handful of
 tune exactly how overdue something needs to be before it's flagged, if
 the defaults don't fit your usage patterns.
 
+## Overseer — calls your real phone the moment anything needs you
+
+Off by default (no number to call). Set these to turn it on:
+
+1. **`OWNER_PHONE_NUMBER`** — your real cell phone, in E.164 format
+   (e.g. `+15551234567`). This is who gets called.
+2. **`TWILIO_ACCOUNT_SID`** / **`TWILIO_AUTH_TOKEN`** — from
+   twilio.com (they have a free trial with starting credit — no need
+   to pay anything to try this out). Found on your Twilio Console
+   dashboard.
+3. **`TWILIO_FROM_NUMBER`** — a Twilio phone number on your account
+   (a trial account is given one automatically), in E.164 format. This
+   is who the call comes from.
+
+A trial Twilio account can only call phone numbers you've verified in
+the Twilio Console (Phone Numbers → Verified Caller IDs) — verify your
+own `OWNER_PHONE_NUMBER` there first, or calls will fail with a Twilio
+error until you upgrade the account.
+
+Without all of these set, the recurring `overseer_review` job runs on
+schedule and does nothing (the task fails loudly with "OWNER_PHONE_NUMBER
+is not configured", visible in the dashboard's Tasks table) — it never
+silently skips in a way you wouldn't notice.
+
+Optional: `OVERSEER_REVIEW_INTERVAL_SECONDS` (default 300 = 5m)
+controls how often it checks for something new to call about; use the
+System Health panel's "Call Me Now (Overseer)" button to trigger one
+immediately instead of waiting.
+
+Optional: `OVERSEER_QUIET_HOURS_START` / `OVERSEER_QUIET_HOURS_END`
+(both as `HH:MM`, 24-hour, e.g. `22:00` / `07:00`) — a local-time
+window during which no call is placed, even if something is pending.
+Both must be set together, or neither applies (there's no quiet-hours
+default — a call always goes through unless you explicitly configure a
+window). `OVERSEER_TIMEZONE` (an IANA name, e.g. `America/New_York`;
+default `UTC`) sets which local time that window is evaluated in.
+
+A call never repeats for the same still-pending approval — once you've
+been called about something, you won't be called again about that
+exact approval until you decide on it (approve or reject), even across
+many `overseer_review` cycles. A genuinely new approval always
+triggers a fresh call.
+
 ## Live Trading — REAL MONEY (currently OFF, opt-in per business)
 
 Everything under "Automated Stock Trading" above is paper (simulated)

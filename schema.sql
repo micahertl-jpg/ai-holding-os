@@ -494,3 +494,17 @@ CREATE TABLE IF NOT EXISTS real_estate_assessments (
     launched_business_id TEXT REFERENCES businesses(id),
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Overseer — one row per approval a phone call has already covered.
+-- See tasks/overseer_review.py: find_uncalled_pending_approvals() scans
+-- for pending approvals with NO row here yet (the "one call per issue"
+-- dedup), so a still-pending approval never triggers a second call, but
+-- a genuinely new one always does. call_sid is Twilio's real call
+-- identifier (caller.py's place_call() return value) — never written
+-- unless the call actually went through.
+CREATE TABLE IF NOT EXISTS overseer_calls (
+    id TEXT PRIMARY KEY,
+    approval_id TEXT REFERENCES approvals(id),
+    call_sid TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);

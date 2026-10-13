@@ -66,16 +66,34 @@ def test_trigger_owner_digest_creates_a_real_task_under_the_ops_business():
     os.remove(TEST_DB_PATH)
 
 
+def test_trigger_overseer_review_creates_a_real_task_under_the_ops_business():
+    db = _setup()
+    result = api.trigger_overseer_review()
+    task = db.query_one("SELECT * FROM tasks WHERE id=?", (result["task_id"],))
+    assert task is not None
+    assert task["task_type"] == "overseer_review"
+    biz = api.state["businesses"].get(task["business_id"])
+    assert biz["type"] == api.OPS_BUSINESS_TYPE
+    print("PASS: trigger_overseer_review creates a real overseer_review task under the "
+          "System Operations business, on demand -- no need to wait for the next "
+          "OVERSEER_REVIEW_INTERVAL_SECONDS to confirm a fixed Twilio configuration works")
+    db.close()
+    os.remove(TEST_DB_PATH)
+
+
 def test_both_triggers_reuse_the_same_system_operations_business_not_duplicate_it():
     db = _setup()
     ops_result = api.trigger_ops_review()
     digest_result = api.trigger_owner_digest()
+    overseer_result = api.trigger_overseer_review()
     ops_task = db.query_one("SELECT business_id FROM tasks WHERE id=?", (ops_result["task_id"],))
     digest_task = db.query_one("SELECT business_id FROM tasks WHERE id=?", (digest_result["task_id"],))
-    assert ops_task["business_id"] == digest_task["business_id"]
+    overseer_task = db.query_one("SELECT business_id FROM tasks WHERE id=?",
+                                  (overseer_result["task_id"],))
+    assert ops_task["business_id"] == digest_task["business_id"] == overseer_task["business_id"]
     assert len(api.state["businesses"].list()) == 1
-    print("PASS: both manual triggers provision/reuse the SAME System Operations business, "
-          "never a duplicate")
+    print("PASS: all three manual triggers provision/reuse the SAME System Operations "
+          "business, never a duplicate")
     db.close()
     os.remove(TEST_DB_PATH)
 
@@ -83,5 +101,6 @@ def test_both_triggers_reuse_the_same_system_operations_business_not_duplicate_i
 if __name__ == "__main__":
     test_trigger_ops_review_creates_a_real_task_under_the_ops_business()
     test_trigger_owner_digest_creates_a_real_task_under_the_ops_business()
+    test_trigger_overseer_review_creates_a_real_task_under_the_ops_business()
     test_both_triggers_reuse_the_same_system_operations_business_not_duplicate_it()
     print("\nAll manual-trigger offline tests passed.")
