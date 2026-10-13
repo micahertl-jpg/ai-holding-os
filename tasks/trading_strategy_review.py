@@ -47,13 +47,20 @@ invent a symbol.
 - drawdown_halt_pct is a real circuit breaker that pauses trading entirely when tripped — do not \
 propose raising it as a way to "avoid" a halt; that defeats its purpose. Only lower it, or leave \
 it unchanged, unless you have a specific, stated reason tied to the actual statistics given.
+- stop_loss_pct and take_profit_pct are OPTIONAL per-position circuit breakers: if set, a \
+position is force-closed the instant its unrealized loss/gain crosses that fraction, before you \
+are even consulted on a future cycle. Use null for either to leave it disabled. Same rule as \
+drawdown_halt_pct: never propose REMOVING or loosening an existing stop_loss_pct just to "avoid" \
+it firing — only tighten it, leave it unchanged, or propose one for the first time, unless you \
+have a specific, stated reason tied to the actual statistics given.
 - confidence_level (top-level, about this proposal itself) must be "low", "medium", or "high".
 - rationale must explain, referencing the actual statistics given, what specifically changed \
 and why.
 
 Respond with ONLY a single JSON object (no markdown fences, no prose before or after): \
 {"parameters": {"watchlist": [...], "max_position_pct": 0.0, "max_trade_pct_of_cash": 0.0, \
-"max_open_positions": 0, "drawdown_halt_pct": 0.0, "min_confidence_to_trade": "low"|"medium"|"high"}, \
+"max_open_positions": 0, "drawdown_halt_pct": 0.0, "min_confidence_to_trade": "low"|"medium"|"high", \
+"stop_loss_pct": 0.0|null, "take_profit_pct": 0.0|null}, \
 "rationale": "...", "confidence_level": "low"|"medium"|"high"}"""
 
 

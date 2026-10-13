@@ -615,6 +615,72 @@ confidence and rationale, and (if it decided to buy/sell) a real paper
 trade in the Trade History table. Try **Run Strategy Review Now** too,
 though it's more informative after a handful of real trades exist.
 
+### Stop-loss / take-profit — status (optional per-position circuit breakers)
+
+Until this, the ONLY thing that could ever close a position was the
+model itself deciding to sell on a given cycle — a position could sit
+open indefinitely if the model kept holding, with no way to cap a loss
+or lock in a gain automatically. These are two new, OPTIONAL fields on
+the same strategy-parameter schema everything else above already uses.
+
+**What's new:**
+- `tasks/trading_common.py`: `stop_loss_pct`/`take_profit_pct`, both
+  `None` (disabled) by default — unlike every other field in the
+  schema, these are NOT required, so a strategy version saved before
+  this feature existed is still valid with neither set. Bounded by
+  `ABSOLUTE_MAX_STOP_LOSS_PCT` (0.5) / `ABSOLUTE_MAX_TAKE_PROFIT_PCT`
+  (5.0), same "hard ceiling, never just a clamp" enforcement as every
+  other field.
+- `tasks/trading_cycle.py`'s `apply_risk_limits()`: the instant an open
+  position's unrealized P&L crosses either threshold, it is force-closed
+  in full — **before** the model's own decision for that symbol is even
+  looked at, and **never gated by `min_confidence_to_trade`** (a risk
+  control, not a trade suggestion the model can veto by hedging its
+  confidence). Since both paper trading, live trading, and the
+  backtester all call this exact same function, all three honor these
+  settings automatically with no separate wiring — a value can be tuned
+  and proven out in a backtest before ever running paper or live.
+- `tasks/trading_strategy_review.py`'s self-improvement loop can now
+  also propose these two fields, with the same "only tighten, don't
+  loosen just to dodge it" guidance already given for
+  `drawdown_halt_pct`.
+- The owner can set them directly, no review cycle needed: a new "Set
+  Stop-Loss / Take-Profit" form on the dashboard's Trading panel submits
+  through the existing `POST .../trading/strategy-override` endpoint
+  (no new endpoint — it already accepted a full parameters dict),
+  preserving every other field of the current active strategy.
+
+**What was actually verified in this session:**
+- New `tasks/trading_common.py`/`tasks/trading_cycle.py` checks in
+  `test_trading_cycle_offline.py`: both fields default to `None` for an
+  older params dict missing them entirely; real values are accepted and
+  out-of-ceiling/non-numeric ones rejected; a losing/winning position is
+  force-closed in full regardless of the model's own hold/buy decision
+  for that symbol; the forced close bypasses `min_confidence_to_trade`;
+  with both disabled (the default) a losing position is never
+  force-closed, unchanged from before this feature; a symbol with no
+  open position is unaffected; the exact boundary value triggers
+  (inclusive).
+- `test_dashboard_render.js`: the Strategy Versions panel shows the real
+  configured percentages, or "disabled" when null.
+- Full offline suite (`test_*.py` + `test_dashboard_render.js`) still
+  passes.
+- Live-verified against a real Postgres DB + running server: confirmed
+  a freshly-created strategy defaults both fields to `null`; the
+  override endpoint accepts valid values and rejects an over-ceiling one
+  with the real validation message; and, via a real browser (Playwright),
+  filled in and submitted the new dashboard form, confirming it created
+  a new strategy version with the real values while leaving every other
+  field untouched.
+
+**To verify it yourself:** on the dashboard's Trading panel, under
+Strategy Versions, fill in **Stop-Loss %** / **Take-Profit %** and click
+**Set Stop-Loss / Take-Profit** — a new strategy version appears
+immediately showing the configured values. Hold a position and watch it
+force-close the moment its unrealized P&L crosses what you set, on the
+very next trading cycle (or backtest day), independent of what the model
+itself decides that cycle.
+
 ## Live Trading — status (REAL MONEY, opt-in per business — see DEPLOY.md)
 
 A separate, deliberately harder-to-reach feature on top of everything

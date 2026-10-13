@@ -98,6 +98,62 @@ def test_validate_parameters_rejects_invalid_confidence_floor():
     print("PASS: validate_parameters rejects an invalid min_confidence_to_trade value")
 
 
+def test_validate_parameters_defaults_stop_loss_and_take_profit_to_none_when_omitted():
+    # A strategy_params dict saved before this feature existed has
+    # neither key at all -- must still validate (they're OPTIONAL, not
+    # required) and come back explicitly disabled, not missing.
+    old = {k: v for k, v in DEFAULT_STRATEGY_PARAMS.items()
+           if k not in ("stop_loss_pct", "take_profit_pct")}
+    validated = validate_parameters(old)
+    assert validated["stop_loss_pct"] is None
+    assert validated["take_profit_pct"] is None
+    print("PASS: validate_parameters defaults stop_loss_pct/take_profit_pct to None (disabled) "
+          "for an older params dict that predates this feature, rather than erroring")
+
+
+def test_validate_parameters_accepts_real_stop_loss_and_take_profit_values():
+    params = dict(DEFAULT_STRATEGY_PARAMS)
+    params["stop_loss_pct"] = 0.08
+    params["take_profit_pct"] = 0.25
+    validated = validate_parameters(params)
+    assert validated["stop_loss_pct"] == 0.08
+    assert validated["take_profit_pct"] == 0.25
+    print("PASS: validate_parameters accepts real stop_loss_pct/take_profit_pct values")
+
+
+def test_validate_parameters_rejects_stop_loss_over_absolute_ceiling():
+    bad = dict(DEFAULT_STRATEGY_PARAMS)
+    bad["stop_loss_pct"] = 0.9  # above ABSOLUTE_MAX_STOP_LOSS_PCT (0.5)
+    try:
+        validate_parameters(bad)
+        assert False, "expected StrategyParameterError"
+    except StrategyParameterError:
+        pass
+    print("PASS: validate_parameters rejects a stop_loss_pct above its absolute ceiling")
+
+
+def test_validate_parameters_rejects_take_profit_over_absolute_ceiling():
+    bad = dict(DEFAULT_STRATEGY_PARAMS)
+    bad["take_profit_pct"] = 10.0  # above ABSOLUTE_MAX_TAKE_PROFIT_PCT (5.0)
+    try:
+        validate_parameters(bad)
+        assert False, "expected StrategyParameterError"
+    except StrategyParameterError:
+        pass
+    print("PASS: validate_parameters rejects a take_profit_pct above its absolute ceiling")
+
+
+def test_validate_parameters_rejects_non_numeric_stop_loss():
+    bad = dict(DEFAULT_STRATEGY_PARAMS)
+    bad["stop_loss_pct"] = "8%"
+    try:
+        validate_parameters(bad)
+        assert False, "expected StrategyParameterError"
+    except StrategyParameterError:
+        pass
+    print("PASS: validate_parameters rejects a non-numeric stop_loss_pct")
+
+
 # ---------------------------------------------------------------------
 # decide_trades — model output validation
 # ---------------------------------------------------------------------
@@ -298,8 +354,115 @@ def test_tiny_trade_is_skipped_as_below_minimum():
     result = apply_risk_limits(decisions, 10000.0, [], quotes, PARAMS)
     assert result[0]["executed"] is False
     assert "minimum" in result[0]["skip_reason"]
-    print("PASS: a trade clamped below the $1 minimum is skipped, not executed as a "
-          "near-zero-size trade")
+    print("PASS: a trade clamped below MIN_TRADE_USD is skipped rather than executed at a "
+          "meaningless size")
+
+
+# ---------------------------------------------------------------------
+# apply_risk_limits — stop-loss / take-profit (code-enforced, never a
+# model suggestion)
+# ---------------------------------------------------------------------
+
+def test_stop_loss_force_closes_a_losing_position_even_when_the_model_says_hold():
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.08})
+    # Bought at $100, now $90 -- a real 10% unrealized loss, past the 8% stop.
+    quotes = {"AAPL": {"price": 90.0, "as_of": "x", "mock": False}}
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "hold", "confidence_level": "high",
+                  "size_pct": 0.0, "rationale": "looks fine to me"}]
+    result = apply_risk_limits(decisions, 0.0, positions, quotes, params)
+    assert len(result) == 1
+    assert result[0]["executed"] is True
+    assert result[0]["side"] == "sell"
+    assert result[0]["quantity"] == 10.0, "a stop-loss closes the FULL position, never a partial amount"
+    assert "stop-loss" in result[0]["rationale"]
+    print("PASS: a position past its configured stop_loss_pct is force-closed in full, even "
+          "though the model itself said hold")
+
+
+def test_take_profit_force_closes_a_winning_position_even_when_the_model_says_hold():
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "take_profit_pct": 0.20})
+    # Bought at $100, now $125 -- a real 25% unrealized gain, past the 20% target.
+    quotes = {"AAPL": {"price": 125.0, "as_of": "x", "mock": False}}
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "hold", "confidence_level": "high",
+                  "size_pct": 0.0, "rationale": "let it keep running"}]
+    result = apply_risk_limits(decisions, 0.0, positions, quotes, params)
+    assert result[0]["executed"] is True
+    assert result[0]["side"] == "sell"
+    assert result[0]["quantity"] == 10.0
+    assert "take-profit" in result[0]["rationale"]
+    print("PASS: a position past its configured take_profit_pct is force-closed in full, even "
+          "though the model itself said hold")
+
+
+def test_stop_loss_overrides_an_explicit_buy_decision_too():
+    # Not just overriding "hold" -- a stop-loss fires no matter WHAT the
+    # model proposed for this symbol, including trying to add to the
+    # very position that's blowing past its stop.
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.08})
+    quotes = {"AAPL": {"price": 85.0, "as_of": "x", "mock": False}}
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "buy", "confidence_level": "high",
+                  "size_pct": 0.5, "rationale": "buy the dip"}]
+    result = apply_risk_limits(decisions, 10000.0, positions, quotes, params)
+    assert result[0]["executed"] is True
+    assert result[0]["side"] == "sell", "a stop-loss must win over any other proposed action"
+    print("PASS: a stop-loss overrides even an explicit buy decision for the same symbol")
+
+
+def test_stop_loss_bypasses_min_confidence_to_trade():
+    # A normal sell this low-confidence would be skipped by the
+    # strategy's min_confidence_to_trade floor (medium, by default) --
+    # a forced stop-loss is a risk control, not a trade suggestion, so
+    # it must never be gated by confidence at all.
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.08})
+    quotes = {"AAPL": {"price": 90.0, "as_of": "x", "mock": False}}
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "hold", "confidence_level": "low",
+                  "size_pct": 0.0, "rationale": "not sure"}]
+    result = apply_risk_limits(decisions, 0.0, positions, quotes, params)
+    assert result[0]["executed"] is True and result[0]["side"] == "sell"
+    print("PASS: a forced stop-loss executes regardless of min_confidence_to_trade")
+
+
+def test_no_forced_close_when_stop_loss_and_take_profit_are_disabled():
+    # The default -- both None -- must behave exactly as before this
+    # feature existed: a losing position just sits there until the
+    # model itself decides to sell it.
+    quotes = {"AAPL": {"price": 50.0, "as_of": "x", "mock": False}}  # down 50%
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "hold", "confidence_level": "high",
+                  "size_pct": 0.0, "rationale": "x"}]
+    result = apply_risk_limits(decisions, 0.0, positions, quotes, PARAMS)
+    assert result[0]["executed"] is False, "with no stop-loss configured, nothing forces a close"
+    print("PASS: with stop_loss_pct/take_profit_pct disabled (the default), a losing position "
+          "is never force-closed")
+
+
+def test_stop_loss_does_not_affect_a_symbol_with_no_open_position():
+    # A brand-new buy decision for a symbol with no position shouldn't
+    # somehow trip the stop-loss check (nothing to protect yet).
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.08})
+    quotes = {"AAPL": {"price": 100.0, "as_of": "x", "mock": False}}
+    decisions = [{"symbol": "AAPL", "action": "buy", "confidence_level": "high",
+                  "size_pct": 0.1, "rationale": "x"}]
+    result = apply_risk_limits(decisions, 10000.0, [], quotes, params)
+    assert result[0]["executed"] is True and result[0]["side"] == "buy"
+    print("PASS: a stop-loss configured but no open position never blocks a normal new buy")
+
+
+def test_stop_loss_exactly_at_threshold_triggers():
+    # Half-open-boundary check: exactly -8% with an 8% stop must fire
+    # (<=), not require crossing strictly past it.
+    params = validate_parameters({**DEFAULT_STRATEGY_PARAMS, "stop_loss_pct": 0.08})
+    quotes = {"AAPL": {"price": 92.0, "as_of": "x", "mock": False}}  # exactly -8% from 100
+    positions = [{"symbol": "AAPL", "quantity": 10.0, "avg_cost_usd": 100.0}]
+    decisions = [{"symbol": "AAPL", "action": "hold", "confidence_level": "high",
+                  "size_pct": 0.0, "rationale": "x"}]
+    result = apply_risk_limits(decisions, 0.0, positions, quotes, params)
+    assert result[0]["executed"] is True and result[0]["side"] == "sell"
+    print("PASS: a loss exactly at the configured stop_loss_pct triggers the stop (inclusive)")
 
 
 # ---------------------------------------------------------------------
@@ -357,6 +520,11 @@ if __name__ == "__main__":
     test_validate_parameters_rejects_over_absolute_ceiling()
     test_validate_parameters_rejects_disabling_the_circuit_breaker()
     test_validate_parameters_rejects_invalid_confidence_floor()
+    test_validate_parameters_defaults_stop_loss_and_take_profit_to_none_when_omitted()
+    test_validate_parameters_accepts_real_stop_loss_and_take_profit_values()
+    test_validate_parameters_rejects_stop_loss_over_absolute_ceiling()
+    test_validate_parameters_rejects_take_profit_over_absolute_ceiling()
+    test_validate_parameters_rejects_non_numeric_stop_loss()
     test_decide_trades_parses_a_valid_response()
     test_decide_trades_rejects_non_json()
     test_decide_trades_rejects_decision_for_unquoted_symbol()
@@ -372,6 +540,13 @@ if __name__ == "__main__":
     test_hold_never_trades()
     test_sell_cannot_exceed_current_position()
     test_tiny_trade_is_skipped_as_below_minimum()
+    test_stop_loss_force_closes_a_losing_position_even_when_the_model_says_hold()
+    test_take_profit_force_closes_a_winning_position_even_when_the_model_says_hold()
+    test_stop_loss_overrides_an_explicit_buy_decision_too()
+    test_stop_loss_bypasses_min_confidence_to_trade()
+    test_no_forced_close_when_stop_loss_and_take_profit_are_disabled()
+    test_stop_loss_does_not_affect_a_symbol_with_no_open_position()
+    test_stop_loss_exactly_at_threshold_triggers()
     test_run_trading_cycle_refuses_mock_market_data()
     test_run_trading_cycle_refuses_when_a_held_symbols_quote_is_missing()
     test_run_trading_cycle_succeeds_end_to_end_with_real_shaped_inputs()

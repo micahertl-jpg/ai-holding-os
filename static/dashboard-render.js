@@ -956,6 +956,8 @@
               <dt>Max open positions</dt><dd>${escapeHtml(params.max_open_positions)}</dd>
               <dt>Drawdown halt</dt><dd>${params.drawdown_halt_pct != null ? (params.drawdown_halt_pct * 100).toFixed(0) + "%" : ""}</dd>
               <dt>Min confidence to trade</dt><dd>${escapeHtml(params.min_confidence_to_trade)}</dd>
+              <dt>Stop-loss</dt><dd>${params.stop_loss_pct != null ? "-" + (params.stop_loss_pct * 100).toFixed(0) + "%" : "disabled"}</dd>
+              <dt>Take-profit</dt><dd>${params.take_profit_pct != null ? "+" + (params.take_profit_pct * 100).toFixed(0) + "%" : "disabled"}</dd>
             </dl>
           </div>
         </div>`;

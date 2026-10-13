@@ -215,6 +215,15 @@
         <div id="trading-trades"></div>
         <h4>Strategy Versions (self-improvement history)</h4>
         <div id="trading-strategy-versions"></div>
+        <form id="set-stop-loss-take-profit-form" class="inline-form">
+          <input name="stop_loss_pct" type="number" min="0" max="50" step="0.5"
+                 placeholder="Stop-loss % (blank = disabled)"
+                 title="Force-close a position the instant its unrealized loss crosses this %">
+          <input name="take_profit_pct" type="number" min="0" max="500" step="0.5"
+                 placeholder="Take-profit % (blank = disabled)"
+                 title="Force-close a position the instant its unrealized gain crosses this %">
+          <button type="submit" class="btn-small">Set Stop-Loss / Take-Profit</button>
+        </form>
         <details class="panel-note">
           <summary>About this panel</summary>
           <p>No brokerage integration exists anywhere in this codebase — nothing

@@ -39,6 +39,12 @@ ABSOLUTE_MAX_POSITION_PCT = 0.5
 ABSOLUTE_MAX_TRADE_PCT_OF_CASH = 0.5
 ABSOLUTE_MAX_OPEN_POSITIONS = 15
 ABSOLUTE_MIN_DRAWDOWN_HALT_PCT = 0.05  # never allow disabling the circuit breaker
+# Ceilings for the two OPTIONAL per-position risk controls below. A
+# stop-loss past 50% stopped protecting anything long ago; a take-profit
+# is deliberately given a much looser ceiling since "let a winner run
+# far" is a legitimate strategy, unlike an unbounded loss.
+ABSOLUTE_MAX_STOP_LOSS_PCT = 0.5
+ABSOLUTE_MAX_TAKE_PROFIT_PCT = 5.0
 
 DEFAULT_STRATEGY_PARAMS = {
     "watchlist": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"],
@@ -55,6 +61,16 @@ DEFAULT_STRATEGY_PARAMS = {
     # A proposed trade below this confidence is logged as skipped, never
     # executed — "low" confidence is observation-only in this MVP.
     "min_confidence_to_trade": "medium",
+    # OPTIONAL per-position circuit breakers, both None (disabled) by
+    # default — see tasks/trading_cycle.py's apply_risk_limits(), which
+    # force-closes a position the moment its unrealized P&L crosses
+    # either one, regardless of what the model decides that cycle and
+    # regardless of min_confidence_to_trade (this is a risk control, not
+    # a trade suggestion). Unlike every other field above, these are not
+    # in REQUIRED_PARAM_FIELDS -- an already-saved strategy version from
+    # before this feature existed is still valid with neither set.
+    "stop_loss_pct": None,
+    "take_profit_pct": None,
 }
 
 
@@ -113,6 +129,22 @@ def validate_parameters(params: dict) -> dict:
             f"min_confidence_to_trade must be one of {sorted(CONFIDENCE_ORDER)}, got {min_confidence!r}"
         )
 
+    def _optional_pct(name, ceiling):
+        # Unlike _pct() above, missing or explicit null is valid here --
+        # these two fields are OPTIONAL (not in REQUIRED_PARAM_FIELDS),
+        # meaning "disabled", not an error.
+        v = params.get(name)
+        if v is None:
+            return None
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise StrategyParameterError(f"{name} must be a number or null")
+        if not (0 < v <= ceiling):
+            raise StrategyParameterError(f"{name} must be in (0, {ceiling}] or null, got {v}")
+        return float(v)
+
+    stop_loss_pct = _optional_pct("stop_loss_pct", ABSOLUTE_MAX_STOP_LOSS_PCT)
+    take_profit_pct = _optional_pct("take_profit_pct", ABSOLUTE_MAX_TAKE_PROFIT_PCT)
+
     return {
         "watchlist": [s.upper() for s in watchlist],
         "max_position_pct": max_position_pct,
@@ -120,4 +152,6 @@ def validate_parameters(params: dict) -> dict:
         "max_open_positions": max_open_positions,
         "drawdown_halt_pct": float(drawdown_halt_pct),
         "min_confidence_to_trade": min_confidence,
+        "stop_loss_pct": stop_loss_pct,
+        "take_profit_pct": take_profit_pct,
     }

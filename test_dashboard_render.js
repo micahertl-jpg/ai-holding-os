@@ -1037,6 +1037,7 @@ test("renderTradingStrategyVersions shows parameters, active badge, and source",
     parameters: JSON.stringify({
       watchlist: ["AAPL", "MSFT"], max_position_pct: 0.15, max_trade_pct_of_cash: 0.08,
       max_open_positions: 4, drawdown_halt_pct: 0.12, min_confidence_to_trade: "high",
+      stop_loss_pct: 0.08, take_profit_pct: 0.25,
     }),
   }];
   const html = R.renderTradingStrategyVersions(versions);
@@ -1046,6 +1047,22 @@ test("renderTradingStrategyVersions shows parameters, active badge, and source",
   assert.ok(html.includes("AAPL, MSFT"));
   assert.ok(html.includes("15%"));
   assert.ok(html.includes("12%"));
+  assert.ok(html.includes("-8%"));
+  assert.ok(html.includes("+25%"));
+});
+
+test("renderTradingStrategyVersions shows stop-loss/take-profit as disabled when null", () => {
+  const versions = [{
+    version: 1, active: 1, source: "system", rationale: "init",
+    parameters: JSON.stringify({
+      watchlist: ["AAPL"], max_position_pct: 0.2, max_trade_pct_of_cash: 0.1,
+      max_open_positions: 5, drawdown_halt_pct: 0.15, min_confidence_to_trade: "medium",
+      stop_loss_pct: null, take_profit_pct: null,
+    }),
+  }];
+  const html = R.renderTradingStrategyVersions(versions);
+  const disabledCount = (html.match(/disabled/g) || []).length;
+  assert.strictEqual(disabledCount, 2, "both stop-loss and take-profit show as disabled");
 });
 
 test("renderTradingStrategyVersions expands the active version by default, collapses history", () => {
