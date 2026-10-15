@@ -44,13 +44,14 @@ def test_chat_endpoint_returns_a_real_answer_end_to_end():
 
 
 def test_chat_endpoint_rejects_an_empty_message():
-    _setup()
+    db = _setup()
     try:
         api.chat(api.ChatRequest(message="   "))
         assert False, "expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 400
     print("PASS: POST /chat rejects a blank message before ever calling the model")
+    db.close()
     os.remove(TEST_DB_PATH)
 
 
